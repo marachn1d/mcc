@@ -3,6 +3,7 @@ use super::lex::Identifier;
 use super::lex::Keyword;
 use super::Token;
 use std::fmt::{self, Display, Formatter};
+
 pub fn parse(mut tokens: &[Token]) -> Result<Program, Error> {
     let program = program(&mut tokens)?;
     if tokens.is_empty() {
@@ -21,6 +22,9 @@ fn program(tokens: &mut &[Token]) -> Result<Program, Error> {
     }
 }
 
+#[derive(Debug)]
+pub struct Program(pub Function);
+
 fn function(tokens: &mut &[Token]) -> Result<Function, Error> {
     consume(tokens, Keyword::Int, "function")?;
     let name = consume_identifier(tokens, "function")?;
@@ -32,6 +36,19 @@ fn function(tokens: &mut &[Token]) -> Result<Function, Error> {
     consume(tokens, Token::CloseBrace, "function")?;
     Ok(Function { name, body })
 }
+
+#[derive(Debug)]
+pub struct Function {
+    pub name: Identifier,
+    pub body: Statement,
+}
+
+impl Display for Function {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "Function(\nname={},\nbody={}\n)", self.name, self.body)
+    }
+}
+
 fn statement(tokens: &mut &[Token]) -> Result<Statement, Error> {
     consume(tokens, Keyword::Return, "statement")?;
     let expression = expression(tokens)?;
@@ -39,22 +56,77 @@ fn statement(tokens: &mut &[Token]) -> Result<Statement, Error> {
     Ok(Statement { ret: expression })
 }
 
+#[derive(Debug)]
+pub struct Statement {
+    pub ret: Expression,
+}
+
 fn expression(tokens: &mut &[Token]) -> Result<Expression, Error> {
-    let Some(token) = tokens.first() else {
-        return Err(Error::UnexpectedEof);
-    };
+    let left = Expression::Factor(factor(tokens)?).into();
+    let operator = binary_operator(tokens)?;
     *tokens = &tokens[1..];
-    match token {
-        Token::Constant(c) => Ok(constant(c.clone())),
-        Token::Minus => unary(tokens, UnaryOperator::Negate),
-        Token::Tilde => unary(tokens, UnaryOperator::Complement),
-        Token::OpenParen => {
-            let inner = Box::new(expression(tokens)?);
-            consume(tokens, Token::CloseParen, "expression")?;
-            Ok(Expression::Nested(inner))
+    let right = Expression::Factor(factor(tokens)?).into();
+    Ok(Expression::Binary(Binary {
+        left,
+        right,
+        operator,
+    }))
+}
+
+fn binary_operator(tokens: &mut &[Token]) -> Result<BinaryOperator, Error> {
+    let token = match tokens.first() {
+        Some(Token::Plus) => Ok(BinaryOperator::Add),
+        Some(Token::Minus) => Ok(BinaryOperator::Subtract),
+        Some(Token::Asterisk) => Ok(BinaryOperator::Multiply),
+        Some(Token::Slash) => Ok(BinaryOperator::Divide),
+        Some(Token::Percent) => Ok(BinaryOperator::Remainder),
+        _ => Err(Error::ExpectedExpression),
+    }?;
+    *tokens = &tokens[1..];
+    Ok(token)
+}
+
+fn factor(tokens: &mut &[Token]) -> Result<Factor, Error> {
+    match tokens.first() {
+        Some(Token::Constant(crate::compiler::lex::Constant::Integer(c))) => {
+            *tokens = &tokens[1..];
+            Ok(Factor::Int(*c))
         }
-        _ => panic!("error"),
+        Some(t @ (Token::Minus | Token::Tilde)) => {
+            let operator = if t == &Token::Minus {
+                UnaryOperator::Negate
+            } else {
+                UnaryOperator::Complement
+            };
+            *tokens = &tokens[1..];
+            let factor = Box::new(factor(tokens)?);
+            Ok(Factor::Unary(Unary {
+                exp: factor,
+                op: operator,
+            }))
+        }
+        Some(Token::OpenParen) => {
+            *tokens = &tokens[1..];
+            let exp = Box::new(expression(tokens)?);
+            consume(tokens, Token::CloseParen, "factor")?;
+            Ok(Factor::Nested(exp))
+        }
+        None => Err(Error::UnexpectedEof),
+        _ => Err(Error::ExpectedExpression),
     }
+}
+
+#[derive(Debug)]
+pub enum Expression {
+    Factor(Factor),
+    Binary(Binary),
+}
+
+#[derive(Debug)]
+pub enum Factor {
+    Int(u64),
+    Unary(Unary),
+    Nested(Box<Expression>),
 }
 
 fn unary(tokens: &mut &[Token], operator: UnaryOperator) -> Result<Expression, Error> {
@@ -64,6 +136,34 @@ fn unary(tokens: &mut &[Token], operator: UnaryOperator) -> Result<Expression, E
         op: operator,
     };
     Ok(Expression::Unary(unary))
+}
+
+#[derive(Debug)]
+pub struct Unary {
+    pub exp: Box<Factor>,
+    pub op: UnaryOperator,
+}
+
+#[derive(Debug)]
+pub enum UnaryOperator {
+    Complement,
+    Negate,
+}
+
+#[derive(Debug)]
+pub struct Binary {
+    pub operator: BinaryOperator,
+    pub left: Box<Expression>,
+    pub right: Box<Expression>,
+}
+
+#[derive(Debug)]
+pub enum BinaryOperator {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Remainder,
 }
 
 fn constant(constant: LexConstant) -> Expression {
@@ -99,54 +199,16 @@ fn consume_identifier(tokens: &mut &[Token], for_node: &str) -> Result<Identifie
     }
 }
 
-fn consume_constant(tokens: &mut &[Token], for_node: &str) -> Result<LexConstant, Error> {
-    if let Some(Token::Constant(constant)) = tokens.first() {
-        *tokens = &tokens[1..];
-        Ok(constant.clone())
-    } else {
-        Err(Error::ExpectedIdentifier {
-            for_node: for_node.into(),
-        })
-    }
-}
-
-#[derive(Debug)]
-pub struct Program(pub Function);
-
 impl Display for Program {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "Program(\n{}\n)", self.0)
     }
 }
 
-#[derive(Debug)]
-pub struct Function {
-    pub name: Identifier,
-    pub body: Statement,
-}
-
-impl Display for Function {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "Function(\nname={},\nbody={}\n)", self.name, self.body)
-    }
-}
-
-#[derive(Debug)]
-pub struct Statement {
-    pub ret: Expression,
-}
-
 impl Display for Statement {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "Return(\n{:?}\n)", self.ret)
     }
-}
-
-#[derive(Debug)]
-pub enum Expression {
-    Constant(Constant),
-    Unary(Unary),
-    Nested(Box<Expression>),
 }
 
 impl From<Constant> for Expression {
@@ -159,18 +221,6 @@ impl From<Unary> for Expression {
     fn from(u: Unary) -> Self {
         Self::Unary(u)
     }
-}
-
-#[derive(Debug)]
-pub struct Unary {
-    pub exp: Box<Expression>,
-    pub op: UnaryOperator,
-}
-
-#[derive(Debug)]
-pub enum UnaryOperator {
-    Complement,
-    Negate,
 }
 
 #[derive(Debug)]

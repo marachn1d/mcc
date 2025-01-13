@@ -1,17 +1,26 @@
+use super::AstConstant;
+use super::AstExpression;
+use super::AstFunction;
+use super::AstProgram;
+use super::AstStatement;
+use super::Identifier;
+use super::UnaryOperator;
+use crate::compiler::parse::Unary as AstUnary;
 use std::rc::Rc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
-static TEMP_COUNT: AtomicUsize = AtomicUsize::new(0);
-use super::AstFunction;
 
-use super::AstConstant;
-use super::AstExpression;
-use super::AstProgram;
-use super::AstStatement;
-use crate::compiler::parse::Unary as AstUnary;
+static TEMP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+pub struct Program(pub Function);
 
 pub fn emit(program: AstProgram) -> Program {
     Program(convert_function(program.0))
+}
+
+pub struct Function {
+    pub name: Identifier,
+    pub body: Box<[Instruction]>,
 }
 
 fn convert_function(function: AstFunction) -> Function {
@@ -19,6 +28,20 @@ fn convert_function(function: AstFunction) -> Function {
         name: function.name,
         body: convert_statement(function.body),
     }
+}
+
+pub enum Instruction {
+    Return(Value),
+    Unary {
+        op: UnaryOperator,
+        source: Value,
+        dst: Rc<Identifier>,
+    },
+}
+#[derive(Clone)]
+pub enum Value {
+    Constant(u64),
+    Var(Rc<Identifier>),
 }
 
 fn convert_statement(statement: AstStatement) -> Box<[Instruction]> {
@@ -50,30 +73,7 @@ fn convert_expression(expression: AstExpression, instructions: &mut Vec<Instruct
 }
 
 fn new_var() -> Rc<Identifier> {
-    // safe because we're currently a single threaded program
     let number = TEMP_COUNT.fetch_add(1, Ordering::SeqCst);
     let var_name: Box<[u8]> = format!("tmp_{number}").into_bytes().into();
     Rc::new(Identifier(var_name))
-}
-
-use super::Identifier;
-use super::UnaryOperator;
-
-pub struct Program(pub Function);
-pub struct Function {
-    pub name: Identifier,
-    pub body: Box<[Instruction]>,
-}
-pub enum Instruction {
-    Return(Value),
-    Unary {
-        op: UnaryOperator,
-        source: Value,
-        dst: Rc<Identifier>,
-    },
-}
-#[derive(Clone)]
-pub enum Value {
-    Constant(u64),
-    Var(Rc<Identifier>),
 }

@@ -6,9 +6,9 @@ use super::parse::Expression as AstExpression;
 use super::parse::Function as AstFunction;
 use super::parse::Program as AstProgram;
 use super::parse::Statement as AstStatement;
-
 use super::parse::UnaryOperator;
 use std::fmt::{self, Display, Formatter};
+use std::io::Write;
 
 pub fn generate(program: AstProgram, emit_asm: bool) -> Box<[u8]> {
     let tacky = tacky::emit(program);
@@ -21,8 +21,67 @@ pub fn generate(program: AstProgram, emit_asm: bool) -> Box<[u8]> {
     }
 }
 
+struct Program<T>(Function<T>);
+
+fn emit_program(program: Program<Operand>) -> Box<[u8]> {
+    emit_function(program.0)
+}
+
+struct Function<T> {
+    name: Identifier,
+    body: Box<[Instruction<T>]>,
+}
+
+fn emit_function(function: Function<Operand>) -> Box<[u8]> {
+    let mut bytes = Vec::new();
+    let _ = write!(
+        bytes,
+        "\t.globl {name}\n{name}:\n\tpushq %rbp\n\tmovq %rsp, %rbp",
+        name = format_args!("_{}", function.name)
+    );
+    for instruction in &function.body {
+        let _ = write!(bytes, "\n\t");
+        instruction.emit(&mut bytes);
+    }
+    bytes.into()
+}
+
+enum Instruction<T> {
+    Mov {
+        src: T,
+        dst: T,
+    },
+    Unary {
+        operator: AsmUnaryOperator,
+        operand: T,
+    },
+    AllocateStack(isize),
+    Ret,
+}
+
+impl Instruction<Operand> {
+    fn emit(&self, writer: &mut impl Write) {
+        let _ = match self {
+            Self::Mov { src, dst } => write!(writer, "movl  {src}, {dst}"),
+            Self::Ret => write!(writer, "movq %rbp, %rsp\npopq %rbp\nret"),
+            Self::Unary { operator, operand } => {
+                operator.emit(writer);
+                write!(writer, " {operand}")
+            }
+            Self::AllocateStack(amnt) => {
+                write!(writer, " subq ${amnt}, %rsp")
+            }
+        };
+    }
+}
+
 mod convert_pass {
-    use super::{tacky, Function, Instruction, Operand, Program, PseudoOperand, Register};
+    use super::{tacky, Function, Identifier, Instruction, Operand, Program, Register};
+    use std::rc::Rc;
+    pub enum PseudoOperand {
+        Normal(Operand),
+        PseudoRegister(Rc<Identifier>),
+    }
     pub fn convert_tacky(program: tacky::Program) -> Program<PseudoOperand> {
         Program(convert_function(program.0))
     }
@@ -71,12 +130,30 @@ mod convert_pass {
             }
         };
     }
+
+    impl From<tacky::Value> for PseudoOperand {
+        fn from(value: tacky::Value) -> Self {
+            match value {
+                tacky::Value::Constant(num) => Self::Normal(Operand::Imm(num)),
+                tacky::Value::Var(name) => Self::PseudoRegister(name),
+            }
+        }
+    }
+
+    impl From<Rc<Identifier>> for PseudoOperand {
+        fn from(value: Rc<Identifier>) -> Self {
+            Self::PseudoRegister(value)
+        }
+    }
 }
 
 mod fix_pass {
-
-    use super::{Function, Identifier, Instruction, Operand, Program, PseudoOperand};
+    use super::convert_pass::PseudoOperand;
+    use super::Register;
+    use super::{Function, Identifier, Instruction, Operand, Program};
+    use std::collections::HashMap;
     use std::rc::Rc;
+
     pub fn fix_ast(program: Program<PseudoOperand>) -> Program<Operand> {
         let main = fix_function(program.0);
         Program(main)
@@ -125,8 +202,6 @@ mod fix_pass {
         }
     }
 
-    use super::Register;
-    use std::collections::HashMap;
     fn fix_instruction(
         op: Instruction<PseudoOperand>,
         stack_frame: &mut StackFrame,
@@ -173,53 +248,6 @@ mod fix_pass {
     }
 }
 
-fn emit_program(program: Program<Operand>) -> Box<[u8]> {
-    emit_function(program.0)
-}
-
-fn emit_function(function: Function<Operand>) -> Box<[u8]> {
-    let mut bytes = Vec::new();
-    let _ = write!(
-        bytes,
-        "\t.globl {name}\n{name}:\n\tpushq %rbp\n\tmovq %rsp, %rbp",
-        name = format_args!("_{}", function.name)
-    );
-    for instruction in &function.body {
-        let _ = write!(bytes, "\n\t");
-        instruction.emit(&mut bytes);
-    }
-    bytes.into()
-}
-
-struct Program<T>(Function<T>);
-
-struct Function<T> {
-    name: Identifier,
-    body: Box<[Instruction<T>]>,
-}
-
-use std::io::Write;
-impl Function<Operand> {}
-
-use std::rc::Rc;
-enum PseudoOperand {
-    Normal(Operand),
-    PseudoRegister(Rc<Identifier>),
-}
-
-enum Instruction<T> {
-    Mov {
-        src: T,
-        dst: T,
-    },
-    Unary {
-        operator: AsmUnaryOperator,
-        operand: T,
-    },
-    AllocateStack(isize),
-    Ret,
-}
-
 enum AsmUnaryOperator {
     Not,
     Neg,
@@ -243,42 +271,11 @@ impl From<UnaryOperator> for AsmUnaryOperator {
     }
 }
 
-impl Instruction<Operand> {
-    fn emit(&self, writer: &mut impl Write) {
-        let _ = match self {
-            Self::Mov { src, dst } => write!(writer, "movl  {src}, {dst}"),
-            Self::Ret => write!(writer, "movq %rbp, %rsp\npopq %rbp\nret"),
-            Self::Unary { operator, operand } => {
-                operator.emit(writer);
-                write!(writer, " {operand}")
-            }
-            Self::AllocateStack(amnt) => {
-                write!(writer, " subq ${amnt}, %rsp")
-            }
-        };
-    }
-}
-
 #[derive(Clone, Copy)]
 enum Operand {
     Imm(u64),
     Register(Register),
     Stack(isize),
-}
-
-impl From<tacky::Value> for PseudoOperand {
-    fn from(value: tacky::Value) -> Self {
-        match value {
-            tacky::Value::Constant(num) => Self::Normal(Operand::Imm(num)),
-            tacky::Value::Var(name) => Self::PseudoRegister(name),
-        }
-    }
-}
-
-impl From<Rc<Identifier>> for PseudoOperand {
-    fn from(value: Rc<Identifier>) -> Self {
-        Self::PseudoRegister(value)
-    }
 }
 
 #[derive(Clone, Copy)]

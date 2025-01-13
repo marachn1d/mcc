@@ -10,7 +10,6 @@ mod compiler;
 
 fn main() -> Result<(), MCCError> {
     let (input, arg) = parse_args().map_err(|()| MCCError::Usage)?;
-    println!("input {}, arg:{arg:?}", input.display());
     let output = input.with_extension("i");
     let preprocessed_file = preprocess(&input, output).map_err(MCCError::Preprocess)?;
     let object_file = compiler::compile(preprocessed_file, arg).map_err(MCCError::Compile)?;

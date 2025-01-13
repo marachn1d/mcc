@@ -1,3 +1,4 @@
+use std::fmt::{self, Display, Formatter};
 use std::slice::Iter;
 
 #[derive(PartialEq, Eq, Debug)]
@@ -13,6 +14,10 @@ pub enum Token {
     Tilde,
     Decrement,
     Minus,
+    Plus,
+    Asterisk,
+    Slash,
+    Percent,
 }
 
 pub fn tokenize(bytes: &[u8]) -> Result<Box<[Token]>, Error> {
@@ -44,12 +49,35 @@ pub fn tokenize(bytes: &[u8]) -> Result<Box<[Token]>, Error> {
                 Token::Decrement
             }
             b'-' => Token::Minus,
+            b'+' => Token::Plus,
+            b'*' => Token::Asterisk,
+            b'/' => Token::Slash,
+            b'%' => Token::Percent,
             a => literal(*a, &mut iter)?,
         };
         tokens.push(token);
     }
     Ok(tokens.into())
 }
+
+impl AsciiDigit {
+    const fn from_int(int: u8) -> Option<Self> {
+        match int {
+            b'0' => Some(AsciiDigit::Zero),
+            b'1' => Some(AsciiDigit::One),
+            b'2' => Some(AsciiDigit::Two),
+            b'3' => Some(AsciiDigit::Three),
+            b'4' => Some(AsciiDigit::Four),
+            b'5' => Some(AsciiDigit::Five),
+            b'6' => Some(AsciiDigit::Six),
+            b'7' => Some(AsciiDigit::Seven),
+            b'8' => Some(AsciiDigit::Eight),
+            b'9' => Some(AsciiDigit::Nine),
+            _ => None,
+        }
+    }
+}
+
 fn constant_number(start: AsciiDigit, iter: &mut Iter<u8>) -> Result<Constant, Error> {
     let mut bytes = vec![start];
     while let Some(constant) = next_if_number(iter) {
@@ -107,24 +135,6 @@ fn peek(iter: &Iter<u8>) -> Option<u8> {
 
 fn next_if_number(iter: &mut Iter<u8>) -> Option<AsciiDigit> {
     next_if_map(iter, AsciiDigit::from_int)
-}
-
-impl AsciiDigit {
-    const fn from_int(int: u8) -> Option<Self> {
-        match int {
-            b'0' => Some(AsciiDigit::Zero),
-            b'1' => Some(AsciiDigit::One),
-            b'2' => Some(AsciiDigit::Two),
-            b'3' => Some(AsciiDigit::Three),
-            b'4' => Some(AsciiDigit::Four),
-            b'5' => Some(AsciiDigit::Five),
-            b'6' => Some(AsciiDigit::Six),
-            b'7' => Some(AsciiDigit::Seven),
-            b'8' => Some(AsciiDigit::Eight),
-            b'9' => Some(AsciiDigit::Nine),
-            _ => None,
-        }
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -235,21 +245,6 @@ pub enum Keyword {
     Return,
 }
 
-impl Keyword {
-    const fn as_bytes(&self) -> &[u8] {
-        match self {
-            Self::Int => keywords::INT,
-            Self::Void => keywords::VOID,
-            Self::Return => keywords::RETURN,
-        }
-    }
-
-    const fn as_str(&self) -> &str {
-        use std::str::from_utf8_unchecked;
-        unsafe { from_utf8_unchecked(self.as_bytes()) }
-    }
-}
-
 mod keywords {
     pub const INT: &[u8] = b"int";
     pub const VOID: &[u8] = b"void";
@@ -268,8 +263,6 @@ pub enum Error {
     InvalidIdentifier,
     NotAscii,
 }
-
-use std::fmt::{self, Display, Formatter};
 
 impl Display for Identifier {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
