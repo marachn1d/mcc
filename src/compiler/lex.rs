@@ -24,40 +24,47 @@ pub fn tokenize(bytes: &[u8]) -> Result<Box<[Token]>, Error> {
     let mut iter = bytes.iter();
 
     let mut tokens = Vec::new();
-    while let Some(byte) = iter.next() {
-        if !byte.is_ascii() {
-            return Err(Error::NotAscii);
-        }
-        if byte.is_ascii_whitespace() {
-            continue;
-        }
-
-        //constant_number(character, &mut iter)?.into()
-        let token = match byte {
-            b'(' => Token::OpenParen,
-            b')' => Token::CloseParen,
-            b'{' => Token::OpenBrace,
-            b';' => Token::Semicolon,
-            b'}' => Token::CloseBrace,
-            b'~' => Token::Tilde,
-            &a if AsciiDigit::from_int(a).is_some() => {
-                let byte = AsciiDigit::from_int(a).unwrap();
-                Token::Constant(constant_number(byte, &mut iter)?)
-            }
-            b'-' if peek(&iter).is_some_and(|x| x == b'-') => {
-                iter.next();
-                Token::Decrement
-            }
-            b'-' => Token::Minus,
-            b'+' => Token::Plus,
-            b'*' => Token::Asterisk,
-            b'/' => Token::Slash,
-            b'%' => Token::Percent,
-            a => literal(*a, &mut iter)?,
-        };
-        tokens.push(token);
+    while let Some(token) = lex_slice(&mut iter)? {
+        tokens.push(token)
     }
     Ok(tokens.into())
+}
+
+fn lex_slice(iter: &mut Iter<u8>) -> Result<Option<Token>, Error> {
+    match iter.as_slice() {
+        [b'-', b'-', ..] => {
+            iter.next();
+            iter.next();
+            Ok(Some(Token::Decrement))
+        }
+        [a, ..] if !a.is_ascii() => error("Invalid Character (I Only Accept Ascii :[)"),
+        [a, ..] if a.is_ascii_whitespace() => {
+            iter.next();
+            lex_slice(iter)
+        }
+        [a, ..] => {
+            iter.next();
+            Ok(Some(match a {
+                b'(' => Token::OpenParen,
+                b')' => Token::CloseParen,
+                b'{' => Token::OpenBrace,
+                b';' => Token::Semicolon,
+                b'}' => Token::CloseBrace,
+                b'~' => Token::Tilde,
+                &a if AsciiDigit::from_int(a).is_some() => {
+                    let byte = AsciiDigit::from_int(a).unwrap();
+                    Token::Constant(constant_number(byte, iter)?)
+                }
+                b'-' => Token::Minus,
+                b'+' => Token::Plus,
+                b'*' => Token::Asterisk,
+                b'/' => Token::Slash,
+                b'%' => Token::Percent,
+                a => literal(*a, iter)?,
+            }))
+        }
+        [] => Ok(None),
+    }
 }
 
 impl AsciiDigit {
@@ -262,6 +269,11 @@ pub enum Error {
     InvalidLiteral,
     InvalidIdentifier,
     NotAscii,
+    Other(String),
+}
+
+fn error<T>(message: &str) -> Result<T, Error> {
+    Err(Error::Other(message.into()))
 }
 
 impl Display for Identifier {

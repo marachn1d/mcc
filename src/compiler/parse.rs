@@ -129,13 +129,13 @@ pub enum Factor {
     Nested(Box<Expression>),
 }
 
-fn unary(tokens: &mut &[Token], operator: UnaryOperator) -> Result<Expression, Error> {
-    let expression = Box::new(expression(tokens)?);
+fn unary(tokens: &mut &[Token], operator: UnaryOperator) -> Result<Factor, Error> {
+    let factor = Box::new(factor(tokens)?);
     let unary = Unary {
-        exp: expression,
+        exp: factor,
         op: operator,
     };
-    Ok(Expression::Unary(unary))
+    Ok(Factor::Unary(unary))
 }
 
 #[derive(Debug)]
@@ -166,9 +166,9 @@ pub enum BinaryOperator {
     Remainder,
 }
 
-fn constant(constant: LexConstant) -> Expression {
+fn constant(constant: LexConstant) -> Factor {
     let LexConstant::Integer(inner) = constant;
-    Expression::Constant(Constant(inner))
+    Factor::Int(inner)
 }
 
 fn consume<T: PartialEq<Token> + Into<Token>>(
@@ -211,13 +211,13 @@ impl Display for Statement {
     }
 }
 
-impl From<Constant> for Expression {
+impl From<Constant> for Factor {
     fn from(c: Constant) -> Self {
-        Self::Constant(c)
+        Self::Int(c.0)
     }
 }
 
-impl From<Unary> for Expression {
+impl From<Unary> for Factor {
     fn from(u: Unary) -> Self {
         Self::Unary(u)
     }

@@ -52,6 +52,8 @@ fn convert_statement(statement: AstStatement) -> Box<[Instruction]> {
 }
 
 fn convert_expression(expression: AstExpression, instructions: &mut Vec<Instruction>) -> Value {
+    todo!()
+    /*
     match expression {
         AstExpression::Constant(AstConstant(c)) => Value::Constant(c),
         AstExpression::Unary(AstUnary {
@@ -70,6 +72,7 @@ fn convert_expression(expression: AstExpression, instructions: &mut Vec<Instruct
         }
         AstExpression::Nested(e) => convert_expression(*e, instructions),
     }
+        */
 }
 
 fn new_var() -> Rc<Identifier> {
