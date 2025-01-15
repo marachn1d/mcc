@@ -1,5 +1,5 @@
+use super::slice_iter::SliceIter;
 use std::fmt::{self, Display, Formatter};
-use std::slice::Iter;
 
 #[derive(PartialEq, Eq, Debug)]
 pub enum Token {
@@ -21,7 +21,7 @@ pub enum Token {
 }
 
 pub fn tokenize(bytes: &[u8]) -> Result<Box<[Token]>, Error> {
-    let mut iter = bytes.iter();
+    let mut iter = SliceIter::new(bytes);
 
     let mut tokens = Vec::new();
     while let Some(token) = lex_slice(&mut iter)? {
@@ -30,7 +30,7 @@ pub fn tokenize(bytes: &[u8]) -> Result<Box<[Token]>, Error> {
     Ok(tokens.into())
 }
 
-fn lex_slice(iter: &mut Iter<u8>) -> Result<Option<Token>, Error> {
+fn lex_slice(iter: &mut SliceIter<u8>) -> Result<Option<Token>, Error> {
     match iter.as_slice() {
         [b'-', b'-', ..] => {
             iter.next();
@@ -85,12 +85,12 @@ impl AsciiDigit {
     }
 }
 
-fn constant_number(start: AsciiDigit, iter: &mut Iter<u8>) -> Result<Constant, Error> {
+fn constant_number(start: AsciiDigit, iter: &mut SliceIter<u8>) -> Result<Constant, Error> {
     let mut bytes = vec![start];
     while let Some(constant) = next_if_number(iter) {
         bytes.push(constant);
     }
-    if peek(iter).is_some_and(|byte| !word_character(byte)) {
+    if iter.peek().is_some_and(|byte| !word_character(byte)) {
         let number = parse_digit(&bytes);
         Ok(Constant::Integer(number))
     } else {
@@ -98,12 +98,12 @@ fn constant_number(start: AsciiDigit, iter: &mut Iter<u8>) -> Result<Constant, E
     }
 }
 
-fn literal(byte: u8, iter: &mut Iter<u8>) -> Result<Token, Error> {
+fn literal(byte: u8, iter: &mut SliceIter<u8>) -> Result<Token, Error> {
     let mut bytes = vec![byte];
     while let Some(character) = next_if_word(iter) {
         bytes.push(character);
     }
-    if peek(iter).is_some_and(|byte| !word_character(byte)) {
+    if iter.peek().is_some_and(|byte| !word_character(byte)) {
         use keywords::{INT, RETURN, VOID};
         Ok(match bytes.as_slice() {
             INT => Keyword::Int.into(),
@@ -136,12 +136,8 @@ const fn word_character(byte: u8) -> bool {
     }
 }
 
-fn peek(iter: &Iter<u8>) -> Option<u8> {
-    iter.as_slice().first().copied()
-}
-
-fn next_if_number(iter: &mut Iter<u8>) -> Option<AsciiDigit> {
-    next_if_map(iter, AsciiDigit::from_int)
+fn next_if_number(iter: &mut SliceIter<u8>) -> Option<AsciiDigit> {
+    iter.next_if_map(AsciiDigit::from_int)
 }
 
 #[derive(Clone, Copy)]
@@ -166,26 +162,8 @@ fn parse_digit(slice: &[AsciiDigit]) -> u64 {
     cur
 }
 
-fn next_if_word(iter: &mut Iter<u8>) -> Option<u8> {
-    next_if(iter, word_character)
-}
-
-fn next_if(iter: &mut Iter<u8>, f: impl Fn(u8) -> bool) -> Option<u8> {
-    let next = peek(iter)?;
-    if f(next) {
-        iter.next().copied()
-    } else {
-        None
-    }
-}
-
-fn next_if_map<T>(iter: &mut Iter<u8>, f: impl Fn(u8) -> Option<T>) -> Option<T> {
-    let next = peek(iter)?;
-    let res = f(next);
-    if res.is_some() {
-        iter.next();
-    }
-    res
+fn next_if_word(iter: &mut SliceIter<u8>) -> Option<u8> {
+    iter.next_if(word_character)
 }
 
 impl PartialEq<Token> for Keyword {

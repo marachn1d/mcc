@@ -6,6 +6,7 @@ use std::path::PathBuf;
 pub mod codegen;
 pub mod lex;
 pub mod parse;
+pub mod slice_iter;
 
 pub use lex::Token;
 

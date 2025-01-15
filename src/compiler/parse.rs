@@ -24,7 +24,7 @@ fn program(tokens: &mut &[Token]) -> Result<Program, Error> {
 
 #[derive(Debug)]
 pub struct Program(pub Function);
-
+// working with an iterator would be better but sdince the type isn't Copy it's kinda weird idk
 fn function(tokens: &mut &[Token]) -> Result<Function, Error> {
     consume(tokens, Keyword::Int, "function")?;
     let name = consume_identifier(tokens, "function")?;
@@ -51,7 +51,7 @@ impl Display for Function {
 
 fn statement(tokens: &mut &[Token]) -> Result<Statement, Error> {
     consume(tokens, Keyword::Return, "statement")?;
-    let expression = expression(tokens)?;
+    let expression = expression(tokens, None)?;
     consume(tokens, Token::Semicolon, "statement")?;
     Ok(Statement { ret: expression })
 }
@@ -61,29 +61,36 @@ pub struct Statement {
     pub ret: Expression,
 }
 
-fn expression(tokens: &mut &[Token]) -> Result<Expression, Error> {
-    let left = Expression::Factor(factor(tokens)?).into();
-    let operator = binary_operator(tokens)?;
-    *tokens = &tokens[1..];
-    let right = Expression::Factor(factor(tokens)?).into();
-    Ok(Expression::Binary(Binary {
-        left,
-        right,
-        operator,
-    }))
+fn expression(tokens: &mut &[Token], precedence: Option<u8>) -> Result<Expression, Error> {
+    let precedence = precedence.unwrap_or(0);
+    let mut left = Expression::Factor(factor(tokens)?);
+    while let Some(operator) = binary_operator(tokens, precedence) {
+        *tokens = &tokens[1..];
+        let right = expression(tokens, Some(precedence + 1))?;
+        left = Expression::Binary(Binary {
+            left: Box::new(left),
+            right: Box::new(right),
+            operator,
+        })
+    }
+    Ok(left)
 }
 
-fn binary_operator(tokens: &mut &[Token]) -> Result<BinaryOperator, Error> {
+fn binary_operator(tokens: &mut &[Token], min_precedence: u8) -> Option<BinaryOperator> {
     let token = match tokens.first() {
-        Some(Token::Plus) => Ok(BinaryOperator::Add),
-        Some(Token::Minus) => Ok(BinaryOperator::Subtract),
-        Some(Token::Asterisk) => Ok(BinaryOperator::Multiply),
-        Some(Token::Slash) => Ok(BinaryOperator::Divide),
-        Some(Token::Percent) => Ok(BinaryOperator::Remainder),
-        _ => Err(Error::ExpectedExpression),
+        Some(Token::Plus) => Some(BinaryOperator::Add),
+        Some(Token::Minus) => Some(BinaryOperator::Subtract),
+        Some(Token::Asterisk) => Some(BinaryOperator::Multiply),
+        Some(Token::Slash) => Some(BinaryOperator::Divide),
+        Some(Token::Percent) => Some(BinaryOperator::Remainder),
+        _ => None,
     }?;
-    *tokens = &tokens[1..];
-    Ok(token)
+    if token.precedence() >= min_precedence {
+        *tokens = &tokens[1..];
+        Some(token)
+    } else {
+        None
+    }
 }
 
 fn factor(tokens: &mut &[Token]) -> Result<Factor, Error> {
@@ -164,6 +171,18 @@ pub enum BinaryOperator {
     Multiply,
     Divide,
     Remainder,
+}
+
+impl BinaryOperator {
+    const fn precedence(&self) -> u8 {
+        match self {
+            Self::Add => 45,
+            Self::Subtract => 45,
+            Self::Multiply => 50,
+            Self::Divide => 50,
+            Self::Remainder => 50,
+        }
+    }
 }
 
 fn constant(constant: LexConstant) -> Factor {
