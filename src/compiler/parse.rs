@@ -1,10 +1,12 @@
 use super::lex::Constant as LexConstant;
 use super::lex::Identifier;
 use super::lex::Keyword;
+use super::slice_iter::TokenIter;
 use super::Token;
 use std::fmt::{self, Display, Formatter};
 
-pub fn parse(mut tokens: &[Token]) -> Result<Program, Error> {
+pub fn parse(tokens: Box<[Token]>) -> Result<Program, Error> {
+    let mut tokens = TokenIter::new(tokens);
     let program = program(&mut tokens)?;
     if tokens.is_empty() {
         Ok(program)
@@ -13,7 +15,7 @@ pub fn parse(mut tokens: &[Token]) -> Result<Program, Error> {
     }
 }
 
-fn program(tokens: &mut &[Token]) -> Result<Program, Error> {
+fn program(tokens: &mut TokenIter) -> Result<Program, Error> {
     let program = function(tokens).map(Program)?;
     if tokens.is_empty() {
         Ok(program)
@@ -25,15 +27,21 @@ fn program(tokens: &mut &[Token]) -> Result<Program, Error> {
 #[derive(Debug)]
 pub struct Program(pub Function);
 // working with an iterator would be better but sdince the type isn't Copy it's kinda weird idk
-fn function(tokens: &mut &[Token]) -> Result<Function, Error> {
-    consume(tokens, Keyword::Int, "function")?;
+fn function(tokens: &mut TokenIter) -> Result<Function, Error> {
+    consume(tokens, Keyword::Int)?;
     let name = consume_identifier(tokens, "function")?;
-    consume(tokens, Token::OpenParen, "function")?;
-    consume(tokens, Keyword::Void, "function")?;
-    consume(tokens, Token::CloseParen, "function")?;
-    consume(tokens, Token::OpenBrace, "function")?;
+    tokens
+        .consume_array([
+            Token::OpenParen,
+            Keyword::Void.into(),
+            Token::CloseParen,
+            Token::OpenBrace,
+        ])
+        .map_err(|_| {
+            Error::Catchall("Expected Function Definition after Function identifier".into())
+        })?;
     let body = statement(tokens)?;
-    consume(tokens, Token::CloseBrace, "function")?;
+    consume(tokens, Token::CloseBrace)?;
     Ok(Function { name, body })
 }
 
@@ -49,10 +57,10 @@ impl Display for Function {
     }
 }
 
-fn statement(tokens: &mut &[Token]) -> Result<Statement, Error> {
-    consume(tokens, Keyword::Return, "statement")?;
+fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
+    consume(tokens, Keyword::Return)?;
     let expression = expression(tokens, None)?;
-    consume(tokens, Token::Semicolon, "statement")?;
+    consume(tokens, Token::Semicolon)?;
     Ok(Statement { ret: expression })
 }
 
@@ -61,11 +69,12 @@ pub struct Statement {
     pub ret: Expression,
 }
 
-fn expression(tokens: &mut &[Token], precedence: Option<u8>) -> Result<Expression, Error> {
+fn expression(tokens: &mut TokenIter, precedence: Option<u8>) -> Result<Expression, Error> {
     let precedence = precedence.unwrap_or(0);
     let mut left = Expression::Factor(factor(tokens)?);
     while let Some(operator) = binary_operator(tokens, precedence) {
-        *tokens = &tokens[1..];
+        //tokens.next();
+        //*tokens = &tokens[1..];
         let right = expression(tokens, Some(precedence + 1))?;
         left = Expression::Binary(Binary {
             left: Box::new(left),
@@ -76,8 +85,8 @@ fn expression(tokens: &mut &[Token], precedence: Option<u8>) -> Result<Expressio
     Ok(left)
 }
 
-fn binary_operator(tokens: &mut &[Token], min_precedence: u8) -> Option<BinaryOperator> {
-    let token = match tokens.first() {
+fn binary_operator(tokens: &mut TokenIter, min_precedence: u8) -> Option<BinaryOperator> {
+    let token = match tokens.peek() {
         Some(Token::Plus) => Some(BinaryOperator::Add),
         Some(Token::Minus) => Some(BinaryOperator::Subtract),
         Some(Token::Asterisk) => Some(BinaryOperator::Multiply),
@@ -86,26 +95,22 @@ fn binary_operator(tokens: &mut &[Token], min_precedence: u8) -> Option<BinaryOp
         _ => None,
     }?;
     if token.precedence() >= min_precedence {
-        *tokens = &tokens[1..];
+        tokens.next();
         Some(token)
     } else {
         None
     }
 }
 
-fn factor(tokens: &mut &[Token]) -> Result<Factor, Error> {
-    match tokens.first() {
-        Some(Token::Constant(crate::compiler::lex::Constant::Integer(c))) => {
-            *tokens = &tokens[1..];
-            Ok(Factor::Int(*c))
-        }
+fn factor(tokens: &mut TokenIter) -> Result<Factor, Error> {
+    match tokens.next() {
+        Some(Token::Constant(crate::compiler::lex::Constant::Integer(c))) => Ok(Factor::Int(c)),
         Some(t @ (Token::Minus | Token::Tilde)) => {
-            let operator = if t == &Token::Minus {
+            let operator = if t == Token::Minus {
                 UnaryOperator::Negate
             } else {
                 UnaryOperator::Complement
             };
-            *tokens = &tokens[1..];
             let factor = Box::new(factor(tokens)?);
             Ok(Factor::Unary(Unary {
                 exp: factor,
@@ -113,9 +118,8 @@ fn factor(tokens: &mut &[Token]) -> Result<Factor, Error> {
             }))
         }
         Some(Token::OpenParen) => {
-            *tokens = &tokens[1..];
-            let exp = Box::new(expression(tokens)?);
-            consume(tokens, Token::CloseParen, "factor")?;
+            let exp = Box::new(expression(tokens, None)?);
+            consume(tokens, Token::CloseParen)?;
             Ok(Factor::Nested(exp))
         }
         None => Err(Error::UnexpectedEof),
@@ -136,7 +140,7 @@ pub enum Factor {
     Nested(Box<Expression>),
 }
 
-fn unary(tokens: &mut &[Token], operator: UnaryOperator) -> Result<Factor, Error> {
+fn unary(tokens: &mut TokenIter, operator: UnaryOperator) -> Result<Factor, Error> {
     let factor = Box::new(factor(tokens)?);
     let unary = Unary {
         exp: factor,
@@ -191,26 +195,22 @@ fn constant(constant: LexConstant) -> Factor {
 }
 
 fn consume<T: PartialEq<Token> + Into<Token>>(
-    tokens: &mut &[Token],
+    tokens: &mut TokenIter,
     type_: T,
-    for_node: &str,
 ) -> Result<(), Error> {
-    if tokens.first().is_some_and(|x| &type_ == x) {
-        *tokens = &tokens[1..];
+    if tokens.next_if(|x| &type_ == x).is_some() {
         Ok(())
     } else {
-        Err(Error::Expected {
-            token: type_.into(),
-            for_node: for_node.into(),
-        })
+        Err(Error::Expected(type_.into()))
     }
 }
 
-fn consume_identifier(tokens: &mut &[Token], for_node: &str) -> Result<Identifier, Error> {
-    if let Some(Token::Identifier(ident)) = tokens.first() {
-        *tokens = &tokens[1..];
-        let ident: Identifier = ident.clone();
-        Ok(ident.clone())
+fn consume_identifier(tokens: &mut TokenIter, for_node: &str) -> Result<Identifier, Error> {
+    if let Some(Token::Identifier(_)) = tokens.peek() {
+        let Some(Token::Identifier(ident)) = tokens.next() else {
+            unreachable!()
+        };
+        Ok(ident)
     } else {
         Err(Error::ExpectedIdentifier {
             for_node: for_node.into(),
@@ -254,9 +254,10 @@ impl Display for Constant {
 #[derive(Debug)]
 pub enum Error {
     UnexpectedEof,
-    Expected { token: Token, for_node: String },
+    Expected(Token),
     ExpectedIdentifier { for_node: String },
     ExpectedConstant { constant: String, for_node: String },
     ExpectedExpression,
+    Catchall(String),
     ExtraStuff,
 }

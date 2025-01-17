@@ -17,7 +17,7 @@ pub fn compile(mut path: PathBuf, arg: Option<Arg>) -> Result<PathBuf, Error> {
     if arg == Some(Arg::Lex) {
         return Ok("".into());
     }
-    let program = parse::parse(&tokens)?;
+    let program = parse::parse(tokens)?;
     if arg == Some(Arg::Parse) {
         return Ok("".into());
     }

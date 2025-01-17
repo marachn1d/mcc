@@ -1,7 +1,7 @@
 use super::slice_iter::SliceIter;
 use std::fmt::{self, Display, Formatter};
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, Debug, Clone)]
 pub enum Token {
     Keyword(Keyword),
     Constant(Constant),
@@ -223,7 +223,7 @@ impl From<Constant> for Token {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum Keyword {
     Int,
     Void,
