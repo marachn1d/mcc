@@ -60,7 +60,7 @@ impl TokenIter {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.peek().is_some()
+        self.peek().is_none()
     }
 
     pub fn peek(&self) -> Option<&Token> {

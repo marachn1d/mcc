@@ -1,12 +1,16 @@
 mod tacky;
 
 use super::lex::Identifier;
+use super::parse::BinaryOperator;
 use super::parse::Constant as AstConstant;
 use super::parse::Expression as AstExpression;
+use super::parse::Factor as AstFactor;
 use super::parse::Function as AstFunction;
 use super::parse::Program as AstProgram;
 use super::parse::Statement as AstStatement;
 use super::parse::UnaryOperator;
+
+use super::parse::Binary as AstBinary;
 use std::fmt::{self, Display, Formatter};
 use std::io::Write;
 
@@ -46,6 +50,7 @@ fn emit_function(function: Function<Operand>) -> Box<[u8]> {
     bytes.into()
 }
 
+#[derive(Clone)]
 enum Instruction<T> {
     Mov {
         src: T,
@@ -55,8 +60,17 @@ enum Instruction<T> {
         operator: AsmUnaryOperator,
         operand: T,
     },
+    Binary {
+        operator: AsmBinaryOperator,
+        src_op: T,
+        dst_op: T,
+    },
     AllocateStack(isize),
     Ret,
+    Idiv {
+        divisor: T,
+    },
+    Cdq,
 }
 
 impl Instruction<Operand> {
@@ -69,15 +83,32 @@ impl Instruction<Operand> {
                 write!(writer, " {operand}")
             }
             Self::AllocateStack(amnt) => {
-                write!(writer, " subq ${amnt}, %rsp")
+                write!(writer, "subq ${amnt}, %rsp")
+            }
+            Self::Binary {
+                operator,
+                src_op,
+                dst_op,
+            } => {
+                operator.emit(writer);
+                write!(writer, " {src_op}, {dst_op}")
+            }
+            Self::Idiv { divisor } => {
+                write!(writer, "idivl {divisor}")
+            }
+            Self::Cdq => {
+                write!(writer, "cdq")
             }
         };
     }
 }
 
 mod convert_pass {
-    use super::{tacky, Function, Identifier, Instruction, Operand, Program, Register};
+    use super::{
+        tacky, BinaryOperator, Function, Identifier, Instruction, Operand, Program, Register,
+    };
     use std::rc::Rc;
+    #[derive(Clone)]
     pub enum PseudoOperand {
         Normal(Operand),
         PseudoRegister(Rc<Identifier>),
@@ -106,9 +137,23 @@ mod convert_pass {
     ) {
         use tacky::Instruction as TackyOp;
         match instruction {
+            TackyOp::Binary {
+                operator,
+                source_1,
+                source_2,
+                dst,
+            } => {
+                convert_binary(
+                    operator,
+                    source_1.into(),
+                    source_2.into(),
+                    dst.into(),
+                    instructions,
+                );
+            }
             TackyOp::Return(var) => {
                 let src = var.into();
-                let dst = Register::AX;
+                let dst = Register::Ax;
                 let dst = Operand::Register(dst);
                 let dst = PseudoOperand::Normal(dst);
                 instructions.push(Instruction::Mov { src, dst });
@@ -131,6 +176,70 @@ mod convert_pass {
         };
     }
 
+    use super::AsmBinaryOperator;
+    fn convert_binary(
+        op: BinaryOperator,
+        source_1: PseudoOperand,
+        source_2: PseudoOperand,
+        dst: PseudoOperand,
+        instructions: &mut Vec<Instruction<PseudoOperand>>,
+    ) {
+        /*instructions.push(Instruction::Mov {
+            src: source_1.into(),
+            dst: dst.clone().into(),
+        });*/
+
+        use Instruction as Op;
+        let ops: &[Instruction<PseudoOperand>] = match op {
+            // if its add subtrcat or multiply, then the only difference is the binary operator, so
+            // I use an if elif else to handle it
+            operator @ (BinaryOperator::Add
+            | BinaryOperator::Subtract
+            | BinaryOperator::Multiply) => {
+                let operator = if operator == BinaryOperator::Add {
+                    AsmBinaryOperator::Add
+                } else if operator == BinaryOperator::Subtract {
+                    AsmBinaryOperator::Sub
+                } else {
+                    AsmBinaryOperator::Mult
+                };
+                &[
+                    Op::Mov {
+                        src: source_1,
+                        dst: dst.clone(),
+                    },
+                    Op::Binary {
+                        operator,
+                        src_op: source_2,
+                        dst_op: dst,
+                    },
+                ]
+            }
+            operator @ (BinaryOperator::Divide | BinaryOperator::Remainder) => {
+                // IDiv stores the result of division in AX, and the remiainder in Dx, but
+                // otherwise the Remainder and Division instructions are the same
+                let desired_register = if operator == BinaryOperator::Divide {
+                    Register::Ax.into()
+                } else {
+                    Register::Dx.into()
+                };
+                &[
+                    Op::Mov {
+                        src: source_1.clone(),
+                        dst: Register::Ax.into(),
+                    },
+                    Op::Cdq,
+                    Op::Idiv { divisor: source_2 },
+                    Op::Mov {
+                        src: Register::Ax.into(),
+                        dst: desired_register,
+                    },
+                ]
+            }
+        };
+        instructions.extend_from_slice(ops);
+    }
+
     impl From<tacky::Value> for PseudoOperand {
         fn from(value: tacky::Value) -> Self {
             match value {
@@ -145,10 +254,17 @@ mod convert_pass {
             Self::PseudoRegister(value)
         }
     }
+
+    impl From<Register> for PseudoOperand {
+        fn from(r: Register) -> Self {
+            Self::Normal(Operand::Register(r))
+        }
+    }
 }
 
 mod fix_pass {
     use super::convert_pass::PseudoOperand;
+    use super::AsmBinaryOperator;
     use super::Register;
     use super::{Function, Identifier, Instruction, Operand, Program};
     use std::collections::HashMap;
@@ -215,7 +331,7 @@ mod fix_pass {
                 let dst = fix_register(dst, stack_frame);
                 // we can't have the stack in source, so replace it with two instructions
                 if let Operand::Stack(_) = src {
-                    let temp_register = Operand::Register(Register::R10d);
+                    let temp_register = Operand::Register(Register::R10);
                     vec.push(GoodOp::Mov {
                         src,
                         dst: temp_register,
@@ -228,12 +344,68 @@ mod fix_pass {
                     vec.push(GoodOp::Mov { src, dst });
                 }
             }
+
             BadOp::Unary { operator, operand } => {
                 let operand = fix_register(operand, stack_frame);
                 vec.push(GoodOp::Unary { operator, operand })
             }
+            BadOp::Binary {
+                operator,
+                src_op,
+                dst_op,
+            } => {
+                let mut src_op = fix_register(src_op, stack_frame);
+                let dst_op = fix_register(dst_op, stack_frame);
+                if let Operand::Stack(src_addr) = src_op {
+                    let temp_register = Operand::Register(Register::R10);
+                    vec.push(GoodOp::Mov {
+                        src: Operand::Stack(src_addr),
+                        dst: temp_register,
+                    });
+                    src_op = temp_register;
+                }
+
+                if operator == AsmBinaryOperator::Mult {
+                    if let Operand::Stack(dst_addr) = dst_op {
+                        let temp_register = Operand::Register(Register::R11);
+                        vec.push(GoodOp::Mov {
+                            src: Operand::Stack(dst_addr),
+                            dst: temp_register,
+                        });
+                        vec.push(GoodOp::Binary {
+                            operator: AsmBinaryOperator::Mult,
+                            src_op,
+                            dst_op: temp_register,
+                        });
+
+                        vec.push(GoodOp::Mov {
+                            src: temp_register,
+                            dst: Operand::Stack(dst_addr),
+                        });
+                        return;
+                    }
+                }
+                vec.push(GoodOp::Binary {
+                    operator,
+                    src_op,
+                    dst_op,
+                })
+            }
+            BadOp::Idiv { divisor } => {
+                let mut divisor = fix_register(divisor, stack_frame);
+                if let Operand::Imm(value) = divisor {
+                    let temp_register = Operand::Register(Register::R10);
+                    vec.push(GoodOp::Mov {
+                        src: Operand::Imm(value),
+                        dst: temp_register,
+                    });
+                    divisor = temp_register;
+                }
+                vec.push(GoodOp::Idiv { divisor })
+            }
             BadOp::AllocateStack(n) => vec.push(GoodOp::AllocateStack(n)),
             BadOp::Ret => vec.push(GoodOp::Ret),
+            BadOp::Cdq => vec.push(GoodOp::Cdq),
         };
     }
 
@@ -248,9 +420,17 @@ mod fix_pass {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum AsmUnaryOperator {
     Not,
     Neg,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AsmBinaryOperator {
+    Add,
+    Sub,
+    Mult,
 }
 
 impl AsmUnaryOperator {
@@ -258,6 +438,16 @@ impl AsmUnaryOperator {
         let _ = writer.write_all(match self {
             Self::Not => b"notl",
             Self::Neg => b"negl",
+        });
+    }
+}
+
+impl AsmBinaryOperator {
+    fn emit(&self, writer: &mut impl Write) {
+        let _ = writer.write_all(match self {
+            Self::Add => b"addl",
+            Self::Sub => b"subl",
+            Self::Mult => b"imull",
         });
     }
 }
@@ -280,8 +470,10 @@ enum Operand {
 
 #[derive(Clone, Copy)]
 enum Register {
-    AX,
-    R10d,
+    Ax,
+    Dx,
+    R10,
+    R11,
 }
 
 impl Display for Operand {
@@ -297,8 +489,10 @@ impl Display for Operand {
 impl Display for Register {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         f.write_str(match self {
-            Self::AX => "%eax",
-            Self::R10d => "%r10d",
+            Self::Ax => "%eax",
+            Self::Dx => "%edx",
+            Self::R10 => "%r10d",
+            Self::R11 => "%r11d",
         })
     }
 }

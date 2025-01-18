@@ -168,7 +168,7 @@ pub struct Binary {
     pub right: Box<Expression>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum BinaryOperator {
     Add,
     Subtract,

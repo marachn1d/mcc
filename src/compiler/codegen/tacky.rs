@@ -1,8 +1,11 @@
+use super::AstBinary;
 use super::AstConstant;
 use super::AstExpression;
+use super::AstFactor;
 use super::AstFunction;
 use super::AstProgram;
 use super::AstStatement;
+use super::BinaryOperator;
 use super::Identifier;
 use super::UnaryOperator;
 use crate::compiler::parse::Unary as AstUnary;
@@ -37,6 +40,12 @@ pub enum Instruction {
         source: Value,
         dst: Rc<Identifier>,
     },
+    Binary {
+        operator: BinaryOperator,
+        source_1: Value,
+        source_2: Value,
+        dst: Value,
+    },
 }
 #[derive(Clone)]
 pub enum Value {
@@ -52,27 +61,44 @@ fn convert_statement(statement: AstStatement) -> Box<[Instruction]> {
 }
 
 fn convert_expression(expression: AstExpression, instructions: &mut Vec<Instruction>) -> Value {
-    todo!()
-    /*
     match expression {
-        AstExpression::Constant(AstConstant(c)) => Value::Constant(c),
-        AstExpression::Unary(AstUnary {
-            exp: expression,
-            op,
+        AstExpression::Binary(AstBinary {
+            operator,
+            left,
+            right,
         }) => {
+            let source_1 = convert_expression(*left, instructions);
+            let source_2 = convert_expression(*right, instructions);
+            let dst = Value::Var(new_var());
+            let binary = Instruction::Binary {
+                operator,
+                source_1,
+                source_2,
+                dst: dst.clone(),
+            };
+            instructions.push(binary);
+            dst
+        }
+        AstExpression::Factor(factor) => convert_factor(factor, instructions),
+    }
+}
+
+fn convert_factor(factor: AstFactor, instructions: &mut Vec<Instruction>) -> Value {
+    match factor {
+        AstFactor::Int(c) => Value::Constant(c),
+        AstFactor::Unary(AstUnary { exp: factor, op }) => {
             let tmp = new_var();
-            let expression_result = convert_expression(*expression, instructions);
+            let factor_result = convert_factor(*factor, instructions);
             let unary = Instruction::Unary {
                 op,
-                source: expression_result,
+                source: factor_result,
                 dst: tmp.clone(),
             };
             instructions.push(unary);
             Value::Var(tmp)
         }
-        AstExpression::Nested(e) => convert_expression(*e, instructions),
+        AstFactor::Nested(e) => convert_expression(*e, instructions),
     }
-        */
 }
 
 fn new_var() -> Rc<Identifier> {
