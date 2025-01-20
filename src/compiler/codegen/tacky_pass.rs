@@ -1,29 +1,30 @@
-use super::AstBinary;
-use super::AstConstant;
-use super::AstExpression;
-use super::AstFactor;
-use super::AstFunction;
-use super::AstProgram;
-use super::AstStatement;
-use super::BinaryOperator;
+use super::assembly;
 use super::Identifier;
-use super::UnaryOperator;
+use crate::compiler::parse;
 use crate::compiler::parse::Unary as AstUnary;
+use assembly::tacky::Instruction;
+use assembly::tacky::Value;
+use parse::Binary as AstBinary;
+use parse::BinaryOperator;
+use parse::Expression as AstExpression;
+use parse::Factor as AstFactor;
+use parse::Function as AstFunction;
+use parse::Program as AstProgram;
+use parse::Statement as AstStatement;
+use parse::UnaryOperator;
 use std::rc::Rc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 
+pub type Program = super::Program<Instruction>;
+pub type Function = super::Function<Instruction>;
+pub type TackyBinary = BinaryOperator;
+pub type TackyUnary = UnaryOperator;
+
 static TEMP_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-pub struct Program(pub Function);
-
 pub fn emit(program: AstProgram) -> Program {
-    Program(convert_function(program.0))
-}
-
-pub struct Function {
-    pub name: Identifier,
-    pub body: Box<[Instruction]>,
+    super::Program::<Instruction>(convert_function(program.0))
 }
 
 fn convert_function(function: AstFunction) -> Function {
@@ -31,26 +32,6 @@ fn convert_function(function: AstFunction) -> Function {
         name: function.name,
         body: convert_statement(function.body),
     }
-}
-
-pub enum Instruction {
-    Return(Value),
-    Unary {
-        op: UnaryOperator,
-        source: Value,
-        dst: Rc<Identifier>,
-    },
-    Binary {
-        operator: BinaryOperator,
-        source_1: Value,
-        source_2: Value,
-        dst: Value,
-    },
-}
-#[derive(Clone)]
-pub enum Value {
-    Constant(u64),
-    Var(Rc<Identifier>),
 }
 
 fn convert_statement(statement: AstStatement) -> Box<[Instruction]> {

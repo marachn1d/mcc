@@ -1,4 +1,3 @@
-use super::lex::Constant as LexConstant;
 use super::lex::Identifier;
 use super::lex::Keyword;
 use super::slice_iter::TokenIter;
@@ -69,13 +68,13 @@ pub struct Statement {
     pub ret: Expression,
 }
 
-fn expression(tokens: &mut TokenIter, precedence: Option<u8>) -> Result<Expression, Error> {
-    let precedence = precedence.unwrap_or(0);
+fn expression(tokens: &mut TokenIter, min_precedence: Option<u8>) -> Result<Expression, Error> {
+    let precedence = min_precedence.unwrap_or(0);
     let mut left = Expression::Factor(factor(tokens)?);
     while let Some(operator) = binary_operator(tokens, precedence) {
         //tokens.next();
         //*tokens = &tokens[1..];
-        let right = expression(tokens, Some(precedence + 1))?;
+        let right = expression(tokens, Some(operator.precedence() + 1))?;
         left = Expression::Binary(Binary {
             left: Box::new(left),
             right: Box::new(right),
@@ -140,15 +139,6 @@ pub enum Factor {
     Nested(Box<Expression>),
 }
 
-fn unary(tokens: &mut TokenIter, operator: UnaryOperator) -> Result<Factor, Error> {
-    let factor = Box::new(factor(tokens)?);
-    let unary = Unary {
-        exp: factor,
-        op: operator,
-    };
-    Ok(Factor::Unary(unary))
-}
-
 #[derive(Debug)]
 pub struct Unary {
     pub exp: Box<Factor>,
@@ -187,11 +177,6 @@ impl BinaryOperator {
             Self::Remainder => 50,
         }
     }
-}
-
-fn constant(constant: LexConstant) -> Factor {
-    let LexConstant::Integer(inner) = constant;
-    Factor::Int(inner)
 }
 
 fn consume<T: PartialEq<Token> + Into<Token>>(

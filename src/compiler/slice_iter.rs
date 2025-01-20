@@ -1,19 +1,12 @@
 use crate::compiler::lex::Token;
 use std::iter::Iterator;
 use std::slice::Iter;
-use std::vec::IntoIter;
 pub struct SliceIter<'a, T: Copy>(Iter<'a, T>);
 
-impl<'a, T: Copy> Iterator for SliceIter<'a, T> {
+impl<T: Copy> Iterator for SliceIter<'_, T> {
     type Item = T;
     fn next(&mut self) -> Option<T> {
         self.0.next().copied()
-    }
-}
-
-impl<'a, T: PartialEq + Copy> SliceIter<'a, T> {
-    pub fn next_if_eq(&mut self, value: impl PartialEq<T>) -> Option<T> {
-        self.next_if(|x| value == x)
     }
 }
 
