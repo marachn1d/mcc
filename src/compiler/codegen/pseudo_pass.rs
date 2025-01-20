@@ -79,13 +79,25 @@ fn convert_binary(
     match op {
         // if its add subtrcat or multiply, then the only difference is the binary operator, so
         // I use an if elif else to handle it
-        operator @ (TackyBinary::Add | TackyBinary::Subtract | TackyBinary::Multiply) => {
-            let operator = if operator == TackyBinary::Add {
-                Binary::Add
-            } else if operator == TackyBinary::Subtract {
-                Binary::Sub
-            } else {
-                Binary::Mult
+        operator @ (TackyBinary::Add
+        | TackyBinary::Subtract
+        | TackyBinary::Multiply
+        | TackyBinary::And
+        | TackyBinary::Or
+        | TackyBinary::Xor
+        | TackyBinary::LeftShift
+        | TackyBinary::RightShift) => {
+            // eww eww eww
+            let operator = match operator {
+                TackyBinary::Add => Binary::Add,
+                TackyBinary::Subtract => Binary::Sub,
+                TackyBinary::Multiply => Binary::Mult,
+                TackyBinary::And => Binary::And,
+                TackyBinary::Or => Binary::Or,
+                TackyBinary::Xor => Binary::Xor,
+                TackyBinary::LeftShift => Binary::ShiftLeft,
+                TackyBinary::RightShift => Binary::ShiftRight,
+                _ => unreachable!(),
             };
             push_instructions(
                 instructions,

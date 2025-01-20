@@ -23,7 +23,7 @@ pub fn compile(mut path: PathBuf, arg: Option<Arg>) -> Result<PathBuf, Error> {
     }
     let code = codegen::generate(program, arg != Some(Arg::Tacky));
 
-    if matches!(arg, Some(Arg::Codegen) | Some(Arg::Tacky)) {
+    if matches!(arg, Some(Arg::Codegen | Arg::Tacky)) {
         return Ok("".into());
     }
 

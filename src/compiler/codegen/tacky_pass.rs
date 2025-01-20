@@ -4,22 +4,18 @@ use crate::compiler::parse;
 use crate::compiler::parse::Unary as AstUnary;
 use assembly::tacky::Instruction;
 use assembly::tacky::Value;
+
+use assembly::tacky::Function;
+use assembly::tacky::Program;
 use parse::Binary as AstBinary;
-use parse::BinaryOperator;
 use parse::Expression as AstExpression;
 use parse::Factor as AstFactor;
 use parse::Function as AstFunction;
 use parse::Program as AstProgram;
 use parse::Statement as AstStatement;
-use parse::UnaryOperator;
 use std::rc::Rc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
-
-pub type Program = super::Program<Instruction>;
-pub type Function = super::Function<Instruction>;
-pub type TackyBinary = BinaryOperator;
-pub type TackyUnary = UnaryOperator;
 
 static TEMP_COUNT: AtomicUsize = AtomicUsize::new(0);
 

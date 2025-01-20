@@ -7,7 +7,6 @@ pub use x86::Binary;
 pub use x86::Op;
 pub use x86::Pseudo;
 pub use x86::PseudoOp;
-pub use x86::Unary;
 pub use x86::X86;
 
 use std::fmt::{self, Display, Formatter};
@@ -24,16 +23,18 @@ pub struct Function<T: InstructionSet> {
 #[derive(Clone, Copy)]
 pub enum Register {
     Ax,
+    Cx,
+    Cl,
     Dx,
     R10,
     R11,
 }
 
-pub fn emit(program: Program<X86>) -> Box<[u8]> {
-    emit_function(program.0)
+pub fn emit(program: &Program<X86>) -> Box<[u8]> {
+    emit_function(&program.0)
 }
 
-fn emit_function(function: Function<X86>) -> Box<[u8]> {
+fn emit_function(function: &Function<X86>) -> Box<[u8]> {
     let mut bytes = Vec::new();
     let _ = write!(
         bytes,
@@ -53,7 +54,7 @@ pub fn push_instructions<const N: usize, T: InstructionSet>(
 ) {
     vec.reserve(N);
     for instruction in instructions {
-        vec.push(instruction)
+        vec.push(instruction);
     }
 }
 
@@ -62,6 +63,8 @@ impl Display for Register {
         f.write_str(match self {
             Self::Ax => "%eax",
             Self::Dx => "%edx",
+            Self::Cx => "%ecx",
+            Self::Cl => "%cl",
             Self::R10 => "%r10d",
             Self::R11 => "%r11d",
         })

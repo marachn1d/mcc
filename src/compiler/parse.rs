@@ -79,7 +79,7 @@ fn expression(tokens: &mut TokenIter, min_precedence: Option<u8>) -> Result<Expr
             left: Box::new(left),
             right: Box::new(right),
             operator,
-        })
+        });
     }
     Ok(left)
 }
@@ -91,6 +91,13 @@ fn binary_operator(tokens: &mut TokenIter, min_precedence: u8) -> Option<BinaryO
         Some(Token::Asterisk) => Some(BinaryOperator::Multiply),
         Some(Token::Slash) => Some(BinaryOperator::Divide),
         Some(Token::Percent) => Some(BinaryOperator::Remainder),
+
+        Some(Token::LeftShift) => Some(BinaryOperator::LeftShift),
+        Some(Token::RightShift) => Some(BinaryOperator::RightShift),
+        Some(Token::Ampersand) => Some(BinaryOperator::And),
+        Some(Token::Bar) => Some(BinaryOperator::Or),
+        Some(Token::Caret) => Some(BinaryOperator::Xor),
+
         _ => None,
     }?;
     if token.precedence() >= min_precedence {
@@ -165,16 +172,22 @@ pub enum BinaryOperator {
     Multiply,
     Divide,
     Remainder,
+    And,
+    Or,
+    Xor,
+    LeftShift,
+    RightShift,
 }
 
 impl BinaryOperator {
     const fn precedence(&self) -> u8 {
         match self {
-            Self::Add => 45,
-            Self::Subtract => 45,
-            Self::Multiply => 50,
-            Self::Divide => 50,
-            Self::Remainder => 50,
+            Self::Or => 25,
+            Self::Xor => 30,
+            Self::And => 35,
+            Self::LeftShift | Self::RightShift => 40,
+            Self::Add | Self::Subtract => 45,
+            Self::Multiply | Self::Divide | Self::Remainder => 50,
         }
     }
 }

@@ -2,7 +2,6 @@ use super::tacky::Value;
 use super::Identifier;
 use super::InstructionSet;
 use super::Register;
-use crate::compiler::parse::BinaryOperator;
 use crate::compiler::parse::UnaryOperator;
 use std::fmt::{self, Display, Formatter};
 use std::io::Write;
@@ -107,10 +106,15 @@ pub enum Binary {
     Add,
     Sub,
     Mult,
+    And,
+    Or,
+    Xor,
+    ShiftLeft,
+    ShiftRight,
 }
 
 impl Unary {
-    fn emit(&self, writer: &mut impl Write) {
+    fn emit(self, writer: &mut impl Write) {
         let _ = writer.write_all(match self {
             Self::Not => b"notl",
             Self::Neg => b"negl",
@@ -119,11 +123,16 @@ impl Unary {
 }
 
 impl Binary {
-    fn emit(&self, writer: &mut impl Write) {
+    fn emit(self, writer: &mut impl Write) {
         let _ = writer.write_all(match self {
             Self::Add => b"addl",
             Self::Sub => b"subl",
             Self::Mult => b"imull",
+            Self::And => b"andl",
+            Self::Or => b"orl",
+            Self::Xor => b"xorl",
+            Self::ShiftLeft => b"sall",
+            Self::ShiftRight => b"sarl",
         });
     }
 }
@@ -139,9 +148,9 @@ impl From<UnaryOperator> for Unary {
 impl Display for Op {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
-            Self::Imm(val) => write!(f, "${}", val),
+            Self::Imm(val) => write!(f, "${val}"),
             Self::Register(r) => r.fmt(f),
-            Self::Stack(n) => write!(f, "{}(%rbp)", n),
+            Self::Stack(n) => write!(f, "{n}(%rbp)"),
         }
     }
 }

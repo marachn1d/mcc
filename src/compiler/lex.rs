@@ -18,6 +18,11 @@ pub enum Token {
     Asterisk,
     Slash,
     Percent,
+    Ampersand,
+    Bar,
+    Caret,
+    LeftShift,
+    RightShift,
 }
 
 pub fn tokenize(bytes: &[u8]) -> Result<Box<[Token]>, Error> {
@@ -25,7 +30,7 @@ pub fn tokenize(bytes: &[u8]) -> Result<Box<[Token]>, Error> {
 
     let mut tokens = Vec::new();
     while let Some(token) = lex_slice(&mut iter)? {
-        tokens.push(token)
+        tokens.push(token);
     }
     Ok(tokens.into())
 }
@@ -36,6 +41,16 @@ fn lex_slice(iter: &mut SliceIter<u8>) -> Result<Option<Token>, Error> {
             iter.next();
             iter.next();
             Ok(Some(Token::Decrement))
+        }
+        [b'<', b'<', ..] => {
+            iter.next();
+            iter.next();
+            Ok(Some(Token::LeftShift))
+        }
+        [b'>', b'>', ..] => {
+            iter.next();
+            iter.next();
+            Ok(Some(Token::RightShift))
         }
         [a, ..] if !a.is_ascii() => error("Invalid Character (I Only Accept Ascii :[)"),
         [a, ..] if a.is_ascii_whitespace() => {
@@ -60,6 +75,9 @@ fn lex_slice(iter: &mut SliceIter<u8>) -> Result<Option<Token>, Error> {
                 b'*' => Token::Asterisk,
                 b'/' => Token::Slash,
                 b'%' => Token::Percent,
+                b'&' => Token::Ampersand,
+                b'|' => Token::Bar,
+                b'^' => Token::Caret,
                 a => literal(*a, iter)?,
             }))
         }
@@ -156,8 +174,8 @@ enum AsciiDigit {
 
 fn parse_digit(slice: &[AsciiDigit]) -> u64 {
     let mut cur = 0u64;
-    for (place, digit) in slice.iter().map(|&x| x as u8 as u64).rev().enumerate() {
-        cur += 10u64.pow(place as u32) * digit
+    for (place, digit) in slice.iter().map(|&x| u64::from(x as u8)).rev().enumerate() {
+        cur += 10u64.pow(place as u32) * digit;
     }
     cur
 }
