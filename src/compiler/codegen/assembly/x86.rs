@@ -141,6 +141,8 @@ impl From<UnaryOperator> for Unary {
         match op {
             UnaryOperator::Negate => Self::Neg,
             UnaryOperator::Complement => Self::Not,
+            // PROBABLY BAD
+            UnaryOperator::Not => Self::Not,
         }
     }
 }

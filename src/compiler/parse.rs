@@ -94,9 +94,19 @@ fn binary_operator(tokens: &mut TokenIter, min_precedence: u8) -> Option<BinaryO
 
         Some(Token::LeftShift) => Some(BinaryOperator::LeftShift),
         Some(Token::RightShift) => Some(BinaryOperator::RightShift),
-        Some(Token::Ampersand) => Some(BinaryOperator::And),
-        Some(Token::Bar) => Some(BinaryOperator::Or),
+        Some(Token::Ampersand) => Some(BinaryOperator::BitOr),
+        Some(Token::Bar) => Some(BinaryOperator::BitAnd),
         Some(Token::Caret) => Some(BinaryOperator::Xor),
+
+        Some(Token::LogicalAnd) => Some(BinaryOperator::LogAnd),
+        Some(Token::LogicalOr) => Some(BinaryOperator::LogOr),
+
+        Some(Token::EqualTo) => Some(BinaryOperator::Equal),
+        Some(Token::NotEqual) => Some(BinaryOperator::NotEqual),
+        Some(Token::LessThan) => Some(BinaryOperator::LessThan),
+        Some(Token::GreaterThan) => Some(BinaryOperator::GreaterThan),
+        Some(Token::Leq) => Some(BinaryOperator::Leq),
+        Some(Token::Geq) => Some(BinaryOperator::Geq),
 
         _ => None,
     }?;
@@ -111,11 +121,13 @@ fn binary_operator(tokens: &mut TokenIter, min_precedence: u8) -> Option<BinaryO
 fn factor(tokens: &mut TokenIter) -> Result<Factor, Error> {
     match tokens.next() {
         Some(Token::Constant(crate::compiler::lex::Constant::Integer(c))) => Ok(Factor::Int(c)),
-        Some(t @ (Token::Minus | Token::Tilde)) => {
+        Some(t @ (Token::Minus | Token::Tilde | Token::Not)) => {
             let operator = if t == Token::Minus {
                 UnaryOperator::Negate
-            } else {
+            } else if t == Token::Tilde {
                 UnaryOperator::Complement
+            } else {
+                UnaryOperator::Not
             };
             let factor = Box::new(factor(tokens)?);
             Ok(Factor::Unary(Unary {
@@ -156,6 +168,7 @@ pub struct Unary {
 pub enum UnaryOperator {
     Complement,
     Negate,
+    Not,
 }
 
 #[derive(Debug)]
@@ -172,19 +185,31 @@ pub enum BinaryOperator {
     Multiply,
     Divide,
     Remainder,
-    And,
-    Or,
+    BitAnd,
+    BitOr,
     Xor,
     LeftShift,
     RightShift,
+    LogAnd,
+    LogOr,
+    Equal,
+    NotEqual,
+    LessThan,
+    GreaterThan,
+    Leq,
+    Geq,
 }
 
 impl BinaryOperator {
     const fn precedence(&self) -> u8 {
         match self {
-            Self::Or => 25,
-            Self::Xor => 30,
-            Self::And => 35,
+            Self::LogOr => 5,
+            Self::LogAnd => 10,
+            Self::BitOr => 15,
+            Self::Xor => 20,
+            Self::BitAnd => 25,
+            Self::Equal | Self::NotEqual => 30,
+            Self::LessThan | Self::GreaterThan | Self::Leq | Self::Geq => 35,
             Self::LeftShift | Self::RightShift => 40,
             Self::Add | Self::Subtract => 45,
             Self::Multiply | Self::Divide | Self::Remainder => 50,

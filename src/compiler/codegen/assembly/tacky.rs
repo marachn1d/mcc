@@ -25,6 +25,22 @@ pub enum Instruction {
         source_2: Value,
         dst: Value,
     },
+    Copy {
+        src: Value,
+        dst: Value,
+    },
+    Jump {
+        target: Rc<Identifier>,
+    },
+    JumpIfZero {
+        condition: Value,
+        target: Rc<Identifier>,
+    },
+    JumpIfNotZero {
+        condition: Value,
+        target: Rc<Identifier>,
+    },
+    Label(Rc<Identifier>),
 }
 
 #[derive(Clone)]

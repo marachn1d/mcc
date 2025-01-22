@@ -23,6 +23,15 @@ pub enum Token {
     Caret,
     LeftShift,
     RightShift,
+    Not,
+    LogicalAnd,
+    LogicalOr,
+    EqualTo,
+    NotEqual,
+    LessThan,
+    GreaterThan,
+    Leq,
+    Geq,
 }
 
 pub fn tokenize(bytes: &[u8]) -> Result<Box<[Token]>, Error> {
@@ -46,6 +55,36 @@ fn lex_slice(iter: &mut SliceIter<u8>) -> Result<Option<Token>, Error> {
             iter.next();
             iter.next();
             Ok(Some(Token::LeftShift))
+        }
+        [b'&', b'&', ..] => {
+            iter.next();
+            iter.next();
+            Ok(Some(Token::LogicalAnd))
+        }
+        [b'|', b'|', ..] => {
+            iter.next();
+            iter.next();
+            Ok(Some(Token::LogicalOr))
+        }
+        [b'!', b'=', ..] => {
+            iter.next();
+            iter.next();
+            Ok(Some(Token::NotEqual))
+        }
+        [b'=', b'=', ..] => {
+            iter.next();
+            iter.next();
+            Ok(Some(Token::EqualTo))
+        }
+        [b'>', b'=', ..] => {
+            iter.next();
+            iter.next();
+            Ok(Some(Token::Geq))
+        }
+        [b'<', b'=', ..] => {
+            iter.next();
+            iter.next();
+            Ok(Some(Token::Leq))
         }
         [b'>', b'>', ..] => {
             iter.next();
@@ -78,6 +117,9 @@ fn lex_slice(iter: &mut SliceIter<u8>) -> Result<Option<Token>, Error> {
                 b'&' => Token::Ampersand,
                 b'|' => Token::Bar,
                 b'^' => Token::Caret,
+                b'!' => Token::Not,
+                b'<' => Token::LessThan,
+                b'>' => Token::GreaterThan,
                 a => literal(*a, iter)?,
             }))
         }

@@ -66,6 +66,7 @@ fn convert_instruction(instruction: TackyInstruction, instructions: &mut Vec<Pse
                 operand: dst.into(),
             });
         }
+        _ => {}
     };
 }
 
@@ -82,8 +83,8 @@ fn convert_binary(
         operator @ (TackyBinary::Add
         | TackyBinary::Subtract
         | TackyBinary::Multiply
-        | TackyBinary::And
-        | TackyBinary::Or
+        | TackyBinary::BitAnd
+        | TackyBinary::BitOr
         | TackyBinary::Xor
         | TackyBinary::LeftShift
         | TackyBinary::RightShift) => {
@@ -92,8 +93,8 @@ fn convert_binary(
                 TackyBinary::Add => Binary::Add,
                 TackyBinary::Subtract => Binary::Sub,
                 TackyBinary::Multiply => Binary::Mult,
-                TackyBinary::And => Binary::And,
-                TackyBinary::Or => Binary::Or,
+                TackyBinary::BitAnd => Binary::And,
+                TackyBinary::BitOr => Binary::Or,
                 TackyBinary::Xor => Binary::Xor,
                 TackyBinary::LeftShift => Binary::ShiftLeft,
                 TackyBinary::RightShift => Binary::ShiftRight,
@@ -125,5 +126,6 @@ fn convert_binary(
                 ],
             );
         }
+        _ => {}
     };
 }
