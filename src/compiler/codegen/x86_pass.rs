@@ -115,6 +115,49 @@ fn fix_instruction(op: Pseudo, stack_frame: &mut StackFrame, vec: &mut Vec<X86>)
         Pseudo::AllocateStack(n) => vec.push(X86::AllocateStack(n)),
         Pseudo::Ret => vec.push(X86::Ret),
         Pseudo::Cdq => vec.push(X86::Cdq),
+        Pseudo::Cmp {
+            left: PseudoOp::PseudoRegister(left_name),
+            right: PseudoOp::PseudoRegister(right_name),
+        } => {
+            let (left, right) = (
+                stack_frame.fix_by_name(&left_name),
+                stack_frame.fix_by_name(&right_name),
+            );
+            push_instructions(
+                vec,
+                [
+                    X86::mov(left, Register::R10.into()),
+                    X86::cmp(Register::R10.into(), right),
+                ],
+            );
+        }
+        Pseudo::Cmp {
+            left,
+            right: PseudoOp::Normal(Op::Imm(right_val)),
+        } => {
+            let left = stack_frame.fix_operand(left);
+            push_instructions(
+                vec,
+                [
+                    X86::mov(Op::Imm(right_val), Register::R11.into()),
+                    X86::cmp(left, Register::R11.into()),
+                ],
+            );
+        }
+        Pseudo::Cmp { left, right } => {
+            let (left, right) = (
+                stack_frame.fix_operand(left),
+                stack_frame.fix_operand(right),
+            );
+            vec.push(X86::Cmp { left, right })
+        }
+        Pseudo::Jmp(label) => vec.push(X86::Jmp(label)),
+        Pseudo::Label(name) => vec.push(X86::Label(name)),
+        Pseudo::JmpCC { condition, label } => vec.push(X86::JmpCC { condition, label }),
+        Pseudo::SetCC { condition, op } => {
+            let op = stack_frame.fix_operand(op);
+            vec.push(X86::SetCC { condition, op })
+        }
     };
 }
 
@@ -168,7 +211,7 @@ fn fix_binary(
                 instructions,
                 [
                     X86::mov(op, shift_reg.into()),
-                    X86::binary(operator, Register::Cl.into(), dst),
+                    X86::binary(operator, Register::Cx.into(), dst),
                 ],
             );
         }

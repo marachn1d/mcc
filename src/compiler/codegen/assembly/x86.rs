@@ -2,6 +2,7 @@ use super::tacky::Value;
 use super::Identifier;
 use super::InstructionSet;
 use super::Register;
+use crate::compiler::parse::BinaryOperator;
 use crate::compiler::parse::UnaryOperator;
 use std::fmt::{self, Display, Formatter};
 use std::io::Write;
@@ -15,13 +16,66 @@ impl InstructionSet for Pseudo {}
 
 #[derive(Clone)]
 pub enum BaseX86<T: Operand> {
-    Mov { src: T, dst: T },
-    Unary { operator: Unary, operand: T },
-    Binary { operator: Binary, op: T, dst_op: T },
+    Mov {
+        src: T,
+        dst: T,
+    },
+    Unary {
+        operator: Unary,
+        operand: T,
+    },
+    Binary {
+        operator: Binary,
+        op: T,
+        dst_op: T,
+    },
     AllocateStack(isize),
     Ret,
-    Idiv { divisor: T },
+    Idiv {
+        divisor: T,
+    },
     Cdq,
+    Cmp {
+        left: T,
+        right: T,
+    },
+    Jmp(Rc<Identifier>),
+    JmpCC {
+        condition: CondCode,
+        label: Rc<Identifier>,
+    },
+    SetCC {
+        condition: CondCode,
+        op: T,
+    },
+    Label(Rc<Identifier>),
+}
+
+#[derive(Clone)]
+pub enum CondCode {
+    E,
+    NE,
+    G,
+    GE,
+    L,
+    LE,
+}
+
+impl CondCode {
+    pub fn emit(&self, writer: &mut impl Write) {
+        let _ = write!(
+            writer,
+            "{}",
+            match self {
+                Self::E => "e",
+                Self::NE => "ne",
+                Self::G => "g",
+                Self::GE => "ge",
+                Self::L => "k",
+                Self::LE => "le",
+            }
+        );
+    }
 }
 
 impl<T: Operand> BaseX86<T> {
@@ -45,6 +99,10 @@ impl<T: Operand> BaseX86<T> {
     pub const fn idiv(divisor: T) -> Self {
         Self::Idiv { divisor }
     }
+
+    pub const fn cmp(left: T, right: T) -> Self {
+        Self::Cmp { left, right }
+    }
 }
 
 pub trait Operand {}
@@ -62,6 +120,14 @@ impl X86 {
                 write!(writer, "subq ${amnt}, %rsp")
             }
             Self::Binary {
+                operator: operator @ (Binary::ShiftLeft | Binary::ShiftRight),
+                op: Op::Register(r),
+                dst_op,
+            } => {
+                operator.emit(writer);
+                write!(writer, " {reg}, {dst_op}", reg = r.one_byte())
+            }
+            Self::Binary {
                 operator,
                 op,
                 dst_op,
@@ -74,6 +140,25 @@ impl X86 {
             }
             Self::Cdq => {
                 write!(writer, "cdq")
+            }
+            Self::Cmp { left, right } => {
+                write!(writer, "cmpl {left}, {right}")
+            }
+            Self::Jmp(label) => {
+                write!(writer, "jmp L{label}")
+            }
+            Self::JmpCC { label, condition } => {
+                let _ = write!(writer, "j");
+                condition.emit(writer);
+                write!(writer, " L{label}")
+            }
+            Self::SetCC { op, condition } => {
+                let _ = write!(writer, "set");
+                condition.emit(writer);
+                write!(writer, " {op}")
+            }
+            Self::Label(label) => {
+                write!(writer, "L{label}:")
             }
         };
     }
@@ -142,7 +227,7 @@ impl From<UnaryOperator> for Unary {
             UnaryOperator::Negate => Self::Neg,
             UnaryOperator::Complement => Self::Not,
             // PROBABLY BAD
-            UnaryOperator::Not => Self::Not,
+            UnaryOperator::Not => unreachable!(),
         }
     }
 }
@@ -151,7 +236,7 @@ impl Display for Op {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
             Self::Imm(val) => write!(f, "${val}"),
-            Self::Register(r) => r.fmt(f),
+            Self::Register(r) => write!(f, "{}", r.extended()),
             Self::Stack(n) => write!(f, "{n}(%rbp)"),
         }
     }

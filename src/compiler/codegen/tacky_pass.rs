@@ -167,18 +167,18 @@ fn new_var() -> Rc<Identifier> {
 
 fn and_label() -> Rc<Identifier> {
     let number = LABEL_COUNT.fetch_add(1, Ordering::SeqCst);
-    let var_name: Box<[u8]> = format!("_and_false{number}").into_bytes().into();
+    let var_name: Box<[u8]> = format!("and_false{number}").into_bytes().into();
     Rc::new(Identifier(var_name))
 }
 
 fn or_label() -> Rc<Identifier> {
     let number = LABEL_COUNT.fetch_add(1, Ordering::SeqCst);
-    let var_name: Box<[u8]> = format!("_or_true{number}").into_bytes().into();
+    let var_name: Box<[u8]> = format!("or_true{number}").into_bytes().into();
     Rc::new(Identifier(var_name))
 }
 
 fn end_label() -> Rc<Identifier> {
     let number = LABEL_COUNT.fetch_add(1, Ordering::SeqCst);
-    let var_name: Box<[u8]> = format!("_end{number}").into_bytes().into();
+    let var_name: Box<[u8]> = format!("end{number}").into_bytes().into();
     Rc::new(Identifier(var_name))
 }

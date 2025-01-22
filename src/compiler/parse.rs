@@ -94,8 +94,8 @@ fn binary_operator(tokens: &mut TokenIter, min_precedence: u8) -> Option<BinaryO
 
         Some(Token::LeftShift) => Some(BinaryOperator::LeftShift),
         Some(Token::RightShift) => Some(BinaryOperator::RightShift),
-        Some(Token::Ampersand) => Some(BinaryOperator::BitOr),
-        Some(Token::Bar) => Some(BinaryOperator::BitAnd),
+        Some(Token::Ampersand) => Some(BinaryOperator::BitAnd),
+        Some(Token::Bar) => Some(BinaryOperator::BitOr),
         Some(Token::Caret) => Some(BinaryOperator::Xor),
 
         Some(Token::LogicalAnd) => Some(BinaryOperator::LogAnd),
@@ -164,7 +164,7 @@ pub struct Unary {
     pub op: UnaryOperator,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum UnaryOperator {
     Complement,
     Negate,

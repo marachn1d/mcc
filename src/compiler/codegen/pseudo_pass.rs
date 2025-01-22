@@ -1,9 +1,15 @@
 use super::assembly;
 
+use crate::compiler::lex::Identifier as TackyIdent;
 use assembly::push_instructions;
 use assembly::tacky::TackyBinary;
+use assembly::tacky::TackyUnary;
+use assembly::tacky::Value;
 use assembly::Binary;
 use assembly::Op;
+use std::rc::Rc;
+
+use assembly::CondCode;
 use assembly::Pseudo;
 use assembly::PseudoOp;
 use assembly::TackyInstruction;
@@ -57,17 +63,84 @@ fn convert_instruction(instruction: TackyInstruction, instructions: &mut Vec<Pse
             source: src,
             dst,
         } => {
+            convert_unary(instructions, op, src.into(), dst.into());
+        }
+        TackyOp::Copy { src, dst } => {
             instructions.push(Pseudo::Mov {
                 src: src.into(),
-                dst: dst.clone().into(),
-            });
-            instructions.push(Pseudo::Unary {
-                operator: op.into(),
-                operand: dst.into(),
+                dst: dst.into(),
             });
         }
-        _ => {}
+        TackyOp::JumpIfZero { condition, target } => {
+            let condition_code = CondCode::E;
+            push_instructions(
+                instructions,
+                convert_conditional_jump(condition, target, condition_code),
+            )
+        }
+        TackyOp::JumpIfNotZero { condition, target } => {
+            let condition_code = CondCode::NE;
+            push_instructions(
+                instructions,
+                convert_conditional_jump(condition, target, condition_code),
+            )
+        }
+        TackyOp::Jump { target } => instructions.push(Pseudo::Jmp(target)),
+        TackyOp::Label(label) => instructions.push(Pseudo::Label(label)),
     };
+}
+
+fn convert_unary(instructions: &mut Vec<Pseudo>, op: TackyUnary, src: PseudoOp, dst: PseudoOp) {
+    if op == TackyUnary::Not {
+        push_instructions(
+            instructions,
+            [
+                Pseudo::Cmp {
+                    left: Op::Imm(0).into(),
+                    right: src,
+                },
+                Pseudo::Mov {
+                    src: Op::Imm(0).into(),
+                    dst: dst.clone(),
+                },
+                Pseudo::SetCC {
+                    condition: CondCode::E,
+                    op: dst,
+                },
+            ],
+        )
+    } else {
+        push_instructions(
+            instructions,
+            [
+                Pseudo::Mov {
+                    src,
+                    dst: dst.clone(),
+                },
+                Pseudo::Unary {
+                    operator: op.into(),
+                    operand: dst,
+                },
+            ],
+        )
+    }
+}
+
+fn convert_conditional_jump(
+    condition: Value,
+    label: Rc<TackyIdent>,
+    code: CondCode,
+) -> [Pseudo; 2] {
+    [
+        Pseudo::Cmp {
+            left: Op::Imm(0).into(),
+            right: condition.into(),
+        },
+        Pseudo::JmpCC {
+            condition: code,
+            label,
+        },
+    ]
 }
 
 fn convert_binary(

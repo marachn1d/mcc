@@ -1,6 +1,3 @@
-#[cfg(test)]
-mod test;
-
 use std::env;
 use std::fmt;
 use std::io;

@@ -4,6 +4,7 @@ use super::Identifier;
 use std::io::Write;
 pub use tacky::Instruction as TackyInstruction;
 pub use x86::Binary;
+pub use x86::CondCode;
 pub use x86::Op;
 pub use x86::Pseudo;
 pub use x86::PseudoOp;
@@ -24,7 +25,6 @@ pub struct Function<T: InstructionSet> {
 pub enum Register {
     Ax,
     Cx,
-    Cl,
     Dx,
     R10,
     R11,
@@ -58,15 +58,24 @@ pub fn push_instructions<const N: usize, T: InstructionSet>(
     }
 }
 
-impl Display for Register {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        f.write_str(match self {
-            Self::Ax => "%eax",
-            Self::Dx => "%edx",
-            Self::Cx => "%ecx",
-            Self::Cl => "%cl",
-            Self::R10 => "%r10d",
-            Self::R11 => "%r11d",
-        })
+impl Register {
+    const fn extended(&self) -> &'static str {
+        match self {
+            Register::Ax => "%eax",
+            Register::Cx => "%ecx",
+            Register::Dx => "%edx",
+            Register::R10 => "%r10d",
+            Register::R11 => "%r11d",
+        }
+    }
+
+    const fn one_byte(&self) -> &'static str {
+        match self {
+            Register::Ax => "%al",
+            Register::Cx => "%cl",
+            Register::Dx => "%dl",
+            Register::R10 => "%r10b",
+            Register::R11 => "%r11b",
+        }
     }
 }
