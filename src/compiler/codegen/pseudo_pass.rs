@@ -1,12 +1,12 @@
 use super::assembly;
 
 use crate::compiler::lex::Identifier as TackyIdent;
-use assembly::push_instructions;
 use assembly::tacky::TackyBinary;
 use assembly::tacky::TackyUnary;
 use assembly::tacky::Value;
 use assembly::Binary;
 use assembly::Op;
+use assembly::OpVec;
 use std::rc::Rc;
 
 use assembly::CondCode;
@@ -22,7 +22,7 @@ pub fn emit(program: Program<TackyInstruction>) -> Program<Pseudo> {
 }
 
 fn convert_function(Function { name, body }: Function<TackyInstruction>) -> Function<Pseudo> {
-    let mut instructions = Vec::new();
+    let mut instructions = OpVec::new();
     for op in body {
         convert_instruction(op, &mut instructions);
     }
@@ -33,7 +33,7 @@ fn convert_function(Function { name, body }: Function<TackyInstruction>) -> Func
     }
 }
 
-fn convert_instruction(instruction: TackyInstruction, instructions: &mut Vec<Pseudo>) {
+fn convert_instruction(instruction: TackyInstruction, instructions: &mut OpVec<Pseudo>) {
     use TackyInstruction as TackyOp;
     match instruction {
         TackyOp::Binary {
@@ -55,8 +55,7 @@ fn convert_instruction(instruction: TackyInstruction, instructions: &mut Vec<Pse
             let dst = Register::Ax;
             let dst = Op::Register(dst);
             let dst = PseudoOp::Normal(dst);
-            instructions.push(Pseudo::Mov { src, dst });
-            instructions.push(Pseudo::Ret);
+            instructions.push([Pseudo::Mov { src, dst }, Pseudo::Ret]);
         }
         TackyOp::Unary {
             op,
@@ -66,63 +65,51 @@ fn convert_instruction(instruction: TackyInstruction, instructions: &mut Vec<Pse
             convert_unary(instructions, op, src.into(), dst.into());
         }
         TackyOp::Copy { src, dst } => {
-            instructions.push(Pseudo::Mov {
+            instructions.push_one(Pseudo::Mov {
                 src: src.into(),
                 dst: dst.into(),
             });
         }
         TackyOp::JumpIfZero { condition, target } => {
             let condition_code = CondCode::E;
-            push_instructions(
-                instructions,
-                convert_conditional_jump(condition, target, condition_code),
-            )
+            instructions.push(convert_conditional_jump(condition, target, condition_code))
         }
         TackyOp::JumpIfNotZero { condition, target } => {
             let condition_code = CondCode::NE;
-            push_instructions(
-                instructions,
-                convert_conditional_jump(condition, target, condition_code),
-            )
+            instructions.push(convert_conditional_jump(condition, target, condition_code))
         }
-        TackyOp::Jump { target } => instructions.push(Pseudo::Jmp(target)),
-        TackyOp::Label(label) => instructions.push(Pseudo::Label(label)),
+        TackyOp::Jump { target } => instructions.push_one(Pseudo::Jmp(target)),
+        TackyOp::Label(label) => instructions.push_one(Pseudo::Label(label)),
     };
 }
 
-fn convert_unary(instructions: &mut Vec<Pseudo>, op: TackyUnary, src: PseudoOp, dst: PseudoOp) {
+fn convert_unary(instructions: &mut OpVec<Pseudo>, op: TackyUnary, src: PseudoOp, dst: PseudoOp) {
     if op == TackyUnary::Not {
-        push_instructions(
-            instructions,
-            [
-                Pseudo::Cmp {
-                    left: Op::Imm(0).into(),
-                    right: src,
-                },
-                Pseudo::Mov {
-                    src: Op::Imm(0).into(),
-                    dst: dst.clone(),
-                },
-                Pseudo::SetCC {
-                    condition: CondCode::E,
-                    op: dst,
-                },
-            ],
-        )
+        instructions.push([
+            Pseudo::Cmp {
+                left: Op::Imm(0).into(),
+                right: src,
+            },
+            Pseudo::Mov {
+                src: Op::Imm(0).into(),
+                dst: dst.clone(),
+            },
+            Pseudo::SetCC {
+                condition: CondCode::E,
+                op: dst,
+            },
+        ])
     } else {
-        push_instructions(
-            instructions,
-            [
-                Pseudo::Mov {
-                    src,
-                    dst: dst.clone(),
-                },
-                Pseudo::Unary {
-                    operator: op.into(),
-                    operand: dst,
-                },
-            ],
-        )
+        instructions.push([
+            Pseudo::Mov {
+                src,
+                dst: dst.clone(),
+            },
+            Pseudo::Unary {
+                operator: op.into(),
+                operand: dst,
+            },
+        ])
     }
 }
 
@@ -148,38 +135,29 @@ fn convert_binary(
     source_1: PseudoOp,
     source_2: PseudoOp,
     dst: PseudoOp,
-    instructions: &mut Vec<Pseudo>,
+    instructions: &mut OpVec<Pseudo>,
 ) {
     match process_binop(op) {
         Binop::Relational(condition) => {
-            push_instructions(
-                instructions,
-                [
-                    Pseudo::cmp(source_2, source_1),
-                    Pseudo::mov(Op::Imm(0).into(), dst.clone()),
-                    Pseudo::SetCC { condition, op: dst },
-                ],
-            );
+            instructions.push([
+                Pseudo::cmp(source_2, source_1),
+                Pseudo::mov(Op::Imm(0).into(), dst.clone()),
+                Pseudo::SetCC { condition, op: dst },
+            ]);
         }
         Binop::Normal(operator) => {
-            push_instructions(
-                instructions,
-                [
-                    Pseudo::mov(source_1, dst.clone()),
-                    Pseudo::binary(operator, source_2, dst),
-                ],
-            );
+            instructions.push([
+                Pseudo::mov(source_1, dst.clone()),
+                Pseudo::binary(operator, source_2, dst),
+            ]);
         }
         Binop::Div(result_register) => {
-            push_instructions(
-                instructions,
-                [
-                    Pseudo::mov(source_1, Register::Ax.into()),
-                    Pseudo::Cdq,
-                    Pseudo::idiv(source_2),
-                    Pseudo::mov(result_register.into(), dst),
-                ],
-            );
+            instructions.push([
+                Pseudo::mov(source_1, Register::Ax.into()),
+                Pseudo::Cdq,
+                Pseudo::idiv(source_2),
+                Pseudo::mov(result_register.into(), dst),
+            ]);
         }
     };
 }
@@ -203,8 +181,6 @@ const fn process_binop(op: TackyBinary) -> Binop {
 
         TackyBinary::Divide => Binop::Div(Register::Ax),
         TackyBinary::Remainder => Binop::Div(Register::Dx),
-
-        TackyBinary::LogAnd | TackyBinary::LogOr => unreachable!(),
     }
 }
 

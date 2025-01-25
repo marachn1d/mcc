@@ -1,4 +1,5 @@
 use crate::compiler::lex::Token;
+use crate::compiler::lex::{Constant, Identifier, Keyword};
 use std::iter::Iterator;
 use std::slice::Iter;
 pub struct SliceIter<'a, T: Copy>(Iter<'a, T>);
@@ -68,6 +69,9 @@ impl TokenIter {
             None
         }
     }
+    pub fn next_if_map<Y>(&mut self, f: impl Fn(Token) -> Option<Y>) -> Option<Y> {
+        f(self.next()?)
+    }
 
     pub fn consume_array<const N: usize>(&mut self, slice: [Token; N]) -> Result<(), parse::Error> {
         for token in slice {
@@ -79,6 +83,49 @@ impl TokenIter {
         }
 
         Ok(())
+    }
+
+    pub fn peek_any(&self) -> Result<&Token, parse::Error> {
+        self.peek().ok_or(parse::Error::UnexpectedEof)
+    }
+
+    pub fn consume_any(&mut self) -> Result<Token, parse::Error> {
+        self.next().ok_or(parse::Error::UnexpectedEof)
+    }
+
+    pub fn consume(&mut self, token: impl Into<Token>) -> Result<(), parse::Error> {
+        let token = token.into();
+        if self.peek().is_some_and(|x| x == &token) {
+            self.next();
+        } else {
+            return Err(parse::Error::Expected(token));
+        }
+
+        Ok(())
+    }
+
+    pub fn consume_identifier(&mut self) -> Result<Identifier, parse::Error> {
+        match self.next() {
+            Some(Token::Identifier(ident)) => Ok(ident),
+            None => Err(parse::Error::UnexpectedEof),
+            _ => Err(parse::Error::ExpectedIdentifier),
+        }
+    }
+
+    pub fn consume_constant(&mut self) -> Result<Constant, parse::Error> {
+        match self.next() {
+            Some(Token::Constant(c)) => Ok(c),
+            None => Err(parse::Error::UnexpectedEof),
+            _ => Err(parse::Error::ExpectedConstant),
+        }
+    }
+
+    pub fn consume_keyword(&mut self) -> Result<Keyword, parse::Error> {
+        match self.next() {
+            Some(Token::Keyword(ident)) => Ok(ident),
+            None => Err(parse::Error::UnexpectedEof),
+            _ => Err(parse::Error::ExpectedAnyKeyword),
+        }
     }
 }
 

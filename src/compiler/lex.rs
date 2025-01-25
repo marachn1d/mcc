@@ -32,6 +32,7 @@ pub enum Token {
     GreaterThan,
     Leq,
     Geq,
+    Equals,
 }
 
 pub fn tokenize(bytes: &[u8]) -> Result<Box<[Token]>, Error> {
@@ -120,6 +121,7 @@ fn lex_slice(iter: &mut SliceIter<u8>) -> Result<Option<Token>, Error> {
                 b'!' => Token::Not,
                 b'<' => Token::LessThan,
                 b'>' => Token::GreaterThan,
+                b'=' => Token::Equals,
                 a => literal(*a, iter)?,
             }))
         }

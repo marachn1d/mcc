@@ -2,14 +2,14 @@ use super::assembly;
 use super::Identifier;
 use crate::compiler::parse;
 use crate::compiler::parse::Unary as AstUnary;
-use assembly::push_instructions;
+use assembly::tacky::Function;
 use assembly::tacky::Instruction;
+use assembly::tacky::Program;
 use assembly::tacky::TackyBinary;
 use assembly::tacky::Value;
-
-use assembly::tacky::Function;
-use assembly::tacky::Program;
+use assembly::OpVec;
 use parse::Binary as AstBinary;
+use parse::BinaryOperator as AstBinop;
 use parse::Expression as AstExpression;
 use parse::Factor as AstFactor;
 use parse::Function as AstFunction;
@@ -35,31 +35,31 @@ fn convert_function(function: AstFunction) -> Function {
 }
 
 fn convert_statement(statement: AstStatement) -> Box<[Instruction]> {
-    let mut instructions = Vec::new();
+    let mut instructions = OpVec::new();
     let result = convert_expression(statement.ret, &mut instructions);
-    instructions.push(Instruction::Return(result));
+    instructions.push_one(Instruction::Return(result));
     instructions.into()
 }
 
-fn convert_expression(expression: AstExpression, instructions: &mut Vec<Instruction>) -> Value {
+fn convert_expression(expression: AstExpression, instructions: &mut OpVec<Instruction>) -> Value {
     match expression {
+        AstExpression::Factor(factor) => convert_factor(factor, instructions),
         AstExpression::Binary(AstBinary {
-            operator: TackyBinary::LogAnd,
+            operator,
             left,
             right,
-        }) => {
-            let source_1 = convert_expression(*left, instructions);
-            let false_label = and_label();
-            let end_label = end_label();
-            let result = Value::Var(new_var());
-            instructions.push(Instruction::JumpIfZero {
-                condition: source_1,
-                target: false_label.clone(),
-            });
-            let source_2 = convert_expression(*right, instructions);
-            push_instructions(
-                instructions,
-                [
+        }) => match process_binop(operator) {
+            ProcessedBinop::LogAnd => {
+                let source_1 = convert_expression(*left, instructions);
+                let false_label = and_label();
+                let end_label = end_label();
+                let result = Value::Var(new_var());
+                instructions.push_one(Instruction::JumpIfZero {
+                    condition: source_1,
+                    target: false_label.clone(),
+                });
+                let source_2 = convert_expression(*right, instructions);
+                instructions.push([
                     Instruction::JumpIfZero {
                         condition: source_2,
                         target: false_label.clone(),
@@ -77,28 +77,21 @@ fn convert_expression(expression: AstExpression, instructions: &mut Vec<Instruct
                         dst: result.clone(),
                     },
                     Instruction::Label(end_label.clone()),
-                ],
-            );
-            result
-        }
-        AstExpression::Binary(AstBinary {
-            operator: TackyBinary::LogOr,
-            left,
-            right,
-        }) => {
-            let source_1 = convert_expression(*left, instructions);
-            let true_label = or_label();
-            let end_label = end_label();
-            let result = Value::Var(new_var());
-            // if source 1 is true we jump to true label
-            instructions.push(Instruction::JumpIfNotZero {
-                condition: source_1,
-                target: true_label.clone(),
-            });
-            let source_2 = convert_expression(*right, instructions);
-            push_instructions(
-                instructions,
-                [
+                ]);
+                result
+            }
+            ProcessedBinop::LogOr => {
+                let source_1 = convert_expression(*left, instructions);
+                let true_label = or_label();
+                let end_label = end_label();
+                let result = Value::Var(new_var());
+                // if source 1 is true we jump to true label
+                instructions.push_one(Instruction::JumpIfNotZero {
+                    condition: source_1,
+                    target: true_label.clone(),
+                });
+                let source_2 = convert_expression(*right, instructions);
+                instructions.push([
                     Instruction::JumpIfNotZero {
                         condition: source_2,
                         target: true_label.clone(),
@@ -116,32 +109,59 @@ fn convert_expression(expression: AstExpression, instructions: &mut Vec<Instruct
                         dst: result.clone(),
                     },
                     Instruction::Label(end_label),
-                ],
-            );
-            result
-        }
-        AstExpression::Binary(AstBinary {
-            operator,
-            left,
-            right,
-        }) => {
-            let source_1 = convert_expression(*left, instructions);
-            let source_2 = convert_expression(*right, instructions);
-            let dst = Value::Var(new_var());
-            let binary = Instruction::Binary {
-                operator,
-                source_1,
-                source_2,
-                dst: dst.clone(),
-            };
-            instructions.push(binary);
-            dst
-        }
-        AstExpression::Factor(factor) => convert_factor(factor, instructions),
+                ]);
+                result
+            }
+
+            ProcessedBinop::Normal(operator) => {
+                let source_1 = convert_expression(*left, instructions);
+                let source_2 = convert_expression(*right, instructions);
+                let dst = Value::Var(new_var());
+                let binary = Instruction::Binary {
+                    operator,
+                    source_1,
+                    source_2,
+                    dst: dst.clone(),
+                };
+                instructions.push_one(binary);
+                dst
+            }
+        },
     }
 }
 
-fn convert_factor(factor: AstFactor, instructions: &mut Vec<Instruction>) -> Value {
+enum ProcessedBinop {
+    LogAnd,
+    LogOr,
+    Normal(TackyBinary),
+}
+
+const fn process_binop(binop: AstBinop) -> ProcessedBinop {
+    use AstBinop as Pre;
+    use ProcessedBinop as Post;
+    match binop {
+        Pre::LogAnd => Post::LogAnd,
+        Pre::LogOr => Post::LogOr,
+        Pre::Add => Post::Normal(TackyBinary::Add),
+        Pre::Subtract => Post::Normal(TackyBinary::Subtract),
+        Pre::Multiply => Post::Normal(TackyBinary::Multiply),
+        Pre::BitAnd => Post::Normal(TackyBinary::BitAnd),
+        Pre::BitOr => Post::Normal(TackyBinary::BitOr),
+        Pre::Xor => Post::Normal(TackyBinary::Xor),
+        Pre::LeftShift => Post::Normal(TackyBinary::LeftShift),
+        Pre::RightShift => Post::Normal(TackyBinary::RightShift),
+        Pre::Equal => Post::Normal(TackyBinary::Equal),
+        Pre::NotEqual => Post::Normal(TackyBinary::NotEqual),
+        Pre::LessThan => Post::Normal(TackyBinary::LessThan),
+        Pre::GreaterThan => Post::Normal(TackyBinary::GreaterThan),
+        Pre::Leq => Post::Normal(TackyBinary::Leq),
+        Pre::Geq => Post::Normal(TackyBinary::Geq),
+        Pre::Divide => Post::Normal(TackyBinary::Divide),
+        Pre::Remainder => Post::Normal(TackyBinary::Remainder),
+    }
+}
+
+fn convert_factor(factor: AstFactor, instructions: &mut OpVec<Instruction>) -> Value {
     match factor {
         AstFactor::Int(c) => Value::Constant(c),
         AstFactor::Unary(AstUnary { exp: factor, op }) => {
@@ -152,7 +172,7 @@ fn convert_factor(factor: AstFactor, instructions: &mut Vec<Instruction>) -> Val
                 source: factor_result,
                 dst: tmp.clone(),
             };
-            instructions.push(unary);
+            instructions.push_one(unary);
             Value::Var(tmp)
         }
         AstFactor::Nested(e) => convert_expression(*e, instructions),

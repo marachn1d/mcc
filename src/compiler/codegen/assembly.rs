@@ -10,8 +10,6 @@ pub use x86::Pseudo;
 pub use x86::PseudoOp;
 pub use x86::X86;
 
-use std::fmt::{self, Display, Formatter};
-
 pub struct Program<T: InstructionSet>(pub Function<T>);
 
 pub trait InstructionSet {}
@@ -42,19 +40,44 @@ fn emit_function(function: &Function<X86>) -> Box<[u8]> {
         name = format_args!("_{}", function.name)
     );
     for instruction in &function.body {
-        let _ = write!(bytes, "\n\t");
-        instruction.emit(&mut bytes);
+        let _ = write!(bytes, "\n\t{instruction}");
     }
     bytes.into()
 }
 
-pub fn push_instructions<const N: usize, T: InstructionSet>(
-    vec: &mut Vec<T>,
-    instructions: [T; N],
-) {
-    vec.reserve(N);
-    for instruction in instructions {
-        vec.push(instruction);
+#[derive(Default)]
+pub struct OpVec<T: InstructionSet>(pub Vec<T>);
+
+impl<T: InstructionSet> OpVec<T> {
+    pub const fn new() -> Self {
+        Self(Vec::new())
+    }
+
+    pub fn push_one(&mut self, op: impl Into<T>) {
+        self.0.push(op.into())
+    }
+
+    pub fn push(&mut self, iter: impl IntoIterator<Item = T>) {
+        self.0.extend(iter)
+    }
+}
+
+impl<T: InstructionSet> From<Vec<T>> for OpVec<T> {
+    fn from(vec: Vec<T>) -> Self {
+        Self(vec)
+    }
+}
+
+impl<T: InstructionSet> std::ops::Deref for OpVec<T> {
+    type Target = Vec<T>;
+    fn deref(&self) -> &Vec<T> {
+        &self.0
+    }
+}
+
+impl<T: InstructionSet> From<OpVec<T>> for Box<[T]> {
+    fn from(other: OpVec<T>) -> Self {
+        other.0.into()
     }
 }
 

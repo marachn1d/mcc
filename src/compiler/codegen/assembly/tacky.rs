@@ -1,14 +1,12 @@
 use super::Identifier;
 use super::InstructionSet;
 use crate::compiler::parse;
-use parse::BinaryOperator;
 use parse::UnaryOperator;
 use std::rc::Rc;
 
 pub type Program = super::Program<Instruction>;
 pub type Function = super::Function<Instruction>;
 
-pub type TackyBinary = BinaryOperator;
 pub type TackyUnary = UnaryOperator;
 impl InstructionSet for Instruction {}
 
@@ -47,4 +45,24 @@ pub enum Instruction {
 pub enum Value {
     Constant(u64),
     Var(Rc<Identifier>),
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum TackyBinary {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Remainder,
+    BitAnd,
+    BitOr,
+    Xor,
+    LeftShift,
+    RightShift,
+    Equal,
+    NotEqual,
+    LessThan,
+    GreaterThan,
+    Leq,
+    Geq,
 }

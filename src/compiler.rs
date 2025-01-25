@@ -3,7 +3,7 @@ use std::fs;
 use std::io;
 use std::path::PathBuf;
 
-pub mod codegen;
+//pub mod codegen;
 pub mod lex;
 pub mod parse;
 pub mod slice_iter;
@@ -21,6 +21,7 @@ pub fn compile(mut path: PathBuf, arg: Option<Arg>) -> Result<PathBuf, Error> {
     if arg == Some(Arg::Parse) {
         return Ok("".into());
     }
+    /*
     let code = codegen::generate(program, arg != Some(Arg::Tacky));
 
     if matches!(arg, Some(Arg::Codegen | Arg::Tacky)) {
@@ -30,6 +31,8 @@ pub fn compile(mut path: PathBuf, arg: Option<Arg>) -> Result<PathBuf, Error> {
     path.set_extension("S");
     fs::write(&path, &code)?;
     Ok(path)
+    */
+    Ok("".into())
 }
 
 #[derive(Debug)]

@@ -61,9 +61,9 @@ pub enum CondCode {
     LE,
 }
 
-impl CondCode {
-    pub fn emit(&self, writer: &mut impl Write) {
-        let _ = write!(
+impl Display for CondCode {
+    fn fmt(&self, writer: &mut Formatter) -> fmt::Result {
+        write!(
             writer,
             "{}",
             match self {
@@ -74,7 +74,7 @@ impl CondCode {
                 Self::L => "l",
                 Self::LE => "le",
             }
-        );
+        )
     }
 }
 
@@ -107,60 +107,51 @@ impl<T: Operand> BaseX86<T> {
 
 pub trait Operand {}
 
-impl X86 {
-    pub fn emit(&self, writer: &mut impl Write) {
-        let _ = match self {
-            Self::Mov { src, dst } => write!(writer, "movl  {src}, {dst}"),
-            Self::Ret => write!(writer, "movq %rbp, %rsp\n\tpopq %rbp\n\tret"),
-            Self::Unary { operator, operand } => {
-                operator.emit(writer);
-                write!(writer, " {operand}")
-            }
+impl Display for X86 {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self {
+            Self::Mov { src, dst } => write!(f, "movl  {src}, {dst}"),
+            Self::Ret => write!(f, "movq %rbp, %rsp\n\tpopq %rbp\n\tret"),
+            Self::Unary { operator, operand } => write!(f, "{operator} {operand}"),
             Self::AllocateStack(amnt) => {
-                write!(writer, "subq ${amnt}, %rsp")
+                write!(f, "subq ${amnt}, %rsp")
             }
             Self::Binary {
                 operator: operator @ (Binary::ShiftLeft | Binary::ShiftRight),
                 op: Op::Register(r),
                 dst_op,
             } => {
-                operator.emit(writer);
-                write!(writer, " {reg}, {dst_op}", reg = r.one_byte())
+                write!(f, "{operator} {reg}, {dst_op}", reg = r.one_byte())
             }
             Self::Binary {
                 operator,
                 op,
                 dst_op,
             } => {
-                operator.emit(writer);
-                write!(writer, " {op}, {dst_op}")
+                write!(f, "{operator} {op}, {dst_op}")
             }
             Self::Idiv { divisor } => {
-                write!(writer, "idivl {divisor}")
+                write!(f, "idivl {divisor}")
             }
             Self::Cdq => {
-                write!(writer, "cdq")
+                write!(f, "cdq")
             }
             Self::Cmp { left, right } => {
-                write!(writer, "cmpl {left}, {right}")
+                write!(f, "cmpl {left}, {right}")
             }
             Self::Jmp(label) => {
-                write!(writer, "jmp L{label}")
+                write!(f, "jmp L{label}")
             }
             Self::JmpCC { label, condition } => {
-                let _ = write!(writer, "j");
-                condition.emit(writer);
-                write!(writer, " L{label}")
+                write!(f, "j{condition} L{label}")
             }
             Self::SetCC { op, condition } => {
-                let _ = write!(writer, "set");
-                condition.emit(writer);
-                write!(writer, " {op}")
+                write!(f, "set{condition} {op}")
             }
             Self::Label(label) => {
-                write!(writer, "L{label}:")
+                write!(f, "L{label}:")
             }
-        };
+        }
     }
 }
 
@@ -198,27 +189,31 @@ pub enum Binary {
     ShiftRight,
 }
 
-impl Unary {
-    fn emit(self, writer: &mut impl Write) {
-        let _ = writer.write_all(match self {
-            Self::Not => b"notl",
-            Self::Neg => b"negl",
-        });
+impl Display for Unary {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            (match self {
+                Self::Not => "notl",
+                Self::Neg => "negl",
+            })
+        )
     }
 }
 
-impl Binary {
-    fn emit(self, writer: &mut impl Write) {
-        let _ = writer.write_all(match self {
-            Self::Add => b"addl",
-            Self::Sub => b"subl",
-            Self::Mult => b"imull",
-            Self::And => b"andl",
-            Self::Or => b"orl",
-            Self::Xor => b"xorl",
-            Self::ShiftLeft => b"sall",
-            Self::ShiftRight => b"sarl",
-        });
+impl Display for Binary {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        f.write_str(match self {
+            Self::Add => "addl",
+            Self::Sub => "subl",
+            Self::Mult => "imull",
+            Self::And => "andl",
+            Self::Or => "orl",
+            Self::Xor => "xorl",
+            Self::ShiftLeft => "sall",
+            Self::ShiftRight => "sarl",
+        })
     }
 }
 impl From<UnaryOperator> for Unary {
