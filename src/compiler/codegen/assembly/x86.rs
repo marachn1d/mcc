@@ -71,7 +71,7 @@ impl CondCode {
                 Self::NE => "ne",
                 Self::G => "g",
                 Self::GE => "ge",
-                Self::L => "k",
+                Self::L => "l",
                 Self::LE => "le",
             }
         );

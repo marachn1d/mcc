@@ -150,29 +150,18 @@ fn convert_binary(
     dst: PseudoOp,
     instructions: &mut Vec<Pseudo>,
 ) {
-    match op {
-        // if its add subtrcat or multiply, then the only difference is the binary operator, so
-        // I use an if elif else to handle it
-        operator @ (TackyBinary::Add
-        | TackyBinary::Subtract
-        | TackyBinary::Multiply
-        | TackyBinary::BitAnd
-        | TackyBinary::BitOr
-        | TackyBinary::Xor
-        | TackyBinary::LeftShift
-        | TackyBinary::RightShift) => {
-            // eww eww eww
-            let operator = match operator {
-                TackyBinary::Add => Binary::Add,
-                TackyBinary::Subtract => Binary::Sub,
-                TackyBinary::Multiply => Binary::Mult,
-                TackyBinary::BitAnd => Binary::And,
-                TackyBinary::BitOr => Binary::Or,
-                TackyBinary::Xor => Binary::Xor,
-                TackyBinary::LeftShift => Binary::ShiftLeft,
-                TackyBinary::RightShift => Binary::ShiftRight,
-                _ => unreachable!(),
-            };
+    match process_binop(op) {
+        Binop::Relational(condition) => {
+            push_instructions(
+                instructions,
+                [
+                    Pseudo::cmp(source_2, source_1),
+                    Pseudo::mov(Op::Imm(0).into(), dst.clone()),
+                    Pseudo::SetCC { condition, op: dst },
+                ],
+            );
+        }
+        Binop::Normal(operator) => {
             push_instructions(
                 instructions,
                 [
@@ -181,24 +170,46 @@ fn convert_binary(
                 ],
             );
         }
-        operator @ (TackyBinary::Divide | TackyBinary::Remainder) => {
-            // IDiv stores the result of division in AX, and the remiainder in Dx, but
-            // otherwise the Remainder and Division instructions are the same
-            let result = if operator == TackyBinary::Divide {
-                Register::Ax.into()
-            } else {
-                Register::Dx.into()
-            };
+        Binop::Div(result_register) => {
             push_instructions(
                 instructions,
                 [
                     Pseudo::mov(source_1, Register::Ax.into()),
                     Pseudo::Cdq,
                     Pseudo::idiv(source_2),
-                    Pseudo::mov(result, dst),
+                    Pseudo::mov(result_register.into(), dst),
                 ],
             );
         }
-        _ => {}
     };
+}
+
+const fn process_binop(op: TackyBinary) -> Binop {
+    match op {
+        TackyBinary::Add => Binop::Normal(Binary::Add),
+        TackyBinary::Subtract => Binop::Normal(Binary::Sub),
+        TackyBinary::Multiply => Binop::Normal(Binary::Mult),
+        TackyBinary::BitAnd => Binop::Normal(Binary::And),
+        TackyBinary::BitOr => Binop::Normal(Binary::Or),
+        TackyBinary::Xor => Binop::Normal(Binary::Xor),
+        TackyBinary::LeftShift => Binop::Normal(Binary::ShiftLeft),
+        TackyBinary::RightShift => Binop::Normal(Binary::ShiftRight),
+        TackyBinary::Equal => Binop::Relational(CondCode::E),
+        TackyBinary::NotEqual => Binop::Relational(CondCode::NE),
+        TackyBinary::LessThan => Binop::Relational(CondCode::L),
+        TackyBinary::GreaterThan => Binop::Relational(CondCode::G),
+        TackyBinary::Leq => Binop::Relational(CondCode::LE),
+        TackyBinary::Geq => Binop::Relational(CondCode::GE),
+
+        TackyBinary::Divide => Binop::Div(Register::Ax),
+        TackyBinary::Remainder => Binop::Div(Register::Dx),
+
+        TackyBinary::LogAnd | TackyBinary::LogOr => unreachable!(),
+    }
+}
+
+enum Binop {
+    Relational(CondCode),
+    Normal(Binary),
+    Div(Register),
 }
