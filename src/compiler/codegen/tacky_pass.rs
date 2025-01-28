@@ -173,6 +173,18 @@ fn convert_expression(expression: AstExpression, instructions: &mut OpVec<Instru
                 instructions.push_one(binary);
                 dst
             }
+            ProcessedBinop::Compound(op) => {
+                let dst = convert_expression(*left, instructions);
+                let modifier = convert_expression(*right, instructions);
+                let binary = Instruction::Binary {
+                    operator: op.into(),
+                    source_1: dst.clone(),
+                    source_2: modifier,
+                    dst: dst.clone(),
+                };
+                instructions.push_one(binary);
+                dst
+            }
         },
     }
 }
@@ -181,6 +193,37 @@ enum ProcessedBinop {
     LogAnd,
     LogOr,
     Normal(TackyBinary),
+    Compound(CompoundOp),
+}
+
+enum CompoundOp {
+    Plus,
+    Minus,
+    Times,
+    Div,
+    Rem,
+    And,
+    Or,
+    Xor,
+    LeftShift,
+    RightShift,
+}
+
+impl From<CompoundOp> for TackyBinary {
+    fn from(other: CompoundOp) -> Self {
+        match other {
+            CompoundOp::Plus => Self::Add,
+            CompoundOp::Minus => Self::Subtract,
+            CompoundOp::Times => Self::Multiply,
+            CompoundOp::Div => Self::Divide,
+            CompoundOp::Rem => Self::Remainder,
+            CompoundOp::And => Self::BitAnd,
+            CompoundOp::Or => Self::BitOr,
+            CompoundOp::Xor => Self::Xor,
+            CompoundOp::LeftShift => Self::LeftShift,
+            CompoundOp::RightShift => Self::RightShift,
+        }
+    }
 }
 
 const fn process_binop(binop: AstBinop) -> ProcessedBinop {
@@ -206,9 +249,20 @@ const fn process_binop(binop: AstBinop) -> ProcessedBinop {
         Pre::Geq => Post::Normal(TackyBinary::Geq),
         Pre::Divide => Post::Normal(TackyBinary::Divide),
         Pre::Remainder => Post::Normal(TackyBinary::Remainder),
+        Pre::PlusEquals => Post::Compound(CompoundOp::Plus),
+        Pre::MinusEquals => Post::Compound(CompoundOp::Minus),
+        Pre::TimesEqual => Post::Compound(CompoundOp::Times),
+        Pre::DivEqual => Post::Compound(CompoundOp::Div),
+
+        Pre::RemEqual => Post::Compound(CompoundOp::Rem),
+        Pre::BitAndEqual => Post::Compound(CompoundOp::And),
+        Pre::BitOrEqual => Post::Compound(CompoundOp::Or),
+        Pre::BitXorEqual => Post::Compound(CompoundOp::Xor),
+        Pre::LeftShiftEqual => Post::Compound(CompoundOp::LeftShift),
+        Pre::RightShiftEqual => Post::Compound(CompoundOp::RightShift),
     }
 }
-
+use super::super::parse::Fixness;
 fn convert_factor(factor: AstFactor, instructions: &mut OpVec<Instruction>) -> Value {
     match factor {
         AstFactor::Int(c) => Value::Constant(c),
@@ -225,6 +279,70 @@ fn convert_factor(factor: AstFactor, instructions: &mut OpVec<Instruction>) -> V
         }
         AstFactor::Nested(e) => convert_expression(*e, instructions),
         AstFactor::Var(v) => Value::Var(v.into()),
+        AstFactor::Increment { op, fix } => {
+            if fix == Fixness::Postfix {
+                let expression_result = convert_expression(*op, instructions);
+                let old_value_location = new_var();
+                instructions.push([
+                    Instruction::Copy {
+                        src: expression_result.clone(),
+                        dst: Value::Var(old_value_location.clone()),
+                    },
+                    Instruction::Binary {
+                        operator: TackyBinary::Add,
+                        source_1: expression_result.clone(),
+                        source_2: Value::Constant(1),
+                        dst: expression_result,
+                    },
+                ]);
+
+                Value::Var(old_value_location)
+            } else {
+                //prefix
+                let expression_result = convert_expression(*op, instructions);
+                let unary = Instruction::Binary {
+                    operator: TackyBinary::Add,
+                    source_1: expression_result.clone(),
+                    source_2: Value::Constant(1),
+                    dst: expression_result.clone(),
+                };
+
+                instructions.push_one(unary);
+                expression_result
+            }
+        }
+        AstFactor::Decrement { op, fix } => {
+            if fix == Fixness::Postfix {
+                let expression_result = convert_expression(*op, instructions);
+                let old_value_location = new_var();
+                instructions.push([
+                    Instruction::Copy {
+                        src: expression_result.clone(),
+                        dst: Value::Var(old_value_location.clone()),
+                    },
+                    Instruction::Binary {
+                        operator: TackyBinary::Subtract,
+                        source_1: expression_result.clone(),
+                        source_2: Value::Constant(1),
+                        dst: expression_result,
+                    },
+                ]);
+
+                Value::Var(old_value_location)
+            } else {
+                //prefix
+                let expression_result = convert_expression(*op, instructions);
+                let binary = Instruction::Binary {
+                    operator: TackyBinary::Subtract,
+                    source_1: expression_result.clone(),
+                    source_2: Value::Constant(1),
+                    dst: expression_result.clone(),
+                };
+
+                instructions.push_one(binary);
+                expression_result
+            }
+        }
     }
 }
 

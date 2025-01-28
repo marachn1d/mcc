@@ -134,49 +134,99 @@ pub struct Declaration {
 fn expression(tokens: &mut TokenIter, min_precedence: Option<u8>) -> Result<Expression, Error> {
     let precedence = min_precedence.unwrap_or(0);
     let mut left = Expression::Factor(factor(tokens)?);
-    while let Some(operator) = binary_operator(tokens, precedence) {
-        if operator == BinaryOperator::Equals {
-            let right = expression(tokens, Some(operator.precedence()))?;
-            left = Expression::Assignment((left, right).into())
-        } else {
-            let right = expression(tokens, Some(operator.precedence() + 1))?;
-            left = Expression::Binary(Binary {
-                left: Box::new(left),
-                right: Box::new(right),
-                operator,
-            });
+
+    // here's the way we do it: factor parses prefix operators, then this function binary_operator
+    // now needs to handle postfix operators OR binary operators
+    while let Some(operator) = expression_operator(tokens, precedence) {
+        match operator {
+            ExpressionOperator::Increment => {
+                left = Expression::Factor(Factor::Increment {
+                    op: Box::new(left),
+                    fix: Fixness::Postfix,
+                })
+            }
+            ExpressionOperator::Decrement => {
+                left = Expression::Factor(Factor::Decrement {
+                    op: Box::new(left),
+                    fix: Fixness::Postfix,
+                })
+            }
+            ExpressionOperator::Binary(BinaryOperator::Equals) => {
+                let right = expression(tokens, Some(BinaryOperator::Equals.precedence()))?;
+                left = Expression::Assignment((left, right).into())
+            }
+            ExpressionOperator::Binary(operator) => {
+                let right = expression(tokens, Some(operator.precedence() + 1))?;
+                left = Expression::Binary(Binary {
+                    left: Box::new(left),
+                    right: Box::new(right),
+                    operator,
+                });
+            }
         }
-        //tokens.next();
-        //*tokens = &tokens[1..];
     }
     Ok(left)
 }
 
+enum ExpressionOperator {
+    Binary(BinaryOperator),
+    Increment,
+    Decrement,
+}
+
+fn expression_operator(tokens: &mut TokenIter, min_precedence: u8) -> Option<ExpressionOperator> {
+    let next = tokens.peek()?;
+    if next == &Token::Increment {
+        tokens.next();
+        return Some(ExpressionOperator::Increment);
+    } else if next == &Token::Decrement {
+        tokens.next();
+        return Some(ExpressionOperator::Decrement);
+    }
+    Some(ExpressionOperator::Binary(binary_operator(
+        tokens,
+        min_precedence,
+    )?))
+}
+
 fn binary_operator(tokens: &mut TokenIter, min_precedence: u8) -> Option<BinaryOperator> {
-    let token = match tokens.peek() {
-        Some(Token::Plus) => Some(BinaryOperator::Add),
-        Some(Token::Minus) => Some(BinaryOperator::Subtract),
-        Some(Token::Asterisk) => Some(BinaryOperator::Multiply),
-        Some(Token::Slash) => Some(BinaryOperator::Divide),
-        Some(Token::Percent) => Some(BinaryOperator::Remainder),
+    let token = match tokens.peek()? {
+        Token::Plus => Some(BinaryOperator::Add),
+        Token::Minus => Some(BinaryOperator::Subtract),
+        Token::Asterisk => Some(BinaryOperator::Multiply),
+        Token::Slash => Some(BinaryOperator::Divide),
+        Token::Percent => Some(BinaryOperator::Remainder),
 
-        Some(Token::LeftShift) => Some(BinaryOperator::LeftShift),
-        Some(Token::RightShift) => Some(BinaryOperator::RightShift),
-        Some(Token::Ampersand) => Some(BinaryOperator::BitAnd),
-        Some(Token::Bar) => Some(BinaryOperator::BitOr),
-        Some(Token::Caret) => Some(BinaryOperator::Xor),
+        Token::LeftShift => Some(BinaryOperator::LeftShift),
+        Token::RightShift => Some(BinaryOperator::RightShift),
+        Token::Ampersand => Some(BinaryOperator::BitAnd),
+        Token::Bar => Some(BinaryOperator::BitOr),
+        Token::Caret => Some(BinaryOperator::Xor),
 
-        Some(Token::LogicalAnd) => Some(BinaryOperator::LogAnd),
-        Some(Token::LogicalOr) => Some(BinaryOperator::LogOr),
+        Token::LogicalAnd => Some(BinaryOperator::LogAnd),
+        Token::LogicalOr => Some(BinaryOperator::LogOr),
 
-        Some(Token::EqualTo) => Some(BinaryOperator::EqualTo),
-        Some(Token::NotEqual) => Some(BinaryOperator::NotEqual),
-        Some(Token::LessThan) => Some(BinaryOperator::LessThan),
-        Some(Token::GreaterThan) => Some(BinaryOperator::GreaterThan),
-        Some(Token::Leq) => Some(BinaryOperator::Leq),
-        Some(Token::Geq) => Some(BinaryOperator::Geq),
+        Token::EqualTo => Some(BinaryOperator::EqualTo),
+        Token::NotEqual => Some(BinaryOperator::NotEqual),
+        Token::LessThan => Some(BinaryOperator::LessThan),
+        Token::GreaterThan => Some(BinaryOperator::GreaterThan),
+        Token::Leq => Some(BinaryOperator::Leq),
+        Token::Geq => Some(BinaryOperator::Geq),
 
-        Some(Token::Equals) => Some(BinaryOperator::Equals),
+        Token::Equals => Some(BinaryOperator::Equals),
+        Token::PlusEqual => Some(BinaryOperator::PlusEquals),
+        Token::MinusEqual => Some(BinaryOperator::MinusEquals),
+        Token::TimesEqual => Some(BinaryOperator::TimesEqual),
+        Token::DivEqual => Some(BinaryOperator::DivEqual),
+        Token::PercentEqual => Some(BinaryOperator::RemEqual),
+
+        Token::BitAndEqual => Some(BinaryOperator::BitAndEqual),
+
+        Token::BitOrEqual => Some(BinaryOperator::BitOrEqual),
+
+        Token::BitXorEqual => Some(BinaryOperator::BitXorEqual),
+        Token::LeftShiftEqual => Some(BinaryOperator::LeftShiftEqual),
+        Token::RightShiftEqual => Some(BinaryOperator::RightShiftEqual),
 
         _ => None,
     }?;
@@ -187,10 +237,25 @@ fn binary_operator(tokens: &mut TokenIter, min_precedence: u8) -> Option<BinaryO
         None
     }
 }
-
+use super::lex;
 fn factor(tokens: &mut TokenIter) -> Result<Factor, Error> {
     match tokens.consume_any()? {
-        Token::Constant(crate::compiler::lex::Constant::Integer(c)) => Ok(Factor::Int(c)),
+        Token::Increment => {
+            let exp = Box::new(expression(tokens, None)?);
+            Ok(Factor::Increment {
+                op: exp,
+                fix: Fixness::Prefix,
+            })
+        }
+        Token::Decrement => {
+            let exp = Box::new(expression(tokens, None)?);
+            Ok(Factor::Decrement {
+                op: exp,
+                fix: Fixness::Prefix,
+            })
+        }
+        Token::Constant(lex::Constant::Integer(c)) => Ok(Factor::Int(c)),
+
         t @ (Token::Minus | Token::Tilde | Token::Not) => {
             let operator = if t == Token::Minus {
                 UnaryOperator::Negate
@@ -214,6 +279,15 @@ fn factor(tokens: &mut TokenIter) -> Result<Factor, Error> {
         _ => Err(Error::ExpectedExpression),
     }
 }
+
+fn unop(token: &Token) -> Option<UnaryOperator> {
+    match token {
+        Token::Minus => Some(UnaryOperator::Negate),
+        Token::Tilde => Some(UnaryOperator::Complement),
+        Token::Not => Some(UnaryOperator::Not),
+        _ => None,
+    }
+}
 #[derive(Debug)]
 pub enum Expression {
     Assignment(Box<(Expression, Expression)>),
@@ -226,7 +300,15 @@ pub enum Factor {
     Var(Rc<Identifier>),
     Int(u64),
     Unary(Unary),
+    Increment { op: Box<Expression>, fix: Fixness },
+    Decrement { op: Box<Expression>, fix: Fixness },
     Nested(Box<Expression>),
+}
+
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+pub enum Fixness {
+    Prefix,
+    Postfix,
 }
 
 #[derive(Debug)]
@@ -269,13 +351,35 @@ pub enum BinaryOperator {
     GreaterThan,
     Leq,
     Geq,
+
     Equals,
+
+    PlusEquals,
+    MinusEquals,
+    TimesEqual,
+    DivEqual,
+    RemEqual,
+    BitAndEqual,
+    BitOrEqual,
+    BitXorEqual,
+    LeftShiftEqual,
+    RightShiftEqual,
 }
 
 impl BinaryOperator {
     const fn precedence(&self) -> u8 {
         match self {
-            Self::Equals => 1,
+            Self::Equals
+            | Self::PlusEquals
+            | Self::MinusEquals
+            | Self::TimesEqual
+            | Self::DivEqual
+            | Self::RemEqual
+            | Self::BitAndEqual
+            | Self::BitOrEqual
+            | Self::BitXorEqual
+            | Self::LeftShiftEqual
+            | Self::RightShiftEqual => 1,
             Self::LogOr => 5,
             Self::LogAnd => 10,
             Self::BitOr => 15,

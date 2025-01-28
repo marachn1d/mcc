@@ -99,6 +99,28 @@ fn resolve_expression(exp: AstExpression, map: &mut VarMap) -> Result<AstExpress
 
 fn resolve_factor(factor: AstFactor, map: &mut VarMap) -> Result<AstFactor, Error> {
     match factor {
+        AstFactor::Increment { op, fix } => {
+            let expression = resolve_expression(*op, map)?;
+            if let AstExpression::Factor(AstFactor::Var(_)) = expression {
+                Ok(AstFactor::Increment {
+                    op: expression.into(),
+                    fix,
+                })
+            } else {
+                Err(Error::InvalidLval)
+            }
+        }
+        AstFactor::Decrement { op, fix } => {
+            let expression = resolve_expression(*op, map)?;
+            if let AstExpression::Factor(AstFactor::Var(_)) = expression {
+                Ok(AstFactor::Decrement {
+                    op: expression.into(),
+                    fix,
+                })
+            } else {
+                Err(Error::InvalidLval)
+            }
+        }
         AstFactor::Var(v) => {
             if let Some(key) = map.get(&v) {
                 Ok(AstFactor::Var(key.clone()))

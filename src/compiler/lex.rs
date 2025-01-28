@@ -15,14 +15,27 @@ pub enum Token {
     Decrement,
     Minus,
     Plus,
+
+    PlusEqual,
+    MinusEqual,
+    TimesEqual,
+    DivEqual,
+    PercentEqual,
+    BitAndEqual,
+    BitOrEqual,
+    BitXorEqual,
+
     Asterisk,
     Slash,
     Percent,
     Ampersand,
     Bar,
     Caret,
+    Increment,
     LeftShift,
+    LeftShiftEqual,
     RightShift,
+    RightShiftEqual,
     Not,
     LogicalAnd,
     LogicalOr,
@@ -47,6 +60,16 @@ pub fn tokenize(bytes: &[u8]) -> Result<Box<[Token]>, Error> {
 
 fn lex_slice(iter: &mut SliceIter<u8>) -> Result<Option<Token>, Error> {
     match iter.as_slice() {
+        [b'<', b'<', b'=', ..] => {
+            iter.next();
+            iter.next();
+            Ok(Some(Token::LeftShiftEqual))
+        }
+        [b'>', b'>', b'=', ..] => {
+            iter.next();
+            iter.next();
+            Ok(Some(Token::RightShiftEqual))
+        }
         [b'-', b'-', ..] => {
             iter.next();
             iter.next();
@@ -92,6 +115,52 @@ fn lex_slice(iter: &mut SliceIter<u8>) -> Result<Option<Token>, Error> {
             iter.next();
             Ok(Some(Token::RightShift))
         }
+        [b'+', b'=', ..] => {
+            iter.next();
+            iter.next();
+            Ok(Some(Token::PlusEqual))
+        }
+        [b'+', b'+', ..] => {
+            iter.next();
+            iter.next();
+            Ok(Some(Token::Increment))
+        }
+        [b'-', b'=', ..] => {
+            iter.next();
+            iter.next();
+            Ok(Some(Token::MinusEqual))
+        }
+        [b'*', b'=', ..] => {
+            iter.next();
+            iter.next();
+            Ok(Some(Token::TimesEqual))
+        }
+        [b'/', b'=', ..] => {
+            iter.next();
+            iter.next();
+            Ok(Some(Token::DivEqual))
+        }
+        [b'%', b'=', ..] => {
+            iter.next();
+            iter.next();
+            Ok(Some(Token::PercentEqual))
+        }
+        [b'&', b'=', ..] => {
+            iter.next();
+            iter.next();
+            Ok(Some(Token::BitAndEqual))
+        }
+        [b'|', b'=', ..] => {
+            iter.next();
+            iter.next();
+            Ok(Some(Token::BitOrEqual))
+        }
+        [b'^', b'=', ..] => {
+            iter.next();
+            iter.next();
+            Ok(Some(Token::BitXorEqual))
+        }
+
         [a, ..] if !a.is_ascii() => error("Invalid Character (I Only Accept Ascii :[)"),
         [a, ..] if a.is_ascii_whitespace() => {
             iter.next();
