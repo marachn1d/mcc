@@ -59,7 +59,7 @@ pub enum TackyBinary {
     Xor,
     LeftShift,
     RightShift,
-    Equal,
+    EqualTo,
     NotEqual,
     LessThan,
     GreaterThan,

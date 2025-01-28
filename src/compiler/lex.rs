@@ -258,8 +258,14 @@ impl PartialEq<Token> for Identifier {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Hash)]
+#[derive(PartialEq, Eq, Clone, Hash)]
 pub struct Identifier(pub Box<[u8]>);
+
+impl fmt::Debug for Identifier {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "{}", unsafe { std::str::from_utf8_unchecked(&self.0) })
+    }
+}
 
 impl AsRef<[u8]> for Identifier {
     fn as_ref(&self) -> &[u8] {

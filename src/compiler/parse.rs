@@ -73,7 +73,10 @@ fn declaration(tokens: &mut TokenIter) -> Result<Declaration, Error> {
         Token::Semicolon => Ok(None),
         _ => Err(Error::Catchall("expected initializer or semicolon".into())),
     }?;
-    Ok(Declaration { name, init })
+    Ok(Declaration {
+        name: name.into(),
+        init,
+    })
 }
 
 #[derive(Debug)]
@@ -121,10 +124,11 @@ pub enum Statement {
     Null,
 }
 
+use std::rc::Rc;
 #[derive(Debug)]
 pub struct Declaration {
-    pub name: Identifier,
-    init: Option<Expression>,
+    pub name: Rc<Identifier>,
+    pub init: Option<Expression>,
 }
 
 fn expression(tokens: &mut TokenIter, min_precedence: Option<u8>) -> Result<Expression, Error> {
@@ -206,7 +210,7 @@ fn factor(tokens: &mut TokenIter) -> Result<Factor, Error> {
             consume(tokens, Token::CloseParen)?;
             Ok(Factor::Nested(exp))
         }
-        Token::Identifier(ident) => Ok(Factor::Var(ident)),
+        Token::Identifier(ident) => Ok(Factor::Var(ident.into())),
         _ => Err(Error::ExpectedExpression),
     }
 }
@@ -219,7 +223,7 @@ pub enum Expression {
 
 #[derive(Debug)]
 pub enum Factor {
-    Var(Identifier),
+    Var(Rc<Identifier>),
     Int(u64),
     Unary(Unary),
     Nested(Box<Expression>),

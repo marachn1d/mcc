@@ -10,16 +10,18 @@ pub use x86::Pseudo;
 pub use x86::PseudoOp;
 pub use x86::X86;
 
+#[derive(Debug)]
 pub struct Program<T: InstructionSet>(pub Function<T>);
 
 pub trait InstructionSet {}
 
+#[derive(Debug)]
 pub struct Function<T: InstructionSet> {
     pub name: Identifier,
     pub body: Box<[T]>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum Register {
     Ax,
     Cx,

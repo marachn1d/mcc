@@ -172,7 +172,7 @@ const fn process_binop(op: TackyBinary) -> Binop {
         TackyBinary::Xor => Binop::Normal(Binary::Xor),
         TackyBinary::LeftShift => Binop::Normal(Binary::ShiftLeft),
         TackyBinary::RightShift => Binop::Normal(Binary::ShiftRight),
-        TackyBinary::Equal => Binop::Relational(CondCode::E),
+        TackyBinary::EqualTo => Binop::Relational(CondCode::E),
         TackyBinary::NotEqual => Binop::Relational(CondCode::NE),
         TackyBinary::LessThan => Binop::Relational(CondCode::L),
         TackyBinary::GreaterThan => Binop::Relational(CondCode::G),

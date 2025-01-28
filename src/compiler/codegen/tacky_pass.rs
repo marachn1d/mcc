@@ -10,10 +10,13 @@ use assembly::tacky::Value;
 use assembly::OpVec;
 use parse::Binary as AstBinary;
 use parse::BinaryOperator as AstBinop;
+use parse::Declaration as AstDeclaration;
 use parse::Expression as AstExpression;
 use parse::Factor as AstFactor;
 use parse::Function as AstFunction;
 use parse::Program as AstProgram;
+
+use parse::BlockItem as AstBlock;
 use parse::Statement as AstStatement;
 use std::rc::Rc;
 use std::sync::atomic::AtomicUsize;
@@ -28,22 +31,66 @@ pub fn emit(program: AstProgram) -> Program {
 }
 
 fn convert_function(function: AstFunction) -> Function {
+    let mut body = convert_blocks(function.body);
+    body.push_one(Instruction::Return(Value::Constant(0)));
+
     Function {
         name: function.name,
-        body: convert_statement(function.body),
+        body: body.into(),
     }
 }
 
-fn convert_statement(statement: AstStatement) -> Box<[Instruction]> {
+fn convert_blocks(block: Box<[AstBlock]>) -> OpVec<Instruction> {
     let mut instructions = OpVec::new();
-    let result = convert_expression(statement.ret, &mut instructions);
-    instructions.push_one(Instruction::Return(result));
-    instructions.into()
+    for block in block {
+        match block {
+            AstBlock::S(statement) => convert_statement(statement, &mut instructions),
+            AstBlock::D(declaration) => convert_declaration(declaration, &mut instructions),
+        };
+    }
+    instructions.push_one(Instruction::Return(Value::Constant(0)));
+    instructions
+}
+
+fn convert_statement(statement: AstStatement, instructions: &mut OpVec<Instruction>) {
+    match statement {
+        AstStatement::Ret(e) => {
+            let result = convert_expression(e, instructions);
+            instructions.push_one(Instruction::Return(result));
+        }
+        AstStatement::Null => {}
+        AstStatement::Exp(e) => {
+            let _ = convert_expression(e, instructions);
+        }
+    }
+}
+
+fn convert_declaration(dec: AstDeclaration, instructions: &mut OpVec<Instruction>) {
+    if let Some(init) = dec.init {
+        let result = convert_expression(init, instructions);
+        instructions.push_one(Instruction::Copy {
+            src: result,
+            dst: Value::Var(dec.name),
+        })
+    }
 }
 
 fn convert_expression(expression: AstExpression, instructions: &mut OpVec<Instruction>) -> Value {
     match expression {
         AstExpression::Factor(factor) => convert_factor(factor, instructions),
+        AstExpression::Assignment(v) => {
+            let (var, rhs) = *v;
+            let AstExpression::Factor(AstFactor::Var(var)) = var else {
+                unreachable!()
+            };
+            let result = convert_expression(rhs, instructions);
+            let var = Value::Var(var);
+            instructions.push_one(Instruction::Copy {
+                src: result,
+                dst: var.clone(),
+            });
+            var
+        }
         AstExpression::Binary(AstBinary {
             operator,
             left,
@@ -140,6 +187,7 @@ const fn process_binop(binop: AstBinop) -> ProcessedBinop {
     use AstBinop as Pre;
     use ProcessedBinop as Post;
     match binop {
+        Pre::Equals => unreachable!(),
         Pre::LogAnd => Post::LogAnd,
         Pre::LogOr => Post::LogOr,
         Pre::Add => Post::Normal(TackyBinary::Add),
@@ -150,7 +198,7 @@ const fn process_binop(binop: AstBinop) -> ProcessedBinop {
         Pre::Xor => Post::Normal(TackyBinary::Xor),
         Pre::LeftShift => Post::Normal(TackyBinary::LeftShift),
         Pre::RightShift => Post::Normal(TackyBinary::RightShift),
-        Pre::Equal => Post::Normal(TackyBinary::Equal),
+        Pre::EqualTo => Post::Normal(TackyBinary::EqualTo),
         Pre::NotEqual => Post::Normal(TackyBinary::NotEqual),
         Pre::LessThan => Post::Normal(TackyBinary::LessThan),
         Pre::GreaterThan => Post::Normal(TackyBinary::GreaterThan),
@@ -176,6 +224,7 @@ fn convert_factor(factor: AstFactor, instructions: &mut OpVec<Instruction>) -> V
             Value::Var(tmp)
         }
         AstFactor::Nested(e) => convert_expression(*e, instructions),
+        AstFactor::Var(v) => Value::Var(v.into()),
     }
 }
 

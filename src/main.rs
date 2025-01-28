@@ -50,6 +50,7 @@ pub enum Arg {
     Codegen,
     Compile,
     Tacky,
+    Validate,
 }
 
 impl Arg {
@@ -60,6 +61,7 @@ impl Arg {
             "--codegen" => Some(Arg::Codegen),
             "-S" => Some(Arg::Compile),
             "--tacky" => Some(Arg::Tacky),
+            "--validate" => Some(Arg::Validate),
             _ => None,
         }
     }

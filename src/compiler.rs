@@ -3,9 +3,11 @@ use std::fs;
 use std::io;
 use std::path::PathBuf;
 
-//pub mod codegen;
+pub mod codegen;
 pub mod lex;
+
 pub mod parse;
+pub mod resolve;
 pub mod slice_iter;
 
 pub use lex::Token;
@@ -21,7 +23,11 @@ pub fn compile(mut path: PathBuf, arg: Option<Arg>) -> Result<PathBuf, Error> {
     if arg == Some(Arg::Parse) {
         return Ok("".into());
     }
-    /*
+
+    let program = resolve::resolve(program)?;
+    if arg == Some(Arg::Validate) {
+        return Ok("".into());
+    }
     let code = codegen::generate(program, arg != Some(Arg::Tacky));
 
     if matches!(arg, Some(Arg::Codegen | Arg::Tacky)) {
@@ -31,8 +37,6 @@ pub fn compile(mut path: PathBuf, arg: Option<Arg>) -> Result<PathBuf, Error> {
     path.set_extension("S");
     fs::write(&path, &code)?;
     Ok(path)
-    */
-    Ok("".into())
 }
 
 #[derive(Debug)]
@@ -42,11 +46,18 @@ pub enum Error {
     Io(io::Error),
     Lexing(lex::Error),
     Parsing(parse::Error),
+    Resolution(resolve::Error),
 }
 
 impl From<io::Error> for Error {
     fn from(e: io::Error) -> Self {
         Error::Io(e)
+    }
+}
+
+impl From<resolve::Error> for Error {
+    fn from(e: resolve::Error) -> Self {
+        Error::Resolution(e)
     }
 }
 

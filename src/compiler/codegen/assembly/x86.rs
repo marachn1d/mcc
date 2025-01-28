@@ -14,7 +14,7 @@ pub type X86 = BaseX86<Op>;
 impl InstructionSet for X86 {}
 impl InstructionSet for Pseudo {}
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum BaseX86<T: Operand> {
     Mov {
         src: T,
@@ -51,7 +51,7 @@ pub enum BaseX86<T: Operand> {
     Label(Rc<Identifier>),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum CondCode {
     E,
     NE,
@@ -155,7 +155,7 @@ impl Display for X86 {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum Op {
     Imm(u64),
     Register(Register),
@@ -171,13 +171,13 @@ impl From<Register> for Op {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Unary {
     Not,
     Neg,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Binary {
     Add,
     Sub,
@@ -237,7 +237,7 @@ impl Display for Op {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum PseudoOp {
     Normal(Op),
     PseudoRegister(Rc<Identifier>),
