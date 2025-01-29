@@ -133,29 +133,17 @@ pub struct Declaration {
 
 fn expression(tokens: &mut TokenIter, min_precedence: Option<u8>) -> Result<Expression, Error> {
     let precedence = min_precedence.unwrap_or(0);
-    let mut left = Expression::Factor(factor(tokens)?);
+    let mut left = factor(tokens)?.into();
 
     // here's the way we do it: factor parses prefix operators, then this function binary_operator
     // now needs to handle postfix operators OR binary operators
-    while let Some(operator) = expression_operator(tokens, precedence) {
+    while let Some(operator) = binary_operator(tokens, precedence) {
         match operator {
-            ExpressionOperator::Increment => {
-                left = Expression::Factor(Factor::Increment {
-                    op: Box::new(left),
-                    fix: Fixness::Postfix,
-                })
-            }
-            ExpressionOperator::Decrement => {
-                left = Expression::Factor(Factor::Decrement {
-                    op: Box::new(left),
-                    fix: Fixness::Postfix,
-                })
-            }
-            ExpressionOperator::Binary(BinaryOperator::Equals) => {
+            BinaryOperator::Equals => {
                 let right = expression(tokens, Some(BinaryOperator::Equals.precedence()))?;
                 left = Expression::Assignment((left, right).into())
             }
-            ExpressionOperator::Binary(operator) => {
+            _ => {
                 let right = expression(tokens, Some(operator.precedence() + 1))?;
                 left = Expression::Binary(Binary {
                     left: Box::new(left),
@@ -166,27 +154,6 @@ fn expression(tokens: &mut TokenIter, min_precedence: Option<u8>) -> Result<Expr
         }
     }
     Ok(left)
-}
-
-enum ExpressionOperator {
-    Binary(BinaryOperator),
-    Increment,
-    Decrement,
-}
-
-fn expression_operator(tokens: &mut TokenIter, min_precedence: u8) -> Option<ExpressionOperator> {
-    let next = tokens.peek()?;
-    if next == &Token::Increment {
-        tokens.next();
-        return Some(ExpressionOperator::Increment);
-    } else if next == &Token::Decrement {
-        tokens.next();
-        return Some(ExpressionOperator::Decrement);
-    }
-    Some(ExpressionOperator::Binary(binary_operator(
-        tokens,
-        min_precedence,
-    )?))
 }
 
 fn binary_operator(tokens: &mut TokenIter, min_precedence: u8) -> Option<BinaryOperator> {
@@ -239,20 +206,14 @@ fn binary_operator(tokens: &mut TokenIter, min_precedence: u8) -> Option<BinaryO
 }
 use super::lex;
 fn factor(tokens: &mut TokenIter) -> Result<Factor, Error> {
-    match tokens.consume_any()? {
+    let factor = match tokens.consume_any()? {
         Token::Increment => {
             let exp = Box::new(expression(tokens, None)?);
-            Ok(Factor::Increment {
-                op: exp,
-                fix: Fixness::Prefix,
-            })
+            Ok(Factor::PrefixIncrement(exp))
         }
         Token::Decrement => {
             let exp = Box::new(expression(tokens, None)?);
-            Ok(Factor::Decrement {
-                op: exp,
-                fix: Fixness::Prefix,
-            })
+            Ok(Factor::PrefixDecrement(exp))
         }
         Token::Constant(lex::Constant::Integer(c)) => Ok(Factor::Int(c)),
 
@@ -277,6 +238,11 @@ fn factor(tokens: &mut TokenIter) -> Result<Factor, Error> {
         }
         Token::Identifier(ident) => Ok(Factor::Var(ident.into())),
         _ => Err(Error::ExpectedExpression),
+    }?;
+    match tokens.next_if(|x| x == &Token::Increment || x == &Token::Decrement) {
+        Some(Token::Increment) => Ok(Factor::PostfixIncrement(Box::new(factor.into()))),
+        Some(Token::Decrement) => Ok(Factor::PostfixDecrement(Box::new(factor.into()))),
+        _ => Ok(factor),
     }
 }
 
@@ -288,20 +254,74 @@ fn unop(token: &Token) -> Option<UnaryOperator> {
         _ => None,
     }
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Expression {
-    Assignment(Box<(Expression, Expression)>),
-    Factor(Factor),
+    Assignment(Box<(Self, Self)>),
     Binary(Binary),
+
+    //factors
+    PostfixIncrement(Box<Self>),
+    PostfixDecrement(Box<Self>),
+    PrefixIncrement(Box<Self>),
+    PrefixDecrement(Box<Self>),
+
+    Var(Rc<Identifier>),
+    Int(u64),
+    Unary(Unary),
+    Nested(Box<Self>),
 }
 
-#[derive(Debug)]
+impl Expression {
+    pub const fn lvalue(&self) -> bool {
+        matches!(self, Self::Var(_))
+    }
+}
+
+impl TryFrom<Expression> for Factor {
+    type Error = ();
+
+    fn try_from(expression: Expression) -> Result<Factor, ()> {
+        match expression {
+            Expression::Var(v) => Ok(Self::Var(v)),
+            Expression::Int(i) => Ok(Self::Int(i)),
+            Expression::Unary(u) => Ok(Self::Unary(u)),
+            Expression::PrefixIncrement(p) => Ok(Self::PrefixIncrement(p)),
+            Expression::PrefixDecrement(p) => Ok(Self::PrefixDecrement(p)),
+            Expression::PostfixIncrement(p) => Ok(Self::PostfixIncrement(p)),
+            Expression::PostfixDecrement(p) => Ok(Self::PostfixDecrement(p)),
+
+            Expression::Nested(e) => Ok(Self::Nested(e)),
+
+            _ => Err(()),
+        }
+    }
+}
+
+impl From<Factor> for Expression {
+    fn from(factor: Factor) -> Self {
+        match factor {
+            Factor::Var(v) => Self::Var(v),
+            Factor::Int(i) => Self::Int(i),
+            Factor::Unary(u) => Self::Unary(u),
+            Factor::PrefixIncrement(p) => Self::PrefixIncrement(p),
+            Factor::PrefixDecrement(p) => Self::PrefixDecrement(p),
+            Factor::PostfixIncrement(p) => Self::PostfixIncrement(p),
+            Factor::PostfixDecrement(p) => Self::PostfixDecrement(p),
+
+            Factor::Nested(e) => Self::Nested(e),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum Factor {
     Var(Rc<Identifier>),
     Int(u64),
     Unary(Unary),
-    Increment { op: Box<Expression>, fix: Fixness },
-    Decrement { op: Box<Expression>, fix: Fixness },
+    PrefixIncrement(Box<Expression>),
+    PostfixIncrement(Box<Expression>),
+    PrefixDecrement(Box<Expression>),
+    PostfixDecrement(Box<Expression>),
     Nested(Box<Expression>),
 }
 
@@ -311,7 +331,7 @@ pub enum Fixness {
     Postfix,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Unary {
     pub exp: Box<Factor>,
     pub op: UnaryOperator,
@@ -324,14 +344,14 @@ pub enum UnaryOperator {
     Not,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Binary {
     pub operator: BinaryOperator,
     pub left: Box<Expression>,
     pub right: Box<Expression>,
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum BinaryOperator {
     Add,
     Subtract,
@@ -391,6 +411,34 @@ impl BinaryOperator {
             Self::Add | Self::Subtract => 45,
             Self::Multiply | Self::Divide | Self::Remainder => 50,
         }
+    }
+
+    pub const fn compound(&self) -> bool {
+        matches!(
+            self,
+            Self::PlusEquals
+                | Self::MinusEquals
+                | Self::TimesEqual
+                | Self::DivEqual
+                | Self::RemEqual
+                | Self::BitAndEqual
+                | Self::BitOrEqual
+                | Self::BitXorEqual
+                | Self::LeftShiftEqual
+                | Self::RightShiftEqual
+        )
+    }
+
+    pub const fn relational(&self) -> bool {
+        matches!(
+            self,
+            Self::EqualTo
+                | Self::NotEqual
+                | Self::LessThan
+                | Self::GreaterThan
+                | Self::Leq
+                | Self::Geq
+        )
     }
 }
 

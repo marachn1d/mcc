@@ -24,6 +24,7 @@ pub fn compile(mut path: PathBuf, arg: Option<Arg>) -> Result<PathBuf, Error> {
         return Ok("".into());
     }
 
+    eprintln!("pre resolution: {:#?}", program);
     let program = resolve::resolve(program)?;
     if arg == Some(Arg::Validate) {
         return Ok("".into());

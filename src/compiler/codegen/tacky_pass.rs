@@ -77,10 +77,9 @@ fn convert_declaration(dec: AstDeclaration, instructions: &mut OpVec<Instruction
 
 fn convert_expression(expression: AstExpression, instructions: &mut OpVec<Instruction>) -> Value {
     match expression {
-        AstExpression::Factor(factor) => convert_factor(factor, instructions),
         AstExpression::Assignment(v) => {
             let (var, rhs) = *v;
-            let AstExpression::Factor(AstFactor::Var(var)) = var else {
+            let AstExpression::Var(var) = var else {
                 unreachable!()
             };
             let result = convert_expression(rhs, instructions);
@@ -186,6 +185,17 @@ fn convert_expression(expression: AstExpression, instructions: &mut OpVec<Instru
                 dst
             }
         },
+        expression @ (AstExpression::Var(_)
+        | AstExpression::Int(_)
+        | AstExpression::Unary(_)
+        | AstExpression::PrefixIncrement(_)
+        | AstExpression::PrefixDecrement(_)
+        | AstExpression::PostfixIncrement(_)
+        | AstExpression::PostfixDecrement(_)
+        | AstExpression::Nested(_)) => {
+            let factor = AstFactor::try_from(expression).unwrap();
+            convert_factor(factor, instructions)
+        }
     }
 }
 
@@ -262,7 +272,6 @@ const fn process_binop(binop: AstBinop) -> ProcessedBinop {
         Pre::RightShiftEqual => Post::Compound(CompoundOp::RightShift),
     }
 }
-use super::super::parse::Fixness;
 fn convert_factor(factor: AstFactor, instructions: &mut OpVec<Instruction>) -> Value {
     match factor {
         AstFactor::Int(c) => Value::Constant(c),
@@ -279,69 +288,63 @@ fn convert_factor(factor: AstFactor, instructions: &mut OpVec<Instruction>) -> V
         }
         AstFactor::Nested(e) => convert_expression(*e, instructions),
         AstFactor::Var(v) => Value::Var(v.into()),
-        AstFactor::Increment { op, fix } => {
-            if fix == Fixness::Postfix {
-                let expression_result = convert_expression(*op, instructions);
-                let old_value_location = new_var();
-                instructions.push([
-                    Instruction::Copy {
-                        src: expression_result.clone(),
-                        dst: Value::Var(old_value_location.clone()),
-                    },
-                    Instruction::Binary {
-                        operator: TackyBinary::Add,
-                        source_1: expression_result.clone(),
-                        source_2: Value::Constant(1),
-                        dst: expression_result,
-                    },
-                ]);
-
-                Value::Var(old_value_location)
-            } else {
-                //prefix
-                let expression_result = convert_expression(*op, instructions);
-                let unary = Instruction::Binary {
-                    operator: TackyBinary::Add,
-                    source_1: expression_result.clone(),
-                    source_2: Value::Constant(1),
-                    dst: expression_result.clone(),
-                };
-
-                instructions.push_one(unary);
-                expression_result
-            }
+        AstFactor::PrefixIncrement(exp) => {
+            //prefix
+            let expression_result = convert_expression(*exp, instructions);
+            let unary = Instruction::Binary {
+                operator: TackyBinary::Add,
+                source_1: expression_result.clone(),
+                source_2: Value::Constant(1),
+                dst: expression_result.clone(),
+            };
+            instructions.push_one(unary);
+            expression_result
         }
-        AstFactor::Decrement { op, fix } => {
-            if fix == Fixness::Postfix {
-                let expression_result = convert_expression(*op, instructions);
-                let old_value_location = new_var();
-                instructions.push([
-                    Instruction::Copy {
-                        src: expression_result.clone(),
-                        dst: Value::Var(old_value_location.clone()),
-                    },
-                    Instruction::Binary {
-                        operator: TackyBinary::Subtract,
-                        source_1: expression_result.clone(),
-                        source_2: Value::Constant(1),
-                        dst: expression_result,
-                    },
-                ]);
-
-                Value::Var(old_value_location)
-            } else {
-                //prefix
-                let expression_result = convert_expression(*op, instructions);
-                let binary = Instruction::Binary {
+        AstFactor::PrefixDecrement(exp) => {
+            let expression_result = convert_expression(*exp, instructions);
+            let unary = Instruction::Binary {
+                operator: TackyBinary::Subtract,
+                source_1: expression_result.clone(),
+                source_2: Value::Constant(1),
+                dst: expression_result.clone(),
+            };
+            instructions.push_one(unary);
+            expression_result
+        }
+        AstFactor::PostfixDecrement(exp) => {
+            let expression_result = convert_expression(*exp, instructions);
+            let old_value_location = new_var();
+            instructions.push([
+                Instruction::Copy {
+                    src: expression_result.clone(),
+                    dst: Value::Var(old_value_location.clone()),
+                },
+                Instruction::Binary {
                     operator: TackyBinary::Subtract,
                     source_1: expression_result.clone(),
                     source_2: Value::Constant(1),
-                    dst: expression_result.clone(),
-                };
+                    dst: expression_result,
+                },
+            ]);
+            Value::Var(old_value_location)
+        }
 
-                instructions.push_one(binary);
-                expression_result
-            }
+        AstFactor::PostfixIncrement(exp) => {
+            let expression_result = convert_expression(*exp, instructions);
+            let old_value_location = new_var();
+            instructions.push([
+                Instruction::Copy {
+                    src: expression_result.clone(),
+                    dst: Value::Var(old_value_location.clone()),
+                },
+                Instruction::Binary {
+                    operator: TackyBinary::Add,
+                    source_1: expression_result.clone(),
+                    source_2: Value::Constant(1),
+                    dst: expression_result,
+                },
+            ]);
+            Value::Var(old_value_location)
         }
     }
 }

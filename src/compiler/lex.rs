@@ -63,9 +63,11 @@ fn lex_slice(iter: &mut SliceIter<u8>) -> Result<Option<Token>, Error> {
         [b'<', b'<', b'=', ..] => {
             iter.next();
             iter.next();
+            iter.next();
             Ok(Some(Token::LeftShiftEqual))
         }
         [b'>', b'>', b'=', ..] => {
+            iter.next();
             iter.next();
             iter.next();
             Ok(Some(Token::RightShiftEqual))

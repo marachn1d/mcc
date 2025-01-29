@@ -69,7 +69,7 @@ fn resolve_expression(exp: AstExpression, map: &mut VarMap) -> Result<AstExpress
     match exp {
         AstExpression::Assignment(a) => {
             let (left, right) = *a;
-            if let AstExpression::Factor(AstFactor::Var(_)) = left {
+            if left.lvalue() {
                 let assignment = (
                     resolve_expression(left, map)?,
                     resolve_expression(right, map)?,
@@ -78,6 +78,22 @@ fn resolve_expression(exp: AstExpression, map: &mut VarMap) -> Result<AstExpress
             } else {
                 Err(Error::InvalidLval)
             }
+        }
+        AstExpression::Binary(AstBinary {
+            left,
+            right,
+            operator,
+        }) if operator.compound() => {
+            if !left.lvalue() {
+                return Err(Error::InvalidLval);
+            }
+            let left = resolve_expression(*left, map)?.into();
+            let right = resolve_expression(*right, map)?.into();
+            Ok(AstExpression::Binary(AstBinary {
+                left,
+                right,
+                operator,
+            }))
         }
 
         AstExpression::Binary(AstBinary {
@@ -93,30 +109,54 @@ fn resolve_expression(exp: AstExpression, map: &mut VarMap) -> Result<AstExpress
                 operator,
             }))
         }
-        AstExpression::Factor(f) => Ok(AstExpression::Factor(resolve_factor(f, map)?)),
+        expression @ (AstExpression::Var(_)
+        | AstExpression::Int(_)
+        | AstExpression::Unary(_)
+        | AstExpression::PrefixIncrement(_)
+        | AstExpression::PrefixDecrement(_)
+        | AstExpression::PostfixIncrement(_)
+        | AstExpression::PostfixDecrement(_)
+        | AstExpression::Nested(_)) => {
+            let factor = AstFactor::try_from(expression).unwrap();
+            Ok(resolve_factor(factor, map)?.into())
+        }
     }
 }
 
 fn resolve_factor(factor: AstFactor, map: &mut VarMap) -> Result<AstFactor, Error> {
     match factor {
-        AstFactor::Increment { op, fix } => {
-            let expression = resolve_expression(*op, map)?;
-            if let AstExpression::Factor(AstFactor::Var(_)) = expression {
-                Ok(AstFactor::Increment {
-                    op: expression.into(),
-                    fix,
-                })
+        AstFactor::PrefixIncrement(inner) => {
+            let inner = Box::new(resolve_expression(*inner, map)?);
+
+            if inner.lvalue() {
+                Ok(AstFactor::PrefixIncrement(inner))
             } else {
                 Err(Error::InvalidLval)
             }
         }
-        AstFactor::Decrement { op, fix } => {
-            let expression = resolve_expression(*op, map)?;
-            if let AstExpression::Factor(AstFactor::Var(_)) = expression {
-                Ok(AstFactor::Decrement {
-                    op: expression.into(),
-                    fix,
-                })
+        AstFactor::PrefixDecrement(inner) => {
+            let inner = Box::new(resolve_expression(*inner, map)?);
+
+            if inner.lvalue() {
+                Ok(AstFactor::PrefixDecrement(inner))
+            } else {
+                Err(Error::InvalidLval)
+            }
+        }
+        AstFactor::PostfixIncrement(inner) => {
+            let inner = Box::new(resolve_expression(*inner, map)?);
+
+            if inner.lvalue() {
+                Ok(AstFactor::PostfixIncrement(inner))
+            } else {
+                Err(Error::InvalidLval)
+            }
+        }
+        AstFactor::PostfixDecrement(inner) => {
+            let inner = Box::new(resolve_expression(*inner, map)?);
+
+            if inner.lvalue() {
+                Ok(AstFactor::PostfixDecrement(inner))
             } else {
                 Err(Error::InvalidLval)
             }
