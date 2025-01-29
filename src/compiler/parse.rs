@@ -135,15 +135,21 @@ fn expression(tokens: &mut TokenIter, min_precedence: Option<u8>) -> Result<Expr
     let precedence = min_precedence.unwrap_or(0);
     let mut left = factor(tokens)?.into();
 
-    // here's the way we do it: factor parses prefix operators, then this function binary_operator
-    // now needs to handle postfix operators OR binary operators
     while let Some(operator) = binary_operator(tokens, precedence) {
         match operator {
             BinaryOperator::Equals => {
-                let right = expression(tokens, Some(BinaryOperator::Equals.precedence()))?;
-                left = Expression::Assignment((left, right).into())
+                let right = expression(tokens, Some(operator.precedence()))?;
+                left = Expression::Assignment((left, right).into());
             }
-            _ => {
+            operator if operator.compound() => {
+                let right = expression(tokens, Some(operator.precedence()))?;
+                left = Expression::Binary(Binary {
+                    left: Box::new(left),
+                    right: Box::new(right),
+                    operator,
+                });
+            }
+            operator => {
                 let right = expression(tokens, Some(operator.precedence() + 1))?;
                 left = Expression::Binary(Binary {
                     left: Box::new(left),
@@ -208,11 +214,11 @@ use super::lex;
 fn factor(tokens: &mut TokenIter) -> Result<Factor, Error> {
     let factor = match tokens.consume_any()? {
         Token::Increment => {
-            let exp = Box::new(expression(tokens, None)?);
+            let exp = Box::new(factor(tokens)?.into());
             Ok(Factor::PrefixIncrement(exp))
         }
         Token::Decrement => {
-            let exp = Box::new(expression(tokens, None)?);
+            let exp = Box::new(factor(tokens)?.into());
             Ok(Factor::PrefixDecrement(exp))
         }
         Token::Constant(lex::Constant::Integer(c)) => Ok(Factor::Int(c)),
@@ -273,7 +279,11 @@ pub enum Expression {
 
 impl Expression {
     pub const fn lvalue(&self) -> bool {
-        matches!(self, Self::Var(_))
+        match self {
+            Self::Var(_) => true,
+            Self::Nested(e) => e.lvalue(),
+            _ => false,
+        }
     }
 }
 
@@ -411,6 +421,10 @@ impl BinaryOperator {
             Self::Add | Self::Subtract => 45,
             Self::Multiply | Self::Divide | Self::Remainder => 50,
         }
+    }
+
+    pub const fn assignment_operator(&self) -> bool {
+        matches!(self, Self::Equals) || self.compound()
     }
 
     pub const fn compound(&self) -> bool {
