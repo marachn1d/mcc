@@ -62,6 +62,23 @@ fn resolve_statement(statement: AstStatement, map: &mut VarMap) -> Result<AstSta
         AstStatement::Ret(exp) => Ok(AstStatement::Ret(resolve_expression(exp, map)?)),
         AstStatement::Null => Ok(AstStatement::Null),
         AstStatement::Exp(exp) => Ok(AstStatement::Exp(resolve_expression(exp, map)?)),
+        AstStatement::If {
+            condition,
+            then,
+            r#else,
+        } => {
+            let condition = resolve_expression(condition, map)?;
+            let then = Box::new(resolve_statement(*then, map)?);
+            let r#else = match r#else {
+                None => None,
+                Some(r#else) => Some(Box::new(resolve_statement(*r#else, map)?)),
+            };
+            Ok(AstStatement::If {
+                condition,
+                then,
+                r#else,
+            })
+        }
     }
 }
 
@@ -94,6 +111,23 @@ fn resolve_expression(exp: AstExpression, map: &mut VarMap) -> Result<AstExpress
                 right,
                 operator,
             }))
+        }
+
+        AstExpression::Conditional {
+            condition,
+            r#true,
+            r#false,
+        } => {
+            let condition = Box::new(resolve_expression(*condition, map)?);
+
+            let r#true = Box::new(resolve_expression(*r#true, map)?);
+
+            let r#false = Box::new(resolve_expression(*r#false, map)?);
+            Ok(AstExpression::Conditional {
+                condition,
+                r#true,
+                r#false,
+            })
         }
 
         AstExpression::Binary(AstBinary {

@@ -46,6 +46,9 @@ pub enum Token {
     Leq,
     Geq,
     Equals,
+
+    QuestionMark,
+    Colon,
 }
 
 pub fn tokenize(bytes: &[u8]) -> Result<Box<[Token]>, Error> {
@@ -193,6 +196,9 @@ fn lex_slice(iter: &mut SliceIter<u8>) -> Result<Option<Token>, Error> {
                 b'<' => Token::LessThan,
                 b'>' => Token::GreaterThan,
                 b'=' => Token::Equals,
+
+                b'?' => Token::QuestionMark,
+                b':' => Token::Colon,
                 a => literal(*a, iter)?,
             }))
         }
@@ -237,11 +243,13 @@ fn literal(byte: u8, iter: &mut SliceIter<u8>) -> Result<Token, Error> {
         bytes.push(character);
     }
     if iter.peek().is_some_and(|byte| !word_character(byte)) {
-        use keywords::{INT, RETURN, VOID};
+        use keywords::{ELSE, IF, INT, RETURN, VOID};
         Ok(match bytes.as_slice() {
             INT => Keyword::Int.into(),
             RETURN => Keyword::Return.into(),
             VOID => Keyword::Void.into(),
+            IF => Keyword::If.into(),
+            ELSE => Keyword::Else.into(),
             _ => identifier(bytes.into())?.into(),
         })
     } else {
@@ -367,12 +375,16 @@ pub enum Keyword {
     Int,
     Void,
     Return,
+    If,
+    Else,
 }
 
 mod keywords {
     pub const INT: &[u8] = b"int";
     pub const VOID: &[u8] = b"void";
     pub const RETURN: &[u8] = b"return";
+    pub const IF: &[u8] = b"if";
+    pub const ELSE: &[u8] = b"else";
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]

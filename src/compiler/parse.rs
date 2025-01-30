@@ -103,6 +103,23 @@ fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
             tokens.next();
             Statement::Null
         }
+        Token::Keyword(Keyword::If) => {
+            tokens.next();
+            tokens.consume(Token::OpenParen)?;
+            let condition = expression(tokens, None)?;
+            tokens.consume(Token::CloseParen)?;
+            let stmnt = statement(tokens)?;
+            let r#else = if tokens.consume(Token::Keyword(Keyword::Else)).is_ok() {
+                Some(Box::new(statement(tokens)?))
+            } else {
+                None
+            };
+            Statement::If {
+                condition,
+                then: Box::new(stmnt),
+                r#else,
+            }
+        }
         _ => {
             let e = expression(tokens, None)?;
             tokens.consume(Token::Semicolon)?;
@@ -121,6 +138,11 @@ pub enum BlockItem {
 pub enum Statement {
     Ret(Expression),
     Exp(Expression),
+    If {
+        condition: Expression,
+        then: Box<Statement>,
+        r#else: Option<Box<Statement>>,
+    },
     Null,
 }
 
@@ -140,6 +162,16 @@ fn expression(tokens: &mut TokenIter, min_precedence: Option<u8>) -> Result<Expr
             BinaryOperator::Equals => {
                 let right = expression(tokens, Some(operator.precedence()))?;
                 left = Expression::Assignment((left, right).into());
+            }
+            BinaryOperator::Ternary => {
+                let middle = expression(tokens, None)?;
+                tokens.consume(Token::Colon);
+                let right = expression(tokens, Some(operator.precedence()))?;
+                left = Expression::Conditional {
+                    condition: left.into(),
+                    r#true: middle.into(),
+                    r#false: right.into(),
+                }
             }
             operator if operator.compound() => {
                 let right = expression(tokens, Some(operator.precedence()))?;
@@ -200,6 +232,8 @@ fn binary_operator(tokens: &mut TokenIter, min_precedence: u8) -> Option<BinaryO
         Token::BitXorEqual => Some(BinaryOperator::BitXorEqual),
         Token::LeftShiftEqual => Some(BinaryOperator::LeftShiftEqual),
         Token::RightShiftEqual => Some(BinaryOperator::RightShiftEqual),
+
+        Token::QuestionMark => Some(BinaryOperator::Ternary),
 
         _ => None,
     }?;
@@ -275,6 +309,12 @@ pub enum Expression {
     Int(u64),
     Unary(Unary),
     Nested(Box<Self>),
+
+    Conditional {
+        condition: Box<Self>,
+        r#true: Box<Self>,
+        r#false: Box<Self>,
+    },
 }
 
 impl Expression {
@@ -394,6 +434,8 @@ pub enum BinaryOperator {
     BitXorEqual,
     LeftShiftEqual,
     RightShiftEqual,
+
+    Ternary,
 }
 
 impl BinaryOperator {
@@ -410,6 +452,7 @@ impl BinaryOperator {
             | Self::BitXorEqual
             | Self::LeftShiftEqual
             | Self::RightShiftEqual => 1,
+            Self::Ternary => 3,
             Self::LogOr => 5,
             Self::LogAnd => 10,
             Self::BitOr => 15,
@@ -490,6 +533,12 @@ impl Display for Statement {
             Statement::Ret(ret) => write!(f, "Return(\n{:?}\n)", ret),
             Statement::Exp(e) => write!(f, "(\n{:?}\n)", e),
             Statement::Null => write!(f, "(\nnull\n)"),
+
+            Statement::If {
+                condition,
+                then,
+                r#else,
+            } => write!(f, "if(\n{condition:?}\n){{{then}}}{{{else:?}}}"),
         }
     }
 }

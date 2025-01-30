@@ -62,6 +62,42 @@ fn convert_statement(statement: AstStatement, instructions: &mut OpVec<Instructi
         AstStatement::Exp(e) => {
             let _ = convert_expression(e, instructions);
         }
+        AstStatement::If {
+            condition,
+            then,
+            r#else: None,
+        } => {
+            let c = convert_expression(condition, instructions);
+            let label = if_label();
+            instructions.push_one(Instruction::JumpIfZero {
+                condition: c,
+                target: label.clone(),
+            });
+            convert_statement(*then, instructions);
+            instructions.push_one(Instruction::Label(label));
+        }
+        AstStatement::If {
+            condition,
+            then,
+            r#else: Some(r#else),
+        } => {
+            let c = convert_expression(condition, instructions);
+            let else_label = else_label();
+            let end = if_label();
+            instructions.push_one(Instruction::JumpIfZero {
+                condition: c,
+                target: else_label.clone(),
+            });
+            convert_statement(*then, instructions);
+            instructions.push([
+                Instruction::Jump {
+                    target: end.clone(),
+                },
+                Instruction::Label(else_label),
+            ]);
+            convert_statement(*r#else, instructions);
+            instructions.push_one(Instruction::Label(end));
+        }
     }
 }
 
@@ -196,6 +232,42 @@ fn convert_expression(expression: AstExpression, instructions: &mut OpVec<Instru
             let factor = AstFactor::try_from(expression).unwrap();
             convert_factor(factor, instructions)
         }
+
+        AstExpression::Conditional {
+            condition,
+            r#true,
+            r#false,
+        } => {
+            let c = convert_expression(*condition, instructions);
+            let result = Value::Var(new_var());
+            let false_label = conditional_label();
+
+            let end = conditional_label();
+            instructions.push_one(Instruction::JumpIfZero {
+                condition: c,
+                target: false_label.clone(),
+            });
+            let true_res = convert_expression(*r#true, instructions);
+            instructions.push([
+                Instruction::Copy {
+                    src: true_res,
+                    dst: result.clone(),
+                },
+                Instruction::Jump {
+                    target: end.clone(),
+                },
+                Instruction::Label(false_label),
+            ]);
+            let false_res = convert_expression(*r#false, instructions);
+            instructions.push([
+                Instruction::Copy {
+                    src: false_res,
+                    dst: result.clone(),
+                },
+                Instruction::Label(end),
+            ]);
+            result
+        }
     }
 }
 
@@ -241,6 +313,7 @@ const fn process_binop(binop: AstBinop) -> ProcessedBinop {
     use ProcessedBinop as Post;
     match binop {
         Pre::Equals => unreachable!(),
+        Pre::Ternary => unreachable!(),
         Pre::LogAnd => Post::LogAnd,
         Pre::LogOr => Post::LogOr,
         Pre::Add => Post::Normal(TackyBinary::Add),
@@ -370,5 +443,23 @@ fn or_label() -> Rc<Identifier> {
 fn end_label() -> Rc<Identifier> {
     let number = LABEL_COUNT.fetch_add(1, Ordering::SeqCst);
     let var_name: Box<[u8]> = format!("end{number}").into_bytes().into();
+    Rc::new(Identifier(var_name))
+}
+
+fn if_label() -> Rc<Identifier> {
+    let number = LABEL_COUNT.fetch_add(1, Ordering::SeqCst);
+    let var_name: Box<[u8]> = format!("if{number}").into_bytes().into();
+    Rc::new(Identifier(var_name))
+}
+
+fn else_label() -> Rc<Identifier> {
+    let number = LABEL_COUNT.fetch_add(1, Ordering::SeqCst);
+    let var_name: Box<[u8]> = format!("else{number}").into_bytes().into();
+    Rc::new(Identifier(var_name))
+}
+
+fn conditional_label() -> Rc<Identifier> {
+    let number = LABEL_COUNT.fetch_add(1, Ordering::SeqCst);
+    let var_name: Box<[u8]> = format!("c{number}").into_bytes().into();
     Rc::new(Identifier(var_name))
 }
