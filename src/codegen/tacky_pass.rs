@@ -16,9 +16,8 @@ use parse::Function as AstFunction;
 use parse::Program as AstProgram;
 use parse::Unary as AstUnary;
 
-use parse::Label as AstLabel;
-
-use parse::BlockItem as AstBlock;
+use parse::Block as AstBlock;
+use parse::BlockItem as AstBlockItem;
 use parse::Statement as AstStatement;
 use std::rc::Rc;
 use std::sync::atomic::AtomicUsize;
@@ -33,7 +32,8 @@ pub fn emit(program: AstProgram) -> Program {
 }
 
 fn convert_function(function: AstFunction) -> Function {
-    let mut body = convert_blocks(function.body);
+    let mut body = OpVec::new();
+    convert_block(function.body, &mut body);
     body.push_one(Instruction::Return(Value::Constant(0)));
 
     Function {
@@ -42,20 +42,19 @@ fn convert_function(function: AstFunction) -> Function {
     }
 }
 
-fn convert_blocks(block: Box<[AstBlock]>) -> OpVec<Instruction> {
-    let mut instructions = OpVec::new();
-    for block in block {
+fn convert_block(block: AstBlock, instructions: &mut OpVec<Instruction>) {
+    for block in block.0 {
         match block {
-            AstBlock::S(statement) => convert_statement(statement, &mut instructions),
-            AstBlock::D(declaration) => convert_declaration(declaration, &mut instructions),
+            AstBlockItem::S(statement) => convert_statement(statement, instructions),
+            AstBlockItem::D(declaration) => convert_declaration(declaration, instructions),
         };
     }
-    instructions.push_one(Instruction::Return(Value::Constant(0)));
-    instructions
 }
 
 fn convert_statement(statement: AstStatement, instructions: &mut OpVec<Instruction>) {
     match statement {
+        AstStatement::Compound(block) => convert_block(block, instructions),
+
         AstStatement::Ret(e) => {
             let result = convert_expression(e, instructions);
             instructions.push_one(Instruction::Return(result));

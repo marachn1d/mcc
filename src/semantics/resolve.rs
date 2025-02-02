@@ -1,6 +1,8 @@
 use crate::lex::Identifier;
 use crate::parse;
-use crate::parse::BlockItem as AstBlock;
+use crate::parse::BlockItem as AstBlockItem;
+
+use crate::parse::Block as AstBlock;
 use crate::parse::Expression as AstExpression;
 use crate::parse::Function as AstFunction;
 use crate::parse::Program as AstProgram;
@@ -17,48 +19,82 @@ static COUNTER: AtomicU32 = AtomicU32::new(0);
 
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
-type VarMap = HashMap<Rc<Identifier>, Rc<Identifier>>;
+type VarMap = HashMap<Rc<Identifier>, Var>;
+
+#[derive(Clone)]
+struct Var {
+    name: Rc<Identifier>,
+    from_current_block: bool,
+}
+
+impl Var {
+    fn new(name: &Rc<Identifier>) -> Self {
+        Self {
+            name: name.clone(),
+            from_current_block: true,
+        }
+    }
+}
 
 pub fn resolve(
     AstProgram(function): AstProgram,
 ) -> Result<(AstProgram, HashSet<Rc<Identifier>>), Error> {
     let mut map: VarMap = VarMap::new();
     let program = AstProgram(resolve_function(function, &mut map)?);
-    let vars: HashSet<Rc<Identifier>> = map.into_values().collect();
+    let vars: HashSet<Rc<Identifier>> = map.into_values().map(|x| x.name).collect();
     Ok((program, vars))
 }
 
-fn resolve_function(function: AstFunction, map: &mut VarMap) -> Result<AstFunction, Error> {
-    let mut blocks = Vec::new();
-    for block in function.body {
-        blocks.push(resolve_block(block, map)?);
-    }
+fn resolve_function(
+    AstFunction { name, body }: AstFunction,
+    map: &mut VarMap,
+) -> Result<AstFunction, Error> {
     Ok(AstFunction {
-        name: function.name,
-        body: blocks.into(),
+        name,
+        body: resolve_block(body, map)?,
     })
 }
 
 fn resolve_block(block: AstBlock, map: &mut VarMap) -> Result<AstBlock, Error> {
+    let mut block_vec = Vec::with_capacity(block.0.len());
+    for item in block.0 {
+        block_vec.push(resolve_block_item(item, map)?);
+    }
+    Ok(AstBlock(block_vec.into_boxed_slice()))
+}
+
+fn resolve_block_item(block: AstBlockItem, map: &mut VarMap) -> Result<AstBlockItem, Error> {
     Ok(match block {
-        AstBlock::S(statement) => AstBlock::S(resolve_statement(statement, map)?),
-        AstBlock::D(statement) => AstBlock::D(resolve_declaration(statement, map)?),
+        AstBlockItem::S(statement) => AstBlockItem::S(resolve_statement(statement, map)?),
+        AstBlockItem::D(statement) => AstBlockItem::D(resolve_declaration(statement, map)?),
     })
 }
 
 use std::collections::hash_map::Entry;
 fn resolve_declaration(dec: AstDeclaration, map: &mut VarMap) -> Result<AstDeclaration, Error> {
-    if let Entry::Vacant(e) = map.entry(dec.name.clone()) {
-        let unique: Rc<Identifier> = new_var(&dec.name.0).into();
-        e.insert(unique.clone());
-        let init = if let Some(init) = dec.init {
-            Some(resolve_expression(init, map)?)
-        } else {
-            None
-        };
-        Ok(AstDeclaration { name: unique, init })
-    } else {
-        Err(Error::DuplicateDeclaration)
+    let entry = map.entry(dec.name.clone());
+    match entry {
+        Entry::Occupied(mut e) if !e.get().from_current_block => {
+            let unique: Rc<Identifier> = new_var(&dec.name.0).into();
+            *e.get_mut() = Var::new(&unique);
+            let init = if let Some(init) = dec.init {
+                Some(resolve_expression(init, map)?)
+            } else {
+                None
+            };
+            Ok(AstDeclaration { name: unique, init })
+        }
+        Entry::Vacant(e) => {
+            let unique: Rc<Identifier> = new_var(&dec.name.0).into();
+            e.insert(Var::new(&unique));
+            let init = if let Some(init) = dec.init {
+                Some(resolve_expression(init, map)?)
+            } else {
+                None
+            };
+            Ok(AstDeclaration { name: unique, init })
+        }
+        _ => Err(Error::DuplicateDeclaration),
     }
 }
 
@@ -87,6 +123,14 @@ fn resolve_statement(statement: AstStatement, map: &mut VarMap) -> Result<AstSta
         AstStatement::Label(AstLabel::C17 { label, body }) => {
             let body = Box::new(resolve_statement(*body, map)?);
             Ok(AstStatement::Label(AstLabel::C17 { label, body }))
+        }
+        AstStatement::Compound(block) => {
+            let mut new_scope = map.clone();
+            for var in new_scope.values_mut() {
+                var.from_current_block = false;
+            }
+            let block = resolve_block(block, &mut new_scope)?;
+            Ok(AstStatement::Compound(block))
         }
 
         statement @ AstStatement::Label(AstLabel::C23(_)) => Ok(statement),
@@ -209,7 +253,7 @@ fn resolve_factor(factor: AstFactor, map: &mut VarMap) -> Result<AstFactor, Erro
         }
         AstFactor::Var(v) => {
             if let Some(key) = map.get(&v) {
-                Ok(AstFactor::Var(key.clone()))
+                Ok(AstFactor::Var(key.name.clone()))
             } else {
                 Err(Error::UndeclaredVar)
             }

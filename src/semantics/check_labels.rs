@@ -14,6 +14,8 @@ use crate::parse::Statement;
 
 use crate::parse::BlockItem;
 
+use crate::parse::Block;
+
 use crate::parse::Function;
 
 pub fn check(program: &mut Program, vars: &HashSet<Rc<Identifier>>) -> Result<(), Error> {
@@ -24,7 +26,7 @@ fn check_function(
     Function { name: _, body }: &mut Function,
     vars: &HashSet<Rc<Identifier>>,
 ) -> Result<(), Error> {
-    check_body(body, vars)?;
+    check_body(&body.0, vars)?;
     Ok(())
 }
 
@@ -51,6 +53,14 @@ fn check_labels(
     labels: &mut HashSet<Rc<Identifier>>,
 ) -> Result<(), Error> {
     match statement {
+        Statement::Compound(Block(block)) => {
+            for item in block {
+                if let BlockItem::S(s) = item {
+                    check_labels(s, vars, labels)?;
+                }
+            }
+            Ok(())
+        }
         Statement::Label(Label::C23(label)) => {
             if vars.contains(label) {
                 Err(Error::ClashedLabel)
@@ -104,6 +114,15 @@ fn check_gotos(statement: &Statement, labels: &HashSet<Rc<Identifier>>) -> Resul
             };
             Ok(())
         }
+        Statement::Compound(Block(b)) => {
+            for item in b {
+                if let BlockItem::S(statement) = item {
+                    check_gotos(statement, labels)?;
+                }
+            }
+            Ok(())
+        }
+
         Statement::Label(Label::C17 { body, .. }) => check_gotos(body, labels),
         Statement::Ret(_)
         | Statement::Exp(_)

@@ -33,26 +33,25 @@ fn function(tokens: &mut TokenIter) -> Result<Function, Error> {
     consume(tokens, Keyword::Int)?;
     let name = consume_identifier(tokens, "function")?;
     tokens
-        .consume_array([
-            Token::OpenParen,
-            Keyword::Void.into(),
-            Token::CloseParen,
-            Token::OpenBrace,
-        ])
+        .consume_array([Token::OpenParen, Keyword::Void.into(), Token::CloseParen])
         .map_err(|_| {
             Error::Catchall("Expected Function Definition after Function identifier".into())
         })?;
-    let body = block_items(tokens)?;
-    consume(tokens, Token::CloseBrace)?;
+    let body = block(tokens)?;
     Ok(Function { name, body })
 }
 
-fn block_items(tokens: &mut TokenIter) -> Result<Box<[BlockItem]>, Error> {
-    let mut items = Vec::new();
-    while let Some(block) = block_item(tokens)? {
-        items.push(block);
+#[derive(Debug)]
+pub struct Block(pub Box<[BlockItem]>);
+
+fn block(tokens: &mut TokenIter) -> Result<Block, Error> {
+    consume(tokens, Token::OpenBrace)?;
+    let mut body = Vec::new();
+    while let Some(item) = block_item(tokens)? {
+        body.push(item);
     }
-    Ok(items.into())
+    consume(tokens, Token::CloseBrace)?;
+    Ok(Block(body.into()))
 }
 
 fn block_item(tokens: &mut TokenIter) -> Result<Option<BlockItem>, Error> {
@@ -85,7 +84,7 @@ fn declaration(tokens: &mut TokenIter) -> Result<Declaration, Error> {
 #[derive(Debug)]
 pub struct Function {
     pub name: Identifier,
-    pub body: Box<[BlockItem]>,
+    pub body: Block,
 }
 
 impl Display for Function {
@@ -137,6 +136,10 @@ fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
                 c17_label(tokens)?
             })
         }
+        Token::OpenBrace => {
+            let block = block(tokens)?;
+            Statement::Compound(block)
+        }
         _ => {
             let e = expression(tokens, None)?;
             tokens.consume(Token::Semicolon)?;
@@ -173,6 +176,7 @@ pub enum Statement {
         then: Box<Statement>,
         r#else: Option<Box<Statement>>,
     },
+    Compound(Block),
     Label(Label),
     Goto(Rc<Identifier>),
     Null,
@@ -334,7 +338,11 @@ fn factor(tokens: &mut TokenIter) -> Result<Factor, Error> {
             Ok(Factor::Nested(exp))
         }
         Token::Identifier(ident) => Ok(Factor::Var(ident.into())),
-        _ => Err(Error::ExpectedExpression),
+
+        e => {
+            eprintln!("errored in {e:?}");
+            Err(Error::ExpectedExpression)
+        }
     }?;
     match tokens.next_if(|x| x == &Token::Increment || x == &Token::Decrement) {
         Some(Token::Increment) => Ok(Factor::PostfixIncrement(Box::new(factor.into()))),
@@ -595,10 +603,12 @@ impl Display for Statement {
                 condition,
                 then,
                 r#else,
-            } => write!(f, "if(\n{condition:?}\n){{{then}}}{{{else:?}}}"),
+            } => write!(f, "if(\n{condition:?}\n){then}{else:?}"),
             Statement::Label(name) => write!(f, "LABEL\n{name}:\n"),
 
             Statement::Goto(name) => write!(f, "goto\n{name}:\n"),
+
+            Statement::Compound(Block(block)) => write!(f, "{{{block:?}}}\n"),
         }
     }
 }
