@@ -1,6 +1,6 @@
 use super::assembly;
 
-use crate::compiler::lex::Identifier as TackyIdent;
+use crate::lex::Identifier as TackyIdent;
 use assembly::tacky::TackyBinary;
 use assembly::tacky::TackyUnary;
 use assembly::tacky::Value;

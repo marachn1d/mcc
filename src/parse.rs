@@ -1,7 +1,9 @@
 use super::lex::Identifier;
 use super::lex::Keyword;
 use super::slice_iter::TokenIter;
+use super::CVersion;
 use super::Token;
+use super::CONFIG;
 use std::fmt::{self, Display, Formatter};
 
 pub fn parse(tokens: Box<[Token]>) -> Result<Program, Error> {
@@ -25,6 +27,7 @@ fn program(tokens: &mut TokenIter) -> Result<Program, Error> {
 
 #[derive(Debug)]
 pub struct Program(pub Function);
+
 // working with an iterator would be better but sdince the type isn't Copy it's kinda weird idk
 fn function(tokens: &mut TokenIter) -> Result<Function, Error> {
     consume(tokens, Keyword::Int)?;
@@ -120,12 +123,39 @@ fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
                 r#else,
             }
         }
+        Token::Keyword(Keyword::Goto) => {
+            tokens.next();
+            let identifier = tokens.consume_identifier()?;
+            tokens.consume(Token::Semicolon)?;
+            Statement::Goto(identifier.into())
+        }
+        // LABEL
+        Token::Identifier(_) if tokens.peek_peek().is_some_and(|x| x == &Token::Colon) => {
+            Statement::Label(if CONFIG.get().unwrap().version == CVersion::C23 {
+                c23_label(tokens)
+            } else {
+                c17_label(tokens)?
+            })
+        }
         _ => {
             let e = expression(tokens, None)?;
             tokens.consume(Token::Semicolon)?;
             Statement::Exp(e)
         }
     })
+}
+
+fn c23_label(tokens: &mut TokenIter) -> Label {
+    let val = tokens.consume_identifier().unwrap();
+    tokens.next();
+    Label::C23(val.into())
+}
+
+fn c17_label(tokens: &mut TokenIter) -> Result<Label, Error> {
+    let label = Rc::new(tokens.consume_identifier().unwrap());
+    tokens.next();
+    let body = Box::new(statement(tokens)?);
+    Ok(Label::C17 { label, body })
 }
 
 #[derive(Debug)]
@@ -143,7 +173,34 @@ pub enum Statement {
         then: Box<Statement>,
         r#else: Option<Box<Statement>>,
     },
+    Label(Label),
+    Goto(Rc<Identifier>),
     Null,
+}
+
+#[derive(Debug)]
+pub enum Label {
+    C23(Rc<Identifier>),
+    C17 {
+        label: Rc<Identifier>,
+        body: Box<Statement>,
+    },
+}
+
+impl Label {
+    pub const fn label(&self) -> &Rc<Identifier> {
+        match self {
+            Self::C23(label) => label,
+            Self::C17 { label, .. } => label,
+        }
+    }
+
+    pub fn into_inner(self) -> (Rc<Identifier>, Option<Box<Statement>>) {
+        match self {
+            Self::C23(label) => (label, None),
+            Self::C17 { label, body } => (label, Some(body)),
+        }
+    }
 }
 
 use std::rc::Rc;
@@ -165,7 +222,7 @@ fn expression(tokens: &mut TokenIter, min_precedence: Option<u8>) -> Result<Expr
             }
             BinaryOperator::Ternary => {
                 let middle = expression(tokens, None)?;
-                tokens.consume(Token::Colon);
+                tokens.consume(Token::Colon)?;
                 let right = expression(tokens, Some(operator.precedence()))?;
                 left = Expression::Conditional {
                     condition: left.into(),
@@ -539,7 +596,20 @@ impl Display for Statement {
                 then,
                 r#else,
             } => write!(f, "if(\n{condition:?}\n){{{then}}}{{{else:?}}}"),
+            Statement::Label(name) => write!(f, "LABEL\n{name}:\n"),
+
+            Statement::Goto(name) => write!(f, "goto\n{name}:\n"),
         }
+    }
+}
+
+impl Display for Label {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "{:}:", self.label())?;
+        if let Label::C17 { body, .. } = self {
+            write!(f, "{:}:", body)?;
+        }
+        Ok(())
     }
 }
 

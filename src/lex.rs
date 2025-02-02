@@ -180,8 +180,8 @@ fn lex_slice(iter: &mut SliceIter<u8>) -> Result<Option<Token>, Error> {
                 b';' => Token::Semicolon,
                 b'}' => Token::CloseBrace,
                 b'~' => Token::Tilde,
-                &a if AsciiDigit::from_int(a).is_some() => {
-                    let byte = AsciiDigit::from_int(a).unwrap();
+                b'0'..=b'9' => {
+                    let byte = AsciiDigit::from_int(*a).unwrap();
                     Token::Constant(constant_number(byte, iter)?)
                 }
                 b'-' => Token::Minus,
@@ -243,13 +243,14 @@ fn literal(byte: u8, iter: &mut SliceIter<u8>) -> Result<Token, Error> {
         bytes.push(character);
     }
     if iter.peek().is_some_and(|byte| !word_character(byte)) {
-        use keywords::{ELSE, IF, INT, RETURN, VOID};
+        use keywords::{ELSE, GOTO, IF, INT, RETURN, VOID};
         Ok(match bytes.as_slice() {
             INT => Keyword::Int.into(),
             RETURN => Keyword::Return.into(),
             VOID => Keyword::Void.into(),
             IF => Keyword::If.into(),
             ELSE => Keyword::Else.into(),
+            GOTO => Keyword::Goto.into(),
             _ => identifier(bytes.into())?.into(),
         })
     } else {
@@ -258,15 +259,28 @@ fn literal(byte: u8, iter: &mut SliceIter<u8>) -> Result<Token, Error> {
 }
 
 fn identifier(bytes: Box<[u8]>) -> Result<Identifier, Error> {
-    if bytes[0].is_ascii_alphanumeric() && bytes[1..].iter().all(|&x| word_character(x)) {
+    if word_start(bytes[0]) && bytes[1..].iter().all(|&x| word_character(x)) {
         Ok(Identifier(bytes))
     } else {
+        eprintln!(
+            "{bytes:?}, is_ascii_alphanumeric:{}, word_character:{}",
+            bytes[0].is_ascii_alphanumeric(),
+            bytes[1..].iter().all(|&x| word_character(x))
+        );
         Err(Error::InvalidIdentifier)
     }
 }
 
 const fn _word_boundary(byte: u8) -> bool {
     !word_character(byte)
+}
+
+const fn word_start(byte: u8) -> bool {
+    match byte {
+        b if b.is_ascii_alphabetic() => true,
+        b'_' => true,
+        _ => false,
+    }
 }
 
 const fn word_character(byte: u8) -> bool {
@@ -377,6 +391,7 @@ pub enum Keyword {
     Return,
     If,
     Else,
+    Goto,
 }
 
 mod keywords {
@@ -385,6 +400,7 @@ mod keywords {
     pub const RETURN: &[u8] = b"return";
     pub const IF: &[u8] = b"if";
     pub const ELSE: &[u8] = b"else";
+    pub const GOTO: &[u8] = b"goto";
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]

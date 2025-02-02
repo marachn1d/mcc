@@ -1,26 +1,31 @@
-use super::lex::Identifier;
-use super::parse;
-use super::parse::BlockItem as AstBlock;
-use super::parse::Expression as AstExpression;
-use super::parse::Function as AstFunction;
-use super::parse::Program as AstProgram;
-use super::parse::Statement as AstStatement;
+use crate::lex::Identifier;
+use crate::parse;
+use crate::parse::BlockItem as AstBlock;
+use crate::parse::Expression as AstExpression;
+use crate::parse::Function as AstFunction;
+use crate::parse::Program as AstProgram;
+use crate::parse::Statement as AstStatement;
 use parse::Binary as AstBinary;
 use parse::Declaration as AstDeclaration;
 use parse::Factor as AstFactor;
+use parse::Label as AstLabel;
 use parse::Unary as AstUnary;
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
 static COUNTER: AtomicU32 = AtomicU32::new(0);
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 type VarMap = HashMap<Rc<Identifier>, Rc<Identifier>>;
 
-pub fn resolve(AstProgram(function): AstProgram) -> Result<AstProgram, Error> {
+pub fn resolve(
+    AstProgram(function): AstProgram,
+) -> Result<(AstProgram, HashSet<Rc<Identifier>>), Error> {
     let mut map: VarMap = VarMap::new();
-    Ok(AstProgram(resolve_function(function, &mut map)?))
+    let program = AstProgram(resolve_function(function, &mut map)?);
+    let vars: HashSet<Rc<Identifier>> = map.into_values().collect();
+    Ok((program, vars))
 }
 
 fn resolve_function(function: AstFunction, map: &mut VarMap) -> Result<AstFunction, Error> {
@@ -79,6 +84,13 @@ fn resolve_statement(statement: AstStatement, map: &mut VarMap) -> Result<AstSta
                 r#else,
             })
         }
+        AstStatement::Label(AstLabel::C17 { label, body }) => {
+            let body = Box::new(resolve_statement(*body, map)?);
+            Ok(AstStatement::Label(AstLabel::C17 { label, body }))
+        }
+
+        statement @ AstStatement::Label(AstLabel::C23(_)) => Ok(statement),
+        statement @ AstStatement::Goto(_) => Ok(statement),
     }
 }
 

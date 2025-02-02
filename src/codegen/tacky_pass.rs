@@ -1,7 +1,6 @@
 use super::assembly;
 use super::Identifier;
-use crate::compiler::parse;
-use crate::compiler::parse::Unary as AstUnary;
+use crate::parse;
 use assembly::tacky::Function;
 use assembly::tacky::Instruction;
 use assembly::tacky::Program;
@@ -15,6 +14,9 @@ use parse::Expression as AstExpression;
 use parse::Factor as AstFactor;
 use parse::Function as AstFunction;
 use parse::Program as AstProgram;
+use parse::Unary as AstUnary;
+
+use parse::Label as AstLabel;
 
 use parse::BlockItem as AstBlock;
 use parse::Statement as AstStatement;
@@ -98,6 +100,14 @@ fn convert_statement(statement: AstStatement, instructions: &mut OpVec<Instructi
             convert_statement(*r#else, instructions);
             instructions.push_one(Instruction::Label(end));
         }
+        AstStatement::Label(label) => {
+            let (label, body) = label.into_inner();
+            instructions.push_one(Instruction::Label(label));
+            if let Some(body) = body {
+                convert_statement(*body, instructions);
+            }
+        }
+        AstStatement::Goto(label) => instructions.push_one(Instruction::Jump { target: label }),
     }
 }
 
@@ -360,7 +370,7 @@ fn convert_factor(factor: AstFactor, instructions: &mut OpVec<Instruction>) -> V
             Value::Var(tmp)
         }
         AstFactor::Nested(e) => convert_expression(*e, instructions),
-        AstFactor::Var(v) => Value::Var(v.into()),
+        AstFactor::Var(v) => Value::Var(v),
         AstFactor::PrefixIncrement(exp) => {
             //prefix
             let expression_result = convert_expression(*exp, instructions);

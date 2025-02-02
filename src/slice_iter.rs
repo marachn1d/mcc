@@ -1,5 +1,5 @@
-use crate::compiler::lex::Token;
-use crate::compiler::lex::{Constant, Identifier, Keyword};
+use crate::lex::Token;
+use crate::lex::{Constant, Identifier, Keyword};
 use std::iter::Iterator;
 use std::slice::Iter;
 pub struct SliceIter<'a, T: Copy>(Iter<'a, T>);
@@ -87,6 +87,10 @@ impl TokenIter {
 
     pub fn peek_any(&self) -> Result<&Token, parse::Error> {
         self.peek().ok_or(parse::Error::UnexpectedEof)
+    }
+
+    pub fn peek_peek(&self) -> Option<&Token> {
+        self.0.get(self.0.len() - 2)
     }
 
     pub fn consume_any(&mut self) -> Result<Token, parse::Error> {

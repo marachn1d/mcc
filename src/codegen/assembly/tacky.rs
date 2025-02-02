@@ -1,6 +1,6 @@
 use super::Identifier;
 use super::InstructionSet;
-use crate::compiler::parse;
+use crate::parse;
 use parse::UnaryOperator;
 use std::rc::Rc;
 
