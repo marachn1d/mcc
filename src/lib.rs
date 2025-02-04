@@ -45,13 +45,10 @@ pub fn compile(mut path: PathBuf) -> Result<PathBuf, Error> {
     if stage == Some(CompileStage::Parse) {
         return Ok("".into());
     }
-
-    let (mut program, vars) = semantics::resolve(program)?;
+    let program = semantics::check(program)?;
     if stage == Some(CompileStage::Validate) {
         return Ok("".into());
     }
-
-    semantics::check_labels(&mut program, &vars)?;
 
     let code = codegen::generate(program, stage != Some(CompileStage::Tacky));
 
@@ -71,8 +68,7 @@ pub enum Error {
     Io(io::Error),
     Lexing(lex::Error),
     Parsing(parse::Error),
-    Resolution(semantics::ResolveError),
-    Labels(semantics::LabelError),
+    Semantics(semantics::Error),
 }
 
 impl From<io::Error> for Error {
@@ -81,9 +77,9 @@ impl From<io::Error> for Error {
     }
 }
 
-impl From<semantics::ResolveError> for Error {
-    fn from(e: semantics::ResolveError) -> Self {
-        Error::Resolution(e)
+impl From<semantics::Error> for Error {
+    fn from(e: semantics::Error) -> Self {
+        Error::Semantics(e)
     }
 }
 
@@ -96,11 +92,5 @@ impl From<lex::Error> for Error {
 impl From<parse::Error> for Error {
     fn from(e: parse::Error) -> Self {
         Error::Parsing(e)
-    }
-}
-
-impl From<semantics::LabelError> for Error {
-    fn from(e: semantics::LabelError) -> Self {
-        Error::Labels(e)
     }
 }

@@ -30,8 +30,8 @@ pub struct Program(pub Function);
 
 // working with an iterator would be better but sdince the type isn't Copy it's kinda weird idk
 fn function(tokens: &mut TokenIter) -> Result<Function, Error> {
-    consume(tokens, Keyword::Int)?;
-    let name = consume_identifier(tokens, "function")?;
+    tokens.consume(Keyword::Int)?;
+    let name = tokens.consume_identifier()?;
     tokens
         .consume_array([Token::OpenParen, Keyword::Void.into(), Token::CloseParen])
         .map_err(|_| {
@@ -45,12 +45,12 @@ fn function(tokens: &mut TokenIter) -> Result<Function, Error> {
 pub struct Block(pub Box<[BlockItem]>);
 
 fn block(tokens: &mut TokenIter) -> Result<Block, Error> {
-    consume(tokens, Token::OpenBrace)?;
+    tokens.consume(Token::OpenBrace)?;
     let mut body = Vec::new();
     while let Some(item) = block_item(tokens)? {
         body.push(item);
     }
-    consume(tokens, Token::CloseBrace)?;
+    tokens.consume(Token::CloseBrace)?;
     Ok(Block(body.into()))
 }
 
@@ -63,7 +63,7 @@ fn block_item(tokens: &mut TokenIter) -> Result<Option<BlockItem>, Error> {
 }
 
 fn declaration(tokens: &mut TokenIter) -> Result<Declaration, Error> {
-    consume(tokens, Keyword::Int)?;
+    tokens.consume(Keyword::Int)?;
     let name = tokens.consume_identifier()?;
 
     let init = match tokens.consume_any()? {
@@ -98,7 +98,7 @@ fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
         Token::Keyword(Keyword::Return) => {
             tokens.next();
             let expression = expression(tokens, None)?;
-            consume(tokens, Token::Semicolon)?;
+            tokens.consume(Token::Semicolon)?;
             Statement::Ret(expression)
         }
         Token::Semicolon => {
@@ -140,12 +140,91 @@ fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
             let block = block(tokens)?;
             Statement::Compound(block)
         }
+        Token::Keyword(Keyword::Break) => {
+            tokens.next();
+            tokens.consume(Token::Semicolon)?;
+
+            Statement::Break(String::new())
+        }
+        Token::Keyword(Keyword::Continue) => {
+            tokens.next();
+            tokens.consume(Token::Semicolon)?;
+            Statement::Continue(String::new())
+        }
+        Token::Keyword(Keyword::While) => {
+            tokens.next();
+            tokens.consume(Token::OpenParen)?;
+            let condition = expression(tokens, None)?;
+
+            tokens.consume(Token::CloseParen)?;
+            Statement::While {
+                condition,
+                body: Box::new(statement(tokens)?),
+                label: String::new(),
+            }
+        }
+        Token::Keyword(Keyword::Do) => {
+            tokens.next();
+            let body = Box::new(statement(tokens)?);
+            tokens.consume_array([Keyword::While.into(), Token::OpenParen])?;
+            let condition = expression(tokens, None)?;
+            tokens.consume_array([Token::CloseParen, Token::Semicolon])?;
+            Statement::DoWhile {
+                body,
+                condition,
+                label: String::new(),
+            }
+        }
+        Token::Keyword(Keyword::For) => {
+            tokens.next();
+            tokens.consume(Token::OpenParen)?;
+            let init = for_init(tokens)?;
+            let condition = optional_expr(tokens, Token::Semicolon)?;
+
+            let post = optional_expr(tokens, Token::CloseParen)?;
+
+            let body = Box::new(statement(tokens)?);
+
+            Statement::For {
+                init,
+                condition,
+                post,
+                body,
+                label: String::new(),
+            }
+        }
         _ => {
             let e = expression(tokens, None)?;
             tokens.consume(Token::Semicolon)?;
             Statement::Exp(e)
         }
     })
+}
+
+fn optional_expr(tokens: &mut TokenIter, delim: Token) -> Result<Option<Expression>, Error> {
+    if tokens.consume(delim.clone()).is_ok() {
+        Ok(None)
+    } else {
+        let expression = expression(tokens, None)?;
+        tokens.consume(delim)?;
+        Ok(Some(expression))
+    }
+}
+
+fn print_return<T: fmt::Debug>(mut f: impl FnMut() -> T) -> T {
+    let val = f();
+    eprintln!("{:?}", val);
+    val
+}
+
+fn for_init(tokens: &mut TokenIter) -> Result<Option<ForInit>, Error> {
+    if let Ok(declaration) = declaration(tokens) {
+        Ok(Some(ForInit::D(declaration)))
+    } else {
+        let res = optional_expr(tokens, Token::Semicolon)?.map(ForInit::E);
+
+        Ok(res)
+    }
 }
 
 fn c23_label(tokens: &mut TokenIter) -> Label {
@@ -176,10 +255,35 @@ pub enum Statement {
         then: Box<Statement>,
         r#else: Option<Box<Statement>>,
     },
+    Break(String),
+    Continue(String),
+    While {
+        condition: Expression,
+        body: Box<Self>,
+        label: String,
+    },
+    DoWhile {
+        body: Box<Self>,
+        condition: Expression,
+        label: String,
+    },
+    For {
+        init: Option<ForInit>,
+        condition: Option<Expression>,
+        post: Option<Expression>,
+        body: Box<Self>,
+        label: String,
+    },
     Compound(Block),
     Label(Label),
     Goto(Rc<Identifier>),
     Null,
+}
+
+#[derive(Debug)]
+pub enum ForInit {
+    D(Declaration),
+    E(Expression),
 }
 
 #[derive(Debug)]
@@ -334,7 +438,7 @@ fn factor(tokens: &mut TokenIter) -> Result<Factor, Error> {
         }
         Token::OpenParen => {
             let exp = Box::new(expression(tokens, None)?);
-            consume(tokens, Token::CloseParen)?;
+            tokens.consume(Token::CloseParen)?;
             Ok(Factor::Nested(exp))
         }
         Token::Identifier(ident) => Ok(Factor::Var(ident.into())),
@@ -564,28 +668,6 @@ impl BinaryOperator {
     }
 }
 
-fn consume<T: PartialEq<Token> + Into<Token>>(
-    tokens: &mut TokenIter,
-    type_: T,
-) -> Result<(), Error> {
-    if tokens.next_if(|x| &type_ == x).is_some() {
-        Ok(())
-    } else {
-        Err(Error::Expected(type_.into()))
-    }
-}
-
-fn consume_identifier(tokens: &mut TokenIter, for_node: &str) -> Result<Identifier, Error> {
-    if let Some(Token::Identifier(_)) = tokens.peek() {
-        let Some(Token::Identifier(ident)) = tokens.next() else {
-            unreachable!()
-        };
-        Ok(ident)
-    } else {
-        Err(Error::ExpectedIdentifier)
-    }
-}
-
 impl Display for Program {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "Program(\n{}\n)", self.0)
@@ -609,6 +691,7 @@ impl Display for Statement {
             Statement::Goto(name) => write!(f, "goto\n{name}:\n"),
 
             Statement::Compound(Block(block)) => write!(f, "{{{block:?}}}\n"),
+            _ => todo!(),
         }
     }
 }

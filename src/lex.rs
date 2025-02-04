@@ -243,14 +243,18 @@ fn literal(byte: u8, iter: &mut SliceIter<u8>) -> Result<Token, Error> {
         bytes.push(character);
     }
     if iter.peek().is_some_and(|byte| !word_character(byte)) {
-        use keywords::{ELSE, GOTO, IF, INT, RETURN, VOID};
         Ok(match bytes.as_slice() {
-            INT => Keyword::Int.into(),
-            RETURN => Keyword::Return.into(),
-            VOID => Keyword::Void.into(),
-            IF => Keyword::If.into(),
-            ELSE => Keyword::Else.into(),
-            GOTO => Keyword::Goto.into(),
+            b"int" => Keyword::Int.into(),
+            b"return" => Keyword::Return.into(),
+            b"void" => Keyword::Void.into(),
+            b"if" => Keyword::If.into(),
+            b"else" => Keyword::Else.into(),
+            b"goto" => Keyword::Goto.into(),
+            b"do" => Keyword::Do.into(),
+            b"while" => Keyword::While.into(),
+            b"for" => Keyword::For.into(),
+            b"break" => Keyword::Break.into(),
+            b"continue" => Keyword::Continue.into(),
             _ => identifier(bytes.into())?.into(),
         })
     } else {
@@ -262,11 +266,6 @@ fn identifier(bytes: Box<[u8]>) -> Result<Identifier, Error> {
     if word_start(bytes[0]) && bytes[1..].iter().all(|&x| word_character(x)) {
         Ok(Identifier(bytes))
     } else {
-        eprintln!(
-            "{bytes:?}, is_ascii_alphanumeric:{}, word_character:{}",
-            bytes[0].is_ascii_alphanumeric(),
-            bytes[1..].iter().all(|&x| word_character(x))
-        );
         Err(Error::InvalidIdentifier)
     }
 }
@@ -315,6 +314,19 @@ fn parse_digit(slice: &[AsciiDigit]) -> u64 {
         cur += 10u64.pow(place as u32) * digit;
     }
     cur
+}
+
+impl Token {
+    pub const fn identifier(&self) -> bool {
+        matches!(self, Self::Identifier(_))
+    }
+    pub const fn constant(&self) -> bool {
+        matches!(self, Self::Constant(_))
+    }
+
+    pub const fn keyword(&self) -> bool {
+        matches!(self, Self::Keyword(_))
+    }
 }
 
 fn next_if_word(iter: &mut SliceIter<u8>) -> Option<u8> {
@@ -392,15 +404,11 @@ pub enum Keyword {
     If,
     Else,
     Goto,
-}
-
-mod keywords {
-    pub const INT: &[u8] = b"int";
-    pub const VOID: &[u8] = b"void";
-    pub const RETURN: &[u8] = b"return";
-    pub const IF: &[u8] = b"if";
-    pub const ELSE: &[u8] = b"else";
-    pub const GOTO: &[u8] = b"goto";
+    Do,
+    While,
+    For,
+    Break,
+    Continue,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]

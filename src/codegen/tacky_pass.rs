@@ -8,10 +8,12 @@ use assembly::tacky::TackyBinary;
 use assembly::tacky::Value;
 use assembly::OpVec;
 use parse::Binary as AstBinary;
+
 use parse::BinaryOperator as AstBinop;
 use parse::Declaration as AstDeclaration;
 use parse::Expression as AstExpression;
 use parse::Factor as AstFactor;
+use parse::ForInit;
 use parse::Function as AstFunction;
 use parse::Program as AstProgram;
 use parse::Unary as AstUnary;
@@ -51,8 +53,109 @@ fn convert_block(block: AstBlock, instructions: &mut OpVec<Instruction>) {
     }
 }
 
+fn continue_label(string: &str) -> Rc<Identifier> {
+    let bytes = format!("__continue_{}", string)
+        .into_bytes()
+        .into_boxed_slice();
+    Rc::new(Identifier(bytes))
+}
+
+fn break_label(string: &str) -> Rc<Identifier> {
+    let bytes = format!("__break_{}", string)
+        .into_bytes()
+        .into_boxed_slice();
+    Rc::new(Identifier(bytes))
+}
+
 fn convert_statement(statement: AstStatement, instructions: &mut OpVec<Instruction>) {
     match statement {
+        AstStatement::DoWhile {
+            body,
+            condition,
+            label,
+        } => {
+            let start = start_label();
+            let r#continue = continue_label(&label);
+            let r#break = break_label(&label);
+            instructions.push_one(Instruction::Label(start.clone()));
+            convert_statement(*body, instructions);
+            instructions.push_one(Instruction::Label(r#continue));
+            let result = convert_expression(condition, instructions);
+            instructions.push([
+                Instruction::JumpIfNotZero {
+                    condition: result,
+                    target: start,
+                },
+                Instruction::Label(r#break),
+            ]);
+        }
+        AstStatement::While {
+            body,
+            condition,
+            label,
+        } => {
+            let r#continue = continue_label(&label);
+            let r#break = break_label(&label);
+            instructions.push_one(Instruction::Label(r#continue.clone()));
+            let result = convert_expression(condition, instructions);
+            instructions.push_one(Instruction::JumpIfZero {
+                condition: result,
+                target: r#break.clone(),
+            });
+            convert_statement(*body, instructions);
+            instructions.push([
+                Instruction::Jump { target: r#continue },
+                Instruction::Label(r#break),
+            ]);
+        }
+        AstStatement::For {
+            init,
+            condition,
+            post,
+            body,
+            label,
+        } => {
+            let start_label = start_label();
+            let continue_label = continue_label(&label);
+            let break_label = break_label(&label);
+            match init {
+                Some(ForInit::D(d)) => convert_declaration(d, instructions),
+                Some(ForInit::E(exp)) => {
+                    convert_expression(exp, instructions);
+                }
+                None => {}
+            };
+            instructions.push_one(Instruction::Label(start_label.clone()));
+            if let Some(condition) = condition {
+                let v = convert_expression(condition, instructions);
+                instructions.push_one(Instruction::JumpIfZero {
+                    condition: v,
+                    target: break_label.clone(),
+                })
+            }
+            convert_statement(*body, instructions);
+            instructions.push_one(Instruction::Label(continue_label));
+            if let Some(post) = post {
+                convert_expression(post, instructions);
+            }
+            instructions.push([
+                Instruction::Jump {
+                    target: start_label,
+                },
+                Instruction::Label(break_label),
+            ])
+        }
+        AstStatement::Break(label) => {
+            instructions.push_one(Instruction::Jump {
+                target: break_label(&label),
+            });
+        }
+        AstStatement::Continue(label) => {
+            instructions.push_one(Instruction::Jump {
+                target: continue_label(&label),
+            });
+        }
+
         AstStatement::Compound(block) => convert_block(block, instructions),
 
         AstStatement::Ret(e) => {
@@ -470,5 +573,11 @@ fn else_label() -> Rc<Identifier> {
 fn conditional_label() -> Rc<Identifier> {
     let number = LABEL_COUNT.fetch_add(1, Ordering::SeqCst);
     let var_name: Box<[u8]> = format!("c{number}").into_bytes().into();
+    Rc::new(Identifier(var_name))
+}
+
+fn start_label() -> Rc<Identifier> {
+    let number = LABEL_COUNT.fetch_add(1, Ordering::SeqCst);
+    let var_name: Box<[u8]> = format!("_START{number}").into_bytes().into();
     Rc::new(Identifier(var_name))
 }

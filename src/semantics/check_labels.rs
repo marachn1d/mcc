@@ -61,6 +61,10 @@ fn check_labels(
             }
             Ok(())
         }
+        Statement::While { body, .. }
+        | Statement::DoWhile { body, .. }
+        | Statement::For { body, .. } => check_labels(&body, vars, labels),
+
         Statement::Label(Label::C23(label)) => {
             if vars.contains(label) {
                 Err(Error::ClashedLabel)
@@ -90,7 +94,12 @@ fn check_labels(
             };
             Ok(())
         }
-        Statement::Ret(_) | Statement::Exp(_) | Statement::Null | Statement::Goto(_) => Ok(()),
+        Statement::Ret(_)
+        | Statement::Exp(_)
+        | Statement::Null
+        | Statement::Goto(_)
+        | Statement::Continue(_)
+        | Statement::Break(_) => Ok(()),
     }
 }
 
@@ -122,12 +131,17 @@ fn check_gotos(statement: &Statement, labels: &HashSet<Rc<Identifier>>) -> Resul
             }
             Ok(())
         }
+        Statement::While { body, .. }
+        | Statement::DoWhile { body, .. }
+        | Statement::For { body, .. } => check_gotos(&body, labels),
 
         Statement::Label(Label::C17 { body, .. }) => check_gotos(body, labels),
         Statement::Ret(_)
         | Statement::Exp(_)
         | Statement::Null
-        | Statement::Label(Label::C23(_)) => Ok(()),
+        | Statement::Label(Label::C23(_))
+        | Statement::Break(_)
+        | Statement::Continue(_) => Ok(()),
     }
 }
 

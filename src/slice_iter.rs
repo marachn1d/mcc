@@ -90,7 +90,11 @@ impl TokenIter {
     }
 
     pub fn peek_peek(&self) -> Option<&Token> {
-        self.0.get(self.0.len() - 2)
+        if self.0.len() <= 2 {
+            None
+        } else {
+            self.0.get(self.0.len() - 2)
+        }
     }
 
     pub fn consume_any(&mut self) -> Result<Token, parse::Error> {
@@ -109,7 +113,7 @@ impl TokenIter {
     }
 
     pub fn consume_identifier(&mut self) -> Result<Identifier, parse::Error> {
-        match self.next() {
+        match self.next_if(Token::identifier) {
             Some(Token::Identifier(ident)) => Ok(ident),
             None => Err(parse::Error::UnexpectedEof),
             _ => Err(parse::Error::ExpectedIdentifier),
@@ -117,18 +121,10 @@ impl TokenIter {
     }
 
     pub fn consume_constant(&mut self) -> Result<Constant, parse::Error> {
-        match self.next() {
+        match self.next_if(Token::constant) {
             Some(Token::Constant(c)) => Ok(c),
             None => Err(parse::Error::UnexpectedEof),
             _ => Err(parse::Error::ExpectedConstant),
-        }
-    }
-
-    pub fn consume_keyword(&mut self) -> Result<Keyword, parse::Error> {
-        match self.next() {
-            Some(Token::Keyword(ident)) => Ok(ident),
-            None => Err(parse::Error::UnexpectedEof),
-            _ => Err(parse::Error::ExpectedAnyKeyword),
         }
     }
 }
