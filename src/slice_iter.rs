@@ -120,9 +120,9 @@ impl TokenIter {
         }
     }
 
-    pub fn consume_constant(&mut self) -> Result<Constant, parse::Error> {
+    pub fn consume_constant(&mut self) -> Result<parse::Constant, parse::Error> {
         match self.next_if(Token::constant) {
-            Some(Token::Constant(c)) => Ok(c),
+            Some(Token::Constant(Constant::Integer(c))) => Ok(parse::Constant(c)),
             None => Err(parse::Error::UnexpectedEof),
             _ => Err(parse::Error::ExpectedConstant),
         }

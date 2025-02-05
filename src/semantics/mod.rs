@@ -1,5 +1,6 @@
 mod check_labels;
 mod resolve;
+mod switch_cases;
 use crate::parse::Program;
 pub use check_labels::check as check_labels;
 mod label_loops;

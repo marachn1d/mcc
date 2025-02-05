@@ -130,11 +130,17 @@ fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
         }
         // LABEL
         Token::Identifier(_) if tokens.peek_peek().is_some_and(|x| x == &Token::Colon) => {
-            Statement::Label(if CONFIG.get().unwrap().version == CVersion::C23 {
-                c23_label(tokens)
-            } else {
-                c17_label(tokens)?
-            })
+            let label_name = tokens.consume_identifier().unwrap();
+            tokens.next();
+            label(tokens, label_name.into())?
+        }
+        Token::Identifier(_)
+            if tokens
+                .peek_peek()
+                .is_some_and(|x| matches!(x, Token::Constant(_))) =>
+        {
+            let label_name = tokens.consume_identifier().unwrap();
+            label(tokens, label_name.into())?
         }
         Token::OpenBrace => {
             let block = block(tokens)?;
@@ -193,12 +199,53 @@ fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
                 label: String::new(),
             }
         }
+
+        Token::Keyword(Keyword::Switch) => {
+            tokens.next();
+            tokens.consume(Token::OpenParen)?;
+            let condition = expression(tokens, None)?;
+            tokens.consume(Token::CloseParen)?;
+            let body = Box::new(statement(tokens)?);
+            Statement::Switch {
+                condition,
+                body,
+                label: String::new(),
+            }
+        }
+        Token::Keyword(Keyword::Case) => {
+            tokens.next();
+            tokens.consume(Token::OpenParen);
+            todo!();
+        }
+        Token::Keyword(Keyword::Default) => {
+            todo!()
+        }
         _ => {
             let e = expression(tokens, None)?;
             tokens.consume(Token::Semicolon)?;
             Statement::Exp(e)
         }
     })
+}
+
+fn label(tokens: &mut TokenIter, name: Rc<Identifier>) -> Result<Statement, Error> {
+    let slice: &[u8] = &name.0;
+    let label = match slice {
+        b"case" => {
+            let constant = tokens.consume_constant()?;
+            tokens.consume(Token::Colon)?;
+            Label::Case {
+                case: constant,
+                switch_label: String::new(),
+            }
+        }
+        b"default" => Label::Default {
+            switch_label: String::new(),
+        },
+        _ => Label::Named(name),
+    };
+    let statement = Box::new(statement(tokens)?);
+    Ok(Statement::Labeled { label, statement })
 }
 
 fn optional_expr(tokens: &mut TokenIter, delim: Token) -> Result<Option<Expression>, Error> {
@@ -227,19 +274,6 @@ fn for_init(tokens: &mut TokenIter) -> Result<Option<ForInit>, Error> {
     }
 }
 
-fn c23_label(tokens: &mut TokenIter) -> Label {
-    let val = tokens.consume_identifier().unwrap();
-    tokens.next();
-    Label::C23(val.into())
-}
-
-fn c17_label(tokens: &mut TokenIter) -> Result<Label, Error> {
-    let label = Rc::new(tokens.consume_identifier().unwrap());
-    tokens.next();
-    let body = Box::new(statement(tokens)?);
-    Ok(Label::C17 { label, body })
-}
-
 #[derive(Debug)]
 pub enum BlockItem {
     S(Statement),
@@ -253,7 +287,7 @@ pub enum Statement {
     If {
         condition: Expression,
         then: Box<Statement>,
-        r#else: Option<Box<Statement>>,
+        r#else: Option<Box<Self>>,
     },
     Break(String),
     Continue(String),
@@ -275,40 +309,36 @@ pub enum Statement {
         label: String,
     },
     Compound(Block),
-    Label(Label),
+    Labeled {
+        label: Label,
+        statement: Box<Self>,
+    },
     Goto(Rc<Identifier>),
     Null,
+    Switch {
+        condition: Expression,
+        body: Box<Self>,
+        label: String,
+    },
+}
+
+#[derive(Debug)]
+pub enum Label {
+    // literally default, not the default case
+    Default {
+        switch_label: String,
+    },
+    Case {
+        case: Constant,
+        switch_label: String,
+    },
+    Named(Rc<Identifier>),
 }
 
 #[derive(Debug)]
 pub enum ForInit {
     D(Declaration),
     E(Expression),
-}
-
-#[derive(Debug)]
-pub enum Label {
-    C23(Rc<Identifier>),
-    C17 {
-        label: Rc<Identifier>,
-        body: Box<Statement>,
-    },
-}
-
-impl Label {
-    pub const fn label(&self) -> &Rc<Identifier> {
-        match self {
-            Self::C23(label) => label,
-            Self::C17 { label, .. } => label,
-        }
-    }
-
-    pub fn into_inner(self) -> (Rc<Identifier>, Option<Box<Statement>>) {
-        match self {
-            Self::C23(label) => (label, None),
-            Self::C17 { label, body } => (label, Some(body)),
-        }
-    }
 }
 
 use std::rc::Rc;
@@ -686,23 +716,15 @@ impl Display for Statement {
                 then,
                 r#else,
             } => write!(f, "if(\n{condition:?}\n){then}{else:?}"),
-            Statement::Label(name) => write!(f, "LABEL\n{name}:\n"),
+            Statement::Labeled { label, statement } => {
+                write!(f, "LABEL\n{label:?}:\n{{{statement}}}\n")
+            }
 
             Statement::Goto(name) => write!(f, "goto\n{name}:\n"),
 
             Statement::Compound(Block(block)) => write!(f, "{{{block:?}}}\n"),
             _ => todo!(),
         }
-    }
-}
-
-impl Display for Label {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "{:}:", self.label())?;
-        if let Label::C17 { body, .. } = self {
-            write!(f, "{:}:", body)?;
-        }
-        Ok(())
     }
 }
 
