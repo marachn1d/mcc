@@ -1,16 +1,22 @@
 use crate::lex::Identifier;
-use crate::parse;
-use parse::Program;
 use std::collections::HashSet;
 use std::rc::Rc;
 
+use crate::parse::Program;
+
 use crate::parse::Label;
 
-use parse::Statement;
+use crate::parse::Expression;
 
-use parse::BlockItem;
+use crate::parse::Declaration;
 
-use parse::Function;
+use crate::parse::Statement;
+
+use crate::parse::BlockItem;
+
+use crate::parse::Block;
+
+use crate::parse::Function;
 
 pub fn check(program: &mut Program, vars: &HashSet<Rc<Identifier>>) -> Result<(), Error> {
     check_function(&mut program.0, vars)
@@ -20,7 +26,7 @@ fn check_function(
     Function { name: _, body }: &mut Function,
     vars: &HashSet<Rc<Identifier>>,
 ) -> Result<(), Error> {
-    check_body(body.0.as_ref(), vars)?;
+    check_body(&body.0, vars)?;
     Ok(())
 }
 
@@ -47,10 +53,10 @@ fn check_labels(
     labels: &mut HashSet<Rc<Identifier>>,
 ) -> Result<(), Error> {
     match statement {
-        Statement::Compound(block) => {
-            for item in &block.0 {
+        Statement::Compound(Block(block)) => {
+            for item in block {
                 if let BlockItem::S(s) = item {
-                    check_labels(&s, vars, labels)?;
+                    check_labels(s, vars, labels)?;
                 }
             }
             Ok(())
@@ -91,13 +97,10 @@ fn check_labels(
         | Statement::Exp(_)
         | Statement::Null
         | Statement::Goto(_)
-        | Statement::Continue
-        | Statement::Break => Ok(()),
+        | Statement::Continue(_)
+        | Statement::Break(_) => Ok(()),
     }
 }
-
-// this one checks switch statements for
-fn check_switch() {}
 
 fn check_gotos(statement: &Statement, labels: &HashSet<Rc<Identifier>>) -> Result<(), Error> {
     match statement {
@@ -124,8 +127,8 @@ fn check_gotos(statement: &Statement, labels: &HashSet<Rc<Identifier>>) -> Resul
             };
             Ok(())
         }
-        Statement::Compound(b) => {
-            for item in &b.0 {
+        Statement::Compound(Block(b)) => {
+            for item in b {
                 if let BlockItem::S(statement) = item {
                     check_gotos(statement, labels)?;
                 }
@@ -141,8 +144,8 @@ fn check_gotos(statement: &Statement, labels: &HashSet<Rc<Identifier>>) -> Resul
         Statement::Ret(_)
         | Statement::Exp(_)
         | Statement::Null
-        | Statement::Break
-        | Statement::Continue => Ok(()),
+        | Statement::Break(_)
+        | Statement::Continue(_) => Ok(()),
     }
 }
 
