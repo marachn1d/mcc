@@ -15,6 +15,7 @@ use parse::Expression as AstExpression;
 use parse::Factor as AstFactor;
 use parse::ForInit;
 use parse::Function as AstFunction;
+use parse::Label;
 use parse::Program as AstProgram;
 use parse::Unary as AstUnary;
 
@@ -202,12 +203,56 @@ fn convert_statement(statement: AstStatement, instructions: &mut OpVec<Instructi
             convert_statement(*r#else, instructions);
             instructions.push_one(Instruction::Label(end));
         }
-        AstStatement::Label(label) => {
-            let (label, body) = label.into_inner();
-            instructions.push_one(Instruction::Label(label));
-            if let Some(body) = body {
-                convert_statement(*body, instructions);
+        AstStatement::Labeled {
+            label: Label::Default { switch_label } | Label::Case { switch_label, .. },
+            statement,
+        } => {
+            instructions.push_one(Instruction::Label(
+                Identifier(switch_label.into_bytes().into()).into(),
+            ));
+            convert_statement(*statement, instructions);
+        }
+        AstStatement::Labeled {
+            statement,
+            label: Label::Named(name),
+        } => {
+            instructions.push_one(Instruction::Label(name));
+            convert_statement(*statement, instructions);
+        }
+        AstStatement::Switch {
+            condition,
+            body,
+            label,
+            cases,
+            default,
+        } => {
+            // NOT READY YET: what label did we say the breaks were jhumpiung to?
+            let switch_variable = convert_expression(condition, instructions);
+            let end_label = end_label();
+            for (val, label) in cases {
+                let new_var = Value::Var(new_var());
+                instructions.push([
+                    Instruction::Binary {
+                        operator: TackyBinary::EqualTo,
+                        source_1: switch_variable.clone(),
+                        source_2: Value::Constant(val),
+                        dst: new_var.clone(),
+                    },
+                    Instruction::JumpIfZero {
+                        condition: new_var,
+                        target: Identifier(label.into_bytes().into()).into(),
+                    },
+                ]);
             }
+
+            instructions.push_one(Instruction::Jump {
+                target: match default {
+                    Some(ref default) => default.clone(),
+                    None => end_label.clone(),
+                },
+            });
+            convert_statement(*body, instructions);
+            instructions.push_one(Instruction::Label(end_label));
         }
         AstStatement::Goto(label) => instructions.push_one(Instruction::Jump { target: label }),
     }

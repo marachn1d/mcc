@@ -273,6 +273,14 @@ fn identifier(bytes: Box<[u8]>) -> Result<Identifier, Error> {
     }
 }
 
+impl<T: Into<String>> From<T> for Identifier {
+    fn from(other: T) -> Self {
+        let string: String = other.into();
+        let bytes = string.into_bytes().into_boxed_slice();
+        Identifier(bytes)
+    }
+}
+
 const fn _word_boundary(byte: u8) -> bool {
     !word_character(byte)
 }

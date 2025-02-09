@@ -1,9 +1,7 @@
 use super::lex::Identifier;
 use super::lex::Keyword;
 use super::slice_iter::TokenIter;
-use super::CVersion;
 use super::Token;
-use super::CONFIG;
 use std::fmt::{self, Display, Formatter};
 
 pub fn parse(tokens: Box<[Token]>) -> Result<Program, Error> {
@@ -150,12 +148,12 @@ fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
             tokens.next();
             tokens.consume(Token::Semicolon)?;
 
-            Statement::Break(String::new())
+            Statement::Break
         }
         Token::Keyword(Keyword::Continue) => {
             tokens.next();
             tokens.consume(Token::Semicolon)?;
-            Statement::Continue(String::new())
+            Statement::Continue
         }
         Token::Keyword(Keyword::While) => {
             tokens.next();
@@ -166,7 +164,6 @@ fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
             Statement::While {
                 condition,
                 body: Box::new(statement(tokens)?),
-                label: String::new(),
             }
         }
         Token::Keyword(Keyword::Do) => {
@@ -175,11 +172,7 @@ fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
             tokens.consume_array([Keyword::While.into(), Token::OpenParen])?;
             let condition = expression(tokens, None)?;
             tokens.consume_array([Token::CloseParen, Token::Semicolon])?;
-            Statement::DoWhile {
-                body,
-                condition,
-                label: String::new(),
-            }
+            Statement::DoWhile { body, condition }
         }
         Token::Keyword(Keyword::For) => {
             tokens.next();
@@ -196,7 +189,6 @@ fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
                 condition,
                 post,
                 body,
-                label: String::new(),
             }
         }
 
@@ -209,17 +201,14 @@ fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
             Statement::Switch {
                 condition,
                 body,
-                label: String::new(),
+                default: None,
             }
         }
         Token::Keyword(Keyword::Case) => {
             tokens.next();
-            tokens.consume(Token::OpenParen);
-            todo!();
+            label(tokens, Identifier((*b"case").into()).into())?
         }
-        Token::Keyword(Keyword::Default) => {
-            todo!()
-        }
+        Token::Keyword(Keyword::Default) => label(tokens, Identifier((*b"default").into()).into())?,
         _ => {
             let e = expression(tokens, None)?;
             tokens.consume(Token::Semicolon)?;
@@ -289,24 +278,21 @@ pub enum Statement {
         then: Box<Statement>,
         r#else: Option<Box<Self>>,
     },
-    Break(String),
-    Continue(String),
+    Break,
+    Continue,
     While {
         condition: Expression,
         body: Box<Self>,
-        label: String,
     },
     DoWhile {
         body: Box<Self>,
         condition: Expression,
-        label: String,
     },
     For {
         init: Option<ForInit>,
         condition: Option<Expression>,
         post: Option<Expression>,
         body: Box<Self>,
-        label: String,
     },
     Compound(Block),
     Labeled {
@@ -318,7 +304,7 @@ pub enum Statement {
     Switch {
         condition: Expression,
         body: Box<Self>,
-        label: String,
+        default: Option<Rc<Identifier>>,
     },
 }
 
@@ -722,8 +708,8 @@ impl Display for Statement {
 
             Statement::Goto(name) => write!(f, "goto\n{name}:\n"),
 
-            Statement::Compound(Block(block)) => write!(f, "{{{block:?}}}\n"),
-            _ => todo!(),
+            Statement::Compound(Block(block)) => writeln!(f, "{{{block:?}}}"),
+            _ => Ok(()),
         }
     }
 }
