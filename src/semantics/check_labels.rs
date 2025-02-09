@@ -63,25 +63,26 @@ fn check_labels(
         }
         Statement::While { body, .. }
         | Statement::DoWhile { body, .. }
-        | Statement::For { body, .. }
-        | Statement::Switch { body, .. } => check_labels(&body, vars, labels),
+        | Statement::For { body, .. } => check_labels(&body, vars, labels),
 
-        Statement::Labeled {
-            label: Label::Named(label),
-            statement,
-        } => {
+        Statement::Label(Label::C23(label)) => {
             if vars.contains(label) {
                 Err(Error::ClashedLabel)
             } else if labels.insert(label.clone()) {
-                check_labels(statement, vars, labels)
+                Ok(())
             } else {
                 Err(Error::RedefinedLabel)
             }
         }
-        Statement::Labeled {
-            label: _,
-            statement,
-        } => check_labels(statement, vars, labels),
+        Statement::Label(Label::C17 { label, body }) => {
+            if vars.contains(label) {
+                Err(Error::ClashedLabel)
+            } else if labels.insert(label.clone()) {
+                check_labels(body, vars, labels)
+            } else {
+                Err(Error::RedefinedLabel)
+            }
+        }
         Statement::If {
             condition: _,
             then,
@@ -111,11 +112,6 @@ fn check_gotos(statement: &Statement, labels: &HashSet<Rc<Identifier>>) -> Resul
                 Err(Error::UndefinedLabel)
             }
         }
-
-        Statement::Labeled {
-            label: _,
-            statement,
-        } => check_gotos(statement, labels),
         Statement::If {
             condition: _,
             then,
@@ -135,15 +131,15 @@ fn check_gotos(statement: &Statement, labels: &HashSet<Rc<Identifier>>) -> Resul
             }
             Ok(())
         }
-
         Statement::While { body, .. }
-        | Statement::Switch { body, .. }
         | Statement::DoWhile { body, .. }
         | Statement::For { body, .. } => check_gotos(&body, labels),
 
+        Statement::Label(Label::C17 { body, .. }) => check_gotos(body, labels),
         Statement::Ret(_)
         | Statement::Exp(_)
         | Statement::Null
+        | Statement::Label(Label::C23(_))
         | Statement::Break(_)
         | Statement::Continue(_) => Ok(()),
     }

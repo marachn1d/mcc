@@ -113,12 +113,13 @@ fn resolve_statement(statement: &mut AstStatement, map: &mut VarMap) -> Result<(
             }
             Ok(())
         }
-        AstStatement::Labeled { statement, .. } => resolve_statement(statement, map),
+        AstStatement::Label(AstLabel::C17 { body, .. }) => resolve_statement(body, map),
         AstStatement::Compound(block) => {
             let mut new_scope = new_scope(map);
             resolve_block(block, &mut new_scope)
         }
 
+        AstStatement::Label(AstLabel::C23(_)) => Ok(()),
         AstStatement::While {
             condition, body, ..
         } => {
@@ -149,12 +150,6 @@ fn resolve_statement(statement: &mut AstStatement, map: &mut VarMap) -> Result<(
             resolve_statement(body, &mut new_map)
         }
         AstStatement::Goto(_) | AstStatement::Break(_) | AstStatement::Continue(_) => Ok(()),
-        AstStatement::Switch {
-            condition, body, ..
-        } => {
-            resolve_expression(condition, map)?;
-            resolve_statement(body, map)
-        }
     }
 }
 

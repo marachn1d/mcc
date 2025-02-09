@@ -255,9 +255,6 @@ fn literal(byte: u8, iter: &mut SliceIter<u8>) -> Result<Token, Error> {
             b"for" => Keyword::For.into(),
             b"break" => Keyword::Break.into(),
             b"continue" => Keyword::Continue.into(),
-            b"switch" => Keyword::Switch.into(),
-            b"case" => Keyword::Case.into(),
-            b"default" => Keyword::Default.into(),
             _ => identifier(bytes.into())?.into(),
         })
     } else {
@@ -412,9 +409,6 @@ pub enum Keyword {
     For,
     Break,
     Continue,
-    Switch,
-    Case,
-    Default,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
