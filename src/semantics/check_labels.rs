@@ -6,10 +6,6 @@ use crate::parse::Program;
 
 use crate::parse::Label;
 
-use crate::parse::Expression;
-
-use crate::parse::Declaration;
-
 use crate::parse::Statement;
 
 use crate::parse::BlockItem;
@@ -63,24 +59,19 @@ fn check_labels(
         }
         Statement::While { body, .. }
         | Statement::DoWhile { body, .. }
-        | Statement::For { body, .. } => check_labels(&body, vars, labels),
+        | Statement::For { body, .. } => check_labels(body, vars, labels),
 
-        Statement::Label(Label::C23(label)) => {
-            if vars.contains(label) {
-                Err(Error::ClashedLabel)
-            } else if labels.insert(label.clone()) {
-                Ok(())
+        Statement::Label { label, body } => {
+            if let Label::Named(label) = label {
+                if vars.contains(label) {
+                    Err(Error::ClashedLabel)
+                } else if labels.insert(label.clone()) {
+                    check_labels(body, vars, labels)
+                } else {
+                    Err(Error::RedefinedLabel)
+                }
             } else {
-                Err(Error::RedefinedLabel)
-            }
-        }
-        Statement::Label(Label::C17 { label, body }) => {
-            if vars.contains(label) {
-                Err(Error::ClashedLabel)
-            } else if labels.insert(label.clone()) {
                 check_labels(body, vars, labels)
-            } else {
-                Err(Error::RedefinedLabel)
             }
         }
         Statement::If {
@@ -94,12 +85,13 @@ fn check_labels(
             };
             Ok(())
         }
+        Statement::Switch { val: _, body } => check_labels(body, vars, labels),
         Statement::Ret(_)
         | Statement::Exp(_)
         | Statement::Null
         | Statement::Goto(_)
-        | Statement::Continue(_)
-        | Statement::Break(_) => Ok(()),
+        | Statement::Continue
+        | Statement::Break => Ok(()),
     }
 }
 
@@ -133,15 +125,15 @@ fn check_gotos(statement: &Statement, labels: &HashSet<Rc<Identifier>>) -> Resul
         }
         Statement::While { body, .. }
         | Statement::DoWhile { body, .. }
+        | Statement::Label { body, .. }
+        | Statement::Switch { body, .. }
         | Statement::For { body, .. } => check_gotos(&body, labels),
 
-        Statement::Label(Label::C17 { body, .. }) => check_gotos(body, labels),
         Statement::Ret(_)
         | Statement::Exp(_)
         | Statement::Null
-        | Statement::Label(Label::C23(_))
-        | Statement::Break(_)
-        | Statement::Continue(_) => Ok(()),
+        | Statement::Break
+        | Statement::Continue => Ok(()),
     }
 }
 

@@ -255,6 +255,9 @@ fn literal(byte: u8, iter: &mut SliceIter<u8>) -> Result<Token, Error> {
             b"for" => Keyword::For.into(),
             b"break" => Keyword::Break.into(),
             b"continue" => Keyword::Continue.into(),
+            b"switch" => Keyword::Switch.into(),
+            b"case" => Keyword::Case.into(),
+            b"default" => Keyword::Default.into(),
             _ => identifier(bytes.into())?.into(),
         })
     } else {
@@ -366,6 +369,16 @@ impl PartialEq<Token> for Identifier {
 #[derive(PartialEq, Eq, Clone, Hash)]
 pub struct Identifier(pub Box<[u8]>);
 
+impl Identifier {
+    pub fn new(name: &[u8]) -> Self {
+        Self(name.into())
+    }
+
+    pub fn new_rc(name: &[u8]) -> std::rc::Rc<Self> {
+        Self(name.into()).into()
+    }
+}
+
 impl fmt::Debug for Identifier {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "{}", unsafe { std::str::from_utf8_unchecked(&self.0) })
@@ -409,6 +422,9 @@ pub enum Keyword {
     For,
     Break,
     Continue,
+    Switch,
+    Default,
+    Case,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]

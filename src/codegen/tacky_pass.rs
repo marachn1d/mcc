@@ -9,18 +9,24 @@ use assembly::tacky::Value;
 use assembly::OpVec;
 use parse::Binary as AstBinary;
 
+use crate::semantics;
 use parse::BinaryOperator as AstBinop;
 use parse::Declaration as AstDeclaration;
 use parse::Expression as AstExpression;
 use parse::Factor as AstFactor;
 use parse::ForInit;
-use parse::Function as AstFunction;
-use parse::Program as AstProgram;
 use parse::Unary as AstUnary;
+use semantics::Function as AstFunction;
+use semantics::Label as AstLabel;
+use semantics::Program as AstProgram;
 
-use parse::Block as AstBlock;
-use parse::BlockItem as AstBlockItem;
-use parse::Statement as AstStatement;
+use semantics::LabelId;
+
+use semantics::StatementLabels;
+
+use semantics::Block as AstBlock;
+use semantics::BlockItem as AstBlockItem;
+use semantics::Statement as AstStatement;
 use std::rc::Rc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
@@ -45,26 +51,12 @@ fn convert_function(function: AstFunction) -> Function {
 }
 
 fn convert_block(block: AstBlock, instructions: &mut OpVec<Instruction>) {
-    for block in block.0 {
+    for block in block {
         match block {
             AstBlockItem::S(statement) => convert_statement(statement, instructions),
             AstBlockItem::D(declaration) => convert_declaration(declaration, instructions),
         };
     }
-}
-
-fn continue_label(string: &str) -> Rc<Identifier> {
-    let bytes = format!("__continue_{}", string)
-        .into_bytes()
-        .into_boxed_slice();
-    Rc::new(Identifier(bytes))
-}
-
-fn break_label(string: &str) -> Rc<Identifier> {
-    let bytes = format!("__break_{}", string)
-        .into_bytes()
-        .into_boxed_slice();
-    Rc::new(Identifier(bytes))
 }
 
 fn convert_statement(statement: AstStatement, instructions: &mut OpVec<Instruction>) {
@@ -74,19 +66,22 @@ fn convert_statement(statement: AstStatement, instructions: &mut OpVec<Instructi
             condition,
             label,
         } => {
-            let start = start_label();
-            let r#continue = continue_label(&label);
-            let r#break = break_label(&label);
+            let StatementLabels {
+                start,
+                _break,
+                _continue,
+                end: _,
+            } = label.labels();
             instructions.push_one(Instruction::Label(start.clone()));
             convert_statement(*body, instructions);
-            instructions.push_one(Instruction::Label(r#continue));
+            instructions.push_one(Instruction::Label(_continue));
             let result = convert_expression(condition, instructions);
             instructions.push([
                 Instruction::JumpIfNotZero {
                     condition: result,
                     target: start,
                 },
-                Instruction::Label(r#break),
+                Instruction::Label(_break),
             ]);
         }
         AstStatement::While {
@@ -94,18 +89,23 @@ fn convert_statement(statement: AstStatement, instructions: &mut OpVec<Instructi
             condition,
             label,
         } => {
-            let r#continue = continue_label(&label);
-            let r#break = break_label(&label);
-            instructions.push_one(Instruction::Label(r#continue.clone()));
+            let StatementLabels {
+                start: _,
+                _break,
+                _continue,
+                end: _,
+            } = label.labels();
+
+            instructions.push_one(Instruction::Label(_continue.clone()));
             let result = convert_expression(condition, instructions);
             instructions.push_one(Instruction::JumpIfZero {
                 condition: result,
-                target: r#break.clone(),
+                target: _break.clone(),
             });
             convert_statement(*body, instructions);
             instructions.push([
-                Instruction::Jump { target: r#continue },
-                Instruction::Label(r#break),
+                Instruction::Jump { target: _continue },
+                Instruction::Label(_break),
             ]);
         }
         AstStatement::For {
@@ -115,9 +115,13 @@ fn convert_statement(statement: AstStatement, instructions: &mut OpVec<Instructi
             body,
             label,
         } => {
-            let start_label = start_label();
-            let continue_label = continue_label(&label);
-            let break_label = break_label(&label);
+            let StatementLabels {
+                start,
+                _break,
+                _continue,
+                end: _,
+            } = label.labels();
+
             match init {
                 Some(ForInit::D(d)) => convert_declaration(d, instructions),
                 Some(ForInit::E(exp)) => {
@@ -125,34 +129,33 @@ fn convert_statement(statement: AstStatement, instructions: &mut OpVec<Instructi
                 }
                 None => {}
             };
-            instructions.push_one(Instruction::Label(start_label.clone()));
+            instructions.push_one(Instruction::Label(start.clone()));
             if let Some(condition) = condition {
                 let v = convert_expression(condition, instructions);
                 instructions.push_one(Instruction::JumpIfZero {
                     condition: v,
-                    target: break_label.clone(),
+                    target: _break.clone(),
                 })
             }
             convert_statement(*body, instructions);
-            instructions.push_one(Instruction::Label(continue_label));
+            //
+            instructions.push_one(Instruction::Label(_continue));
             if let Some(post) = post {
                 convert_expression(post, instructions);
             }
             instructions.push([
-                Instruction::Jump {
-                    target: start_label,
-                },
-                Instruction::Label(break_label),
+                Instruction::Jump { target: start },
+                Instruction::Label(_break),
             ])
         }
         AstStatement::Break(label) => {
             instructions.push_one(Instruction::Jump {
-                target: break_label(&label),
+                target: label._break(),
             });
         }
         AstStatement::Continue(label) => {
             instructions.push_one(Instruction::Jump {
-                target: continue_label(&label),
+                target: label._continue(),
             });
         }
 
@@ -202,12 +205,62 @@ fn convert_statement(statement: AstStatement, instructions: &mut OpVec<Instructi
             convert_statement(*r#else, instructions);
             instructions.push_one(Instruction::Label(end));
         }
-        AstStatement::Label(label) => {
-            let (label, body) = label.into_inner();
-            instructions.push_one(Instruction::Label(label));
-            if let Some(body) = body {
-                convert_statement(*body, instructions);
+        AstStatement::Label {
+            name: AstLabel::Named(name),
+            body,
+        } => {
+            instructions.push_one(Instruction::Label(name));
+            convert_statement(*body, instructions);
+        }
+        AstStatement::Label {
+            name: AstLabel::Case { val, id },
+            body,
+        } => {
+            instructions.push_one(Instruction::Label(id.case(val)));
+            convert_statement(*body, instructions);
+        }
+        AstStatement::Label {
+            name: AstLabel::Default(id),
+            body,
+        } => {
+            instructions.push_one(Instruction::Label(id.default()));
+            convert_statement(*body, instructions);
+        }
+        AstStatement::Switch {
+            val,
+            label,
+            cases,
+            body,
+            default,
+        } => {
+            let end_label = label.labels()._break;
+            let switch_val = convert_expression(val, instructions);
+            for case in cases {
+                let target_var = new_var();
+                instructions.push([
+                    // if val == case
+                    Instruction::Binary {
+                        operator: TackyBinary::EqualTo,
+                        source_1: switch_val.clone(),
+                        source_2: Value::Constant(case),
+                        dst: Value::Var(target_var.clone()),
+                    },
+                    // jump to its label
+                    Instruction::JumpIfNotZero {
+                        condition: Value::Var(target_var),
+                        target: label.case(case),
+                    },
+                ]);
             }
+            instructions.push_one(Instruction::Jump {
+                target: if default {
+                    label.default()
+                } else {
+                    end_label.clone()
+                },
+            });
+            convert_statement(*body, instructions);
+            instructions.push_one(Instruction::Label(end_label));
         }
         AstStatement::Goto(label) => instructions.push_one(Instruction::Jump { target: label }),
     }
@@ -573,11 +626,5 @@ fn else_label() -> Rc<Identifier> {
 fn conditional_label() -> Rc<Identifier> {
     let number = LABEL_COUNT.fetch_add(1, Ordering::SeqCst);
     let var_name: Box<[u8]> = format!("c{number}").into_bytes().into();
-    Rc::new(Identifier(var_name))
-}
-
-fn start_label() -> Rc<Identifier> {
-    let number = LABEL_COUNT.fetch_add(1, Ordering::SeqCst);
-    let var_name: Box<[u8]> = format!("_START{number}").into_bytes().into();
     Rc::new(Identifier(var_name))
 }

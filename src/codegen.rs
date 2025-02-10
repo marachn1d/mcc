@@ -4,7 +4,7 @@ mod tacky_pass;
 mod x86_pass;
 
 use super::lex::Identifier;
-use super::parse::Program as AstProgram;
+use super::semantics::Program as AstProgram;
 
 pub use assembly::Binary;
 use assembly::Function;

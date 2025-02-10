@@ -122,6 +122,14 @@ fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
                 r#else,
             }
         }
+        Token::Keyword(Keyword::Switch) => {
+            tokens.next();
+            tokens.consume(Token::OpenParen)?;
+            let val = expression(tokens, None)?;
+            tokens.consume(Token::CloseParen)?;
+            let body = Box::new(statement(tokens)?);
+            Statement::Switch { val, body }
+        }
         Token::Keyword(Keyword::Goto) => {
             tokens.next();
             let identifier = tokens.consume_identifier()?;
@@ -130,11 +138,19 @@ fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
         }
         // LABEL
         Token::Identifier(_) if tokens.peek_peek().is_some_and(|x| x == &Token::Colon) => {
-            Statement::Label(if CONFIG.get().unwrap().version == CVersion::C23 {
-                c23_label(tokens)
-            } else {
-                c17_label(tokens)?
-            })
+            let label = Label::Named(tokens.consume_identifier()?.into());
+            tokens.next();
+            let body = statement(tokens)?.into();
+            Statement::Label { label, body }
+        }
+        Token::Keyword(Keyword::Default) => {
+            tokens.next();
+            tokens.consume(Token::Colon)?;
+            let body = statement(tokens)?.into();
+            Statement::Label {
+                label: Label::Default,
+                body,
+            }
         }
         Token::OpenBrace => {
             let block = block(tokens)?;
@@ -144,12 +160,25 @@ fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
             tokens.next();
             tokens.consume(Token::Semicolon)?;
 
-            Statement::Break(String::new())
+            Statement::Break
+        }
+        Token::Keyword(Keyword::Case) => {
+            tokens.next();
+            match tokens.next() {
+                Some(Token::Constant(lex::Constant::Integer(num))) => {
+                    tokens.consume(Token::Colon)?;
+                    let body = statement(tokens)?.into();
+                    let label = Label::Case(Expression::Int(num));
+                    Ok(Statement::Label { label, body })
+                }
+                Some(_) => Err(Error::Catchall("expected integer constant".into())),
+                None => Err(Error::UnexpectedEof),
+            }?
         }
         Token::Keyword(Keyword::Continue) => {
             tokens.next();
             tokens.consume(Token::Semicolon)?;
-            Statement::Continue(String::new())
+            Statement::Continue
         }
         Token::Keyword(Keyword::While) => {
             tokens.next();
@@ -160,7 +189,6 @@ fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
             Statement::While {
                 condition,
                 body: Box::new(statement(tokens)?),
-                label: String::new(),
             }
         }
         Token::Keyword(Keyword::Do) => {
@@ -169,11 +197,7 @@ fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
             tokens.consume_array([Keyword::While.into(), Token::OpenParen])?;
             let condition = expression(tokens, None)?;
             tokens.consume_array([Token::CloseParen, Token::Semicolon])?;
-            Statement::DoWhile {
-                body,
-                condition,
-                label: String::new(),
-            }
+            Statement::DoWhile { body, condition }
         }
         Token::Keyword(Keyword::For) => {
             tokens.next();
@@ -190,7 +214,6 @@ fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
                 condition,
                 post,
                 body,
-                label: String::new(),
             }
         }
         _ => {
@@ -227,19 +250,6 @@ fn for_init(tokens: &mut TokenIter) -> Result<Option<ForInit>, Error> {
     }
 }
 
-fn c23_label(tokens: &mut TokenIter) -> Label {
-    let val = tokens.consume_identifier().unwrap();
-    tokens.next();
-    Label::C23(val.into())
-}
-
-fn c17_label(tokens: &mut TokenIter) -> Result<Label, Error> {
-    let label = Rc::new(tokens.consume_identifier().unwrap());
-    tokens.next();
-    let body = Box::new(statement(tokens)?);
-    Ok(Label::C17 { label, body })
-}
-
 #[derive(Debug)]
 pub enum BlockItem {
     S(Statement),
@@ -255,29 +265,33 @@ pub enum Statement {
         then: Box<Statement>,
         r#else: Option<Box<Statement>>,
     },
-    Break(String),
-    Continue(String),
+    Break,
+    Continue,
     While {
         condition: Expression,
         body: Box<Self>,
-        label: String,
     },
     DoWhile {
         body: Box<Self>,
         condition: Expression,
-        label: String,
     },
     For {
         init: Option<ForInit>,
         condition: Option<Expression>,
         post: Option<Expression>,
         body: Box<Self>,
-        label: String,
     },
     Compound(Block),
-    Label(Label),
+    Label {
+        label: Label,
+        body: Box<Self>,
+    },
     Goto(Rc<Identifier>),
     Null,
+    Switch {
+        val: Expression,
+        body: Box<Self>,
+    },
 }
 
 #[derive(Debug)]
@@ -286,29 +300,11 @@ pub enum ForInit {
     E(Expression),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Label {
-    C23(Rc<Identifier>),
-    C17 {
-        label: Rc<Identifier>,
-        body: Box<Statement>,
-    },
-}
-
-impl Label {
-    pub const fn label(&self) -> &Rc<Identifier> {
-        match self {
-            Self::C23(label) => label,
-            Self::C17 { label, .. } => label,
-        }
-    }
-
-    pub fn into_inner(self) -> (Rc<Identifier>, Option<Box<Statement>>) {
-        match self {
-            Self::C23(label) => (label, None),
-            Self::C17 { label, body } => (label, Some(body)),
-        }
-    }
+    Named(Rc<Identifier>),
+    Case(Expression),
+    Default,
 }
 
 use std::rc::Rc;
@@ -492,6 +488,14 @@ impl Expression {
             Self::Var(_) => true,
             Self::Nested(e) => e.lvalue(),
             _ => false,
+        }
+    }
+
+    pub const fn number(&self) -> Option<u64> {
+        match self {
+            Self::Nested(e) => e.number(),
+            Self::Int(val) => Some(*val),
+            _ => None,
         }
     }
 }
@@ -686,11 +690,11 @@ impl Display for Statement {
                 then,
                 r#else,
             } => write!(f, "if(\n{condition:?}\n){then}{else:?}"),
-            Statement::Label(name) => write!(f, "LABEL\n{name}:\n"),
+            Statement::Label { label, body } => write!(f, "LABEL\n{label}:{body}\n"),
 
             Statement::Goto(name) => write!(f, "goto\n{name}:\n"),
 
-            Statement::Compound(Block(block)) => write!(f, "{{{block:?}}}\n"),
+            Statement::Compound(Block(block)) => writeln!(f, "{{{block:?}}}"),
             _ => todo!(),
         }
     }
@@ -698,11 +702,11 @@ impl Display for Statement {
 
 impl Display for Label {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "{:}:", self.label())?;
-        if let Label::C17 { body, .. } = self {
-            write!(f, "{:}:", body)?;
+        match self {
+            Label::Default => write!(f, "default"),
+            Label::Named(name) => write!(f, "{name}"),
+            Label::Case(case) => write!(f, "case {case:?}"),
         }
-        Ok(())
     }
 }
 
