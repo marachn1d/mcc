@@ -46,6 +46,7 @@ pub enum Token {
     Leq,
     Geq,
     Equals,
+    Comma,
 
     QuestionMark,
     Colon,
@@ -196,7 +197,7 @@ fn lex_slice(iter: &mut SliceIter<u8>) -> Result<Option<Token>, Error> {
                 b'<' => Token::LessThan,
                 b'>' => Token::GreaterThan,
                 b'=' => Token::Equals,
-
+                b',' => Token::Comma,
                 b'?' => Token::QuestionMark,
                 b':' => Token::Colon,
                 a => literal(*a, iter)?,

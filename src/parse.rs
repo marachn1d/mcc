@@ -1,9 +1,8 @@
 use super::lex::Identifier;
+
 use super::lex::Keyword;
 use super::slice_iter::TokenIter;
-use super::CVersion;
 use super::Token;
-use super::CONFIG;
 use std::fmt::{self, Display, Formatter};
 
 pub fn parse(tokens: Box<[Token]>) -> Result<Program, Error> {
@@ -17,28 +16,80 @@ pub fn parse(tokens: Box<[Token]>) -> Result<Program, Error> {
 }
 
 fn program(tokens: &mut TokenIter) -> Result<Program, Error> {
-    let program = function(tokens).map(Program)?;
-    if tokens.is_empty() {
-        Ok(program)
-    } else {
-        Err(Error::ExtraStuff)
+    let mut functions = Vec::new();
+    while !tokens.is_empty() {
+        functions.push(function_declaration(tokens)?);
     }
+    Ok(Program(functions.into()))
 }
 
 #[derive(Debug)]
-pub struct Program(pub Function);
+pub struct Program(pub Box<[FunctionDeclaration]>);
 
-// working with an iterator would be better but sdince the type isn't Copy it's kinda weird idk
-fn function(tokens: &mut TokenIter) -> Result<Function, Error> {
+fn function_declaration(tokens: &mut TokenIter) -> Result<FunctionDeclaration, Error> {
     tokens.consume(Keyword::Int)?;
-    let name = tokens.consume_identifier()?;
-    tokens
-        .consume_array([Token::OpenParen, Keyword::Void.into(), Token::CloseParen])
-        .map_err(|_| {
-            Error::Catchall("Expected Function Definition after Function identifier".into())
-        })?;
-    let body = block(tokens)?;
-    Ok(Function { name, body })
+    let name = Rc::new(tokens.consume_identifier()?);
+
+    tokens.consume(Token::OpenParen)?;
+    fndec_params_and_body(tokens, name)
+}
+
+fn fndec_params_and_body(
+    tokens: &mut TokenIter,
+    name: Rc<Identifier>,
+) -> Result<FunctionDeclaration, Error> {
+    let parameters = param_list(tokens)?;
+    Ok(if tokens.next_if(|x| x == &Token::Semicolon).is_some() {
+        FunctionDeclaration {
+            name,
+            params: parameters,
+            body: None,
+        }
+    } else {
+        let body = Some(block(tokens)?);
+        FunctionDeclaration {
+            name,
+            params: parameters,
+            body,
+        }
+    })
+}
+
+fn param_list(tokens: &mut TokenIter) -> Result<ParamList, Error> {
+    match tokens.peek_any()? {
+        Token::Keyword(Keyword::Void) => {
+            tokens.next();
+
+            tokens.consume(Token::CloseParen)?;
+            Ok(ParamList::Void)
+        }
+        Token::Keyword(Keyword::Int) => {
+            tokens.next();
+            let mut ident = Vec::new();
+            ident.push(Rc::new(tokens.consume_identifier()?));
+            while param_continues(tokens)? {
+                ident.push(tokens.consume_identifier()?.into());
+            }
+
+            Ok(ParamList::Int(ident.into()))
+        }
+        _ => Err(Error::Catchall("invalid param list".into())),
+    }
+}
+
+fn param_continues(tokens: &mut TokenIter) -> Result<bool, Error> {
+    match tokens.peek_any()? {
+        Token::Comma => {
+            tokens.next();
+            tokens.consume(Keyword::Int)?;
+            Ok(true)
+        }
+        Token::CloseParen => {
+            tokens.next();
+            Ok(false)
+        }
+        _ => Err(Error::Catchall("expected ',' or ')'.".into())),
+    }
 }
 
 #[derive(Debug)]
@@ -64,8 +115,26 @@ fn block_item(tokens: &mut TokenIter) -> Result<Option<BlockItem>, Error> {
 
 fn declaration(tokens: &mut TokenIter) -> Result<Declaration, Error> {
     tokens.consume(Keyword::Int)?;
-    let name = tokens.consume_identifier()?;
+    let name = Rc::new(tokens.consume_identifier()?);
 
+    match tokens.consume_any()? {
+        Token::Equals => {
+            let exp = expression(tokens, None)?;
+            tokens.consume(Token::Semicolon)?;
+            Ok(Declaration::Var {
+                name,
+                init: Some(exp),
+            })
+        }
+        Token::OpenParen => fndec_params_and_body(tokens, name).map(Declaration::from),
+        Token::Semicolon => Ok(Declaration::Var { name, init: None }),
+        _ => Err(Error::Catchall("expected initializer or semicolon".into())),
+    }
+}
+
+fn var_declaration(tokens: &mut TokenIter) -> Result<VariableDeclaration, Error> {
+    tokens.consume(Keyword::Int)?;
+    let name = tokens.consume_identifier()?;
     let init = match tokens.consume_any()? {
         Token::Equals => {
             let exp = expression(tokens, None)?;
@@ -75,10 +144,71 @@ fn declaration(tokens: &mut TokenIter) -> Result<Declaration, Error> {
         Token::Semicolon => Ok(None),
         _ => Err(Error::Catchall("expected initializer or semicolon".into())),
     }?;
-    Ok(Declaration {
+    Ok(VariableDeclaration {
         name: name.into(),
         init,
     })
+}
+
+#[derive(Debug)]
+pub enum ParamList {
+    Void,
+    Int(Box<[Rc<Identifier>]>),
+}
+
+impl ParamList {
+    pub fn iter(&mut self) -> std::slice::IterMut<Rc<Identifier>> {
+        match self {
+            Self::Int(inner) => inner.iter_mut(),
+            Self::Void => [].iter_mut(),
+        }
+    }
+
+    pub const fn len(&self) -> usize {
+        match self {
+            Self::Void => 0,
+            Self::Int(inner) => inner.len(),
+        }
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        match self {
+            Self::Void => true,
+            Self::Int(_) => false,
+        }
+    }
+}
+
+pub enum Param {
+    Void,
+    Int(Rc<Identifier>),
+}
+
+#[derive(Debug)]
+pub struct FunctionDeclaration {
+    pub name: Rc<Identifier>,
+    pub params: ParamList,
+    pub body: Option<Block>,
+}
+
+#[derive(Debug)]
+pub struct VariableDeclaration {
+    pub name: Rc<Identifier>,
+    pub init: Option<Expression>,
+}
+
+impl From<FunctionDeclaration> for Declaration {
+    fn from(FunctionDeclaration { name, body, params }: FunctionDeclaration) -> Self {
+        Self::Function { name, body, params }
+    }
+}
+impl From<VariableDeclaration> for Declaration {
+    fn from(dec: VariableDeclaration) -> Self {
+        Self::Var {
+            name: dec.name,
+            init: dec.init,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -234,6 +364,8 @@ fn optional_expr(tokens: &mut TokenIter, delim: Token) -> Result<Option<Expressi
     }
 }
 
+// for debugging
+#[allow(dead_code)]
 fn print_return<T: fmt::Debug>(mut f: impl FnMut() -> T) -> T {
     let val = f();
     eprintln!("{:?}", val);
@@ -241,7 +373,7 @@ fn print_return<T: fmt::Debug>(mut f: impl FnMut() -> T) -> T {
 }
 
 fn for_init(tokens: &mut TokenIter) -> Result<Option<ForInit>, Error> {
-    if let Ok(declaration) = declaration(tokens) {
+    if let Ok(declaration) = var_declaration(tokens) {
         Ok(Some(ForInit::D(declaration)))
     } else {
         let res = optional_expr(tokens, Token::Semicolon)?.map(ForInit::E);
@@ -296,7 +428,7 @@ pub enum Statement {
 
 #[derive(Debug)]
 pub enum ForInit {
-    D(Declaration),
+    D(VariableDeclaration),
     E(Expression),
 }
 
@@ -306,16 +438,29 @@ pub enum Label {
     Case(Expression),
     Default,
 }
-
 use std::rc::Rc;
 #[derive(Debug)]
+pub enum Declaration {
+    Function {
+        name: Rc<Identifier>,
+        params: ParamList,
+        body: Option<Block>,
+    },
+    Var {
+        name: Rc<Identifier>,
+        init: Option<Expression>,
+    },
+}
+/*
 pub struct Declaration {
     pub name: Rc<Identifier>,
     pub init: Option<Expression>,
 }
+*/
 
 fn expression(tokens: &mut TokenIter, min_precedence: Option<u8>) -> Result<Expression, Error> {
     let precedence = min_precedence.unwrap_or(0);
+
     let mut left = factor(tokens)?.into();
 
     while let Some(operator) = binary_operator(tokens, precedence) {
@@ -437,7 +582,16 @@ fn factor(tokens: &mut TokenIter) -> Result<Factor, Error> {
             tokens.consume(Token::CloseParen)?;
             Ok(Factor::Nested(exp))
         }
-        Token::Identifier(ident) => Ok(Factor::Var(ident.into())),
+        Token::Identifier(ident) => {
+            let ident = Rc::new(ident);
+            if tokens.peek() == Some(&Token::OpenParen) {
+                tokens.next();
+                let args = argument_list(tokens)?;
+                Ok(Factor::FunctionCall { name: ident, args })
+            } else {
+                Ok(Factor::Var(ident))
+            }
+        }
 
         e => {
             eprintln!("errored in {e:?}");
@@ -451,14 +605,26 @@ fn factor(tokens: &mut TokenIter) -> Result<Factor, Error> {
     }
 }
 
-fn unop(token: &Token) -> Option<UnaryOperator> {
-    match token {
-        Token::Minus => Some(UnaryOperator::Negate),
-        Token::Tilde => Some(UnaryOperator::Complement),
-        Token::Not => Some(UnaryOperator::Not),
-        _ => None,
+fn argument_list(tokens: &mut TokenIter) -> Result<Box<[Expression]>, Error> {
+    if tokens.consume(Token::CloseParen).is_ok() {
+        return Ok(Box::new([]));
     }
+
+    let mut list = Vec::new();
+    loop {
+        list.push(expression(tokens, None)?);
+        match tokens.consume_any()? {
+            Token::Comma => {}
+            Token::CloseParen => {
+                break;
+            }
+            _ => return Err(Error::Catchall("idk".into())),
+        }
+    }
+
+    Ok(list.into())
 }
+
 #[derive(Debug, Clone)]
 pub enum Expression {
     Assignment(Box<(Self, Self)>),
@@ -479,6 +645,10 @@ pub enum Expression {
         condition: Box<Self>,
         r#true: Box<Self>,
         r#false: Box<Self>,
+    },
+    FunctionCall {
+        name: Rc<Identifier>,
+        args: Box<[Self]>,
     },
 }
 
@@ -532,6 +702,8 @@ impl From<Factor> for Expression {
             Factor::PostfixDecrement(p) => Self::PostfixDecrement(p),
 
             Factor::Nested(e) => Self::Nested(e),
+
+            Factor::FunctionCall { name, args } => Self::FunctionCall { name, args },
         }
     }
 }
@@ -546,6 +718,10 @@ pub enum Factor {
     PrefixDecrement(Box<Expression>),
     PostfixDecrement(Box<Expression>),
     Nested(Box<Expression>),
+    FunctionCall {
+        name: Rc<Identifier>,
+        args: Box<[Expression]>,
+    },
 }
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
@@ -674,7 +850,31 @@ impl BinaryOperator {
 
 impl Display for Program {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "Program(\n{}\n)", self.0)
+        write!(f, "Program(\n{:?}\n)", self.0)
+    }
+}
+
+impl Display for FunctionDeclaration {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(
+            f,
+            "Function(\n{}({}){{{:?}}}\n)",
+            self.name, self.params, self.body
+        )
+    }
+}
+
+impl Display for ParamList {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self {
+            ParamList::Void => write!(f, "void"),
+            ParamList::Int(identifiers) => {
+                for ident in identifiers {
+                    write!(f, "int {ident}")?
+                }
+                Ok(())
+            }
+        }
     }
 }
 

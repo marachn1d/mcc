@@ -3,13 +3,18 @@ static LOOPS: AtomicUsize = AtomicUsize::new(0);
 use super::AstProgram;
 
 use super::BlockItem;
-use super::Function;
+use super::Declaration;
+use super::FunctionDeclaration;
 use super::Label;
 use super::LabelId;
 use super::Program;
 use super::Statement;
 use crate::parse::Function as AstFunction;
 use parse::BlockItem as AstBlockItem;
+
+use parse::FunctionDeclaration as AstFunctionDeclaration;
+
+use parse::Declaration as AstDeclaration;
 use parse::Label as AstLabel;
 
 #[derive(Debug)]
@@ -27,10 +32,23 @@ fn new_label() -> LabelId {
 }
 
 use crate::parse;
-pub fn label(AstProgram(main): AstProgram) -> Result<Program, Error> {
-    let AstFunction { name, body } = main;
-    let body = label_blocks(body.0, &mut Scope::default())?;
-    Ok(Program(Function { name, body }))
+pub fn label(program: AstProgram) -> Result<Program, Error> {
+    let mut functions = Vec::new();
+    for AstFunctionDeclaration { name, params, body } in program.0 {
+        functions.push(match body {
+            None => FunctionDeclaration {
+                name,
+                params,
+                body: None,
+            },
+            Some(body) => FunctionDeclaration {
+                name,
+                params,
+                body: Some(label_blocks(body.0, &mut Scope::default())?),
+            },
+        })
+    }
+    Ok(Program(functions.into()))
 }
 
 fn label_blocks(
@@ -41,10 +59,42 @@ fn label_blocks(
     for item in block {
         vec.push(match item {
             AstBlockItem::S(s) => label_statement(s, cur_loop).map(BlockItem::S)?,
-            AstBlockItem::D(d) => BlockItem::D(d),
+            AstBlockItem::D(d) => BlockItem::D(label_declaration(d, cur_loop)?),
         });
     }
     Ok(vec.into())
+}
+
+fn label_block(item: AstBlockItem, cur_loop: &mut Scope) -> Result<BlockItem, Error> {
+    match item {
+        AstBlockItem::S(s) => label_statement(s, cur_loop).map(BlockItem::S),
+        AstBlockItem::D(d) => label_declaration(d, cur_loop).map(BlockItem::D),
+    }
+}
+
+fn label_declaration(dec: AstDeclaration, cur_loop: &mut Scope) -> Result<Declaration, Error> {
+    match dec {
+        AstDeclaration::Var { name, init } => Ok(Declaration::Var { name, init }),
+
+        AstDeclaration::Function {
+            name,
+            params,
+            body: None,
+        } => Ok(Declaration::Function {
+            name,
+            params,
+            body: None,
+        }),
+        AstDeclaration::Function {
+            name,
+            params,
+            body: Some(body),
+        } => label_blocks(body.0, cur_loop).map(|body| Declaration::Function {
+            name,
+            params,
+            body: Some(body),
+        }),
+    }
 }
 
 fn label_statement(statement: parse::Statement, cur: &mut Scope) -> Result<Statement, Error> {

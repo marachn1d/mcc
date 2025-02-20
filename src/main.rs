@@ -1,8 +1,8 @@
+use clap::Parser;
+use mcc::CompileStage;
 use std::env;
 use std::fmt;
 use std::io;
-
-use mcc::CompileStage;
 
 use mcc::CVersion;
 use mcc::Config;
@@ -10,6 +10,15 @@ use mcc::CONFIG;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
+
+#[derive(Parser)]
+struct Args {
+    file: PathBuf,
+    #[arg(value_enum)]
+    stage: Option<CompileStage>,
+    #[arg(short)]
+    compile: bool,
+}
 
 /*
 #[derive(PartialEq, Eq, Copy, Clone, Debug)]
@@ -24,12 +33,17 @@ pub enum Arg {
 */
 
 fn main() -> Result<(), MCCError> {
-    let input = parse_args().map_err(|()| MCCError::Usage)?;
-    let output = input.with_extension("i");
-    let preprocessed_file = preprocess(&input, output).map_err(MCCError::Preprocess)?;
+    let args = Args::parse();
+
+    let _ = CONFIG.set(Config {
+        stage: args.stage,
+        version: CVersion::C23,
+    });
+    let output = args.file.with_extension("i");
+    let preprocessed_file = preprocess(&args.file, output).map_err(MCCError::Preprocess)?;
     let object_file = mcc::compile(preprocessed_file).map_err(MCCError::Compile)?;
     if CONFIG.get().unwrap().stage.is_none() {
-        assemble(&object_file).map_err(MCCError::Assemble)
+        assemble(&object_file, args.compile).map_err(MCCError::Assemble)
     } else {
         Ok(())
     }
@@ -110,14 +124,14 @@ fn preprocess(input: &Path, mut output: PathBuf) -> Result<PathBuf, io::Error> {
     Ok(output)
 }
 
-fn assemble(input: &Path) -> Result<(), io::Error> {
-    let output = input.with_extension("");
-    Command::new("gcc")
-        .arg(input)
-        .arg("-o")
-        .arg(&output)
-        .status()
-        .map(|_| ())
+fn assemble(input: &Path, compile: bool) -> Result<(), io::Error> {
+    let output = input.with_extension(if compile { "o" } else { "" });
+    let mut command = Command::new("gcc");
+    command.arg(input).arg("-o").arg(&output);
+    if compile {
+        command.arg("-c");
+    }
+    command.status().map(|_| ())
 }
 
 #[derive(Debug)]

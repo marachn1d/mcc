@@ -1,7 +1,8 @@
 use super::assembly;
 
 use super::Binary;
-use super::{Function, Identifier, Program};
+use super::{Identifier, Program};
+use assembly::FunctionDefinition;
 use assembly::Op;
 use assembly::OpVec;
 use assembly::Pseudo;
@@ -12,31 +13,50 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 pub fn fix_ast(program: Program<Pseudo>) -> Program<X86> {
-    let main = fix_function(program.0);
-    Program(main)
+    let mut functions = Vec::with_capacity(program.0.len());
+    for function in program.0 {
+        let function = convert_function(function);
+        functions.push(function)
+    }
+    Program(functions.into())
 }
 
-fn fix_function(function: Function<Pseudo>) -> Function<X86> {
-    let mut stack_frame = StackFrame::default();
-    let body: Vec<X86> = Vec::with_capacity(function.body.len() + 1);
-    let mut body: OpVec<X86> = body.into();
-    body.push_one(X86::AllocateStack(0));
+fn convert_function(
+    FunctionDefinition { name, params, body }: FunctionDefinition<Pseudo>,
+) -> FunctionDefinition<X86> {
+    let arg_bytes = if params.len() <= 6 {
+        0
+    } else {
+        (params.len() - 6) * 8
+    };
+    let padding_bytes = if params.len() > 6 && params.len() % 2 != 0 {
+        8
+    } else {
+        0
+    };
 
-    for op in get_iter(function.body) {
-        fix_instruction(op, &mut stack_frame, &mut body);
+    let stack_start = arg_bytes + padding_bytes;
+    let mut stack_frame = StackFrame::new(stack_start);
+    let body_vec: Vec<X86> = Vec::with_capacity(body.len() + 1);
+    let mut body_vec: OpVec<X86> = body_vec.into();
+    body_vec.push_one(X86::AllocateStack(0));
+
+    for op in get_iter(body) {
+        fix_instruction(op, &mut stack_frame, &mut body_vec);
     }
 
-    let mut body: Vec<X86> = body.0;
+    let mut body: Vec<X86> = body_vec.0;
 
     if stack_frame.size == 0 {
         // eww eww eww sorry sorry sorry
         body.remove(0);
     } else {
-        body[0] = X86::AllocateStack(stack_frame.size);
+        body[0] = X86::AllocateStack(stack_frame.rounded_size());
     }
 
-    Function {
-        name: function.name,
+    FunctionDefinition {
+        name,
+        params,
         body: body.into(),
     }
 }
@@ -46,18 +66,35 @@ fn get_iter<T>(boxed_slice: Box<[T]>) -> std::vec::IntoIter<T> {
 }
 #[derive(Default)]
 struct StackFrame {
-    map: HashMap<Rc<Identifier>, isize>,
-    size: isize,
+    map: HashMap<Rc<Identifier>, usize>,
+    size: usize,
+    push_offset: usize,
 }
 
 impl StackFrame {
-    fn get(&mut self, ident: &Rc<Identifier>) -> isize {
+    fn new(offset: usize) -> Self {
+        Self {
+            map: HashMap::new(),
+            size: offset,
+            push_offset: 0,
+        }
+    }
+
+    const fn record_push(&mut self) {
+        self.push_offset += 8;
+    }
+
+    const fn record_pop(&mut self) {
+        self.push_offset -= 8;
+    }
+
+    fn get(&mut self, ident: &Rc<Identifier>) -> usize {
         if let Some(offset) = self.map.get(ident) {
             *offset
         } else {
-            self.size -= 4;
+            self.size += 4;
             self.map.insert(ident.clone(), self.size);
-            self.size
+            self.size + self.push_offset
         }
     }
     fn fix_operand(&mut self, operand: PseudoOp) -> Op {
@@ -70,10 +107,32 @@ impl StackFrame {
     fn fix_by_name(&mut self, name: &Rc<Identifier>) -> Op {
         Op::Stack(self.get(name))
     }
+
+    /*
+    const fn rounded_size(&self) -> isize {
+        (self.size / 16) + 16
+    }
+    */
+
+    const fn rounded_size(&self) -> usize {
+        (self.size / 16 + 1) * 16
+    }
 }
 
 fn fix_instruction(op: Pseudo, stack_frame: &mut StackFrame, vec: &mut OpVec<X86>) {
     match op {
+        Pseudo::DeallocateStack(bytes) => vec.push_one(X86::DeallocateStack(bytes)),
+        Pseudo::Push(val) => {
+            let val = stack_frame.fix_operand(val);
+            match val {
+                Op::Stack(_) => vec.push([
+                    X86::mov(val, Op::Register(Register::R10)),
+                    X86::Push(Op::Register(Register::R10)),
+                ]),
+                _ => vec.push_one(X86::Push(val)),
+            };
+        }
+        Pseudo::Call(fun) => vec.push_one(X86::Call(fun)),
         Pseudo::Mov { src, dst } => {
             let src = stack_frame.fix_operand(src);
             let dst = stack_frame.fix_operand(dst);

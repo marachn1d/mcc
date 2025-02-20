@@ -23,11 +23,13 @@ pub enum CVersion {
     C23,
 }
 
-#[derive(PartialEq, Eq, Copy, Clone, Debug)]
+#[derive(PartialEq, Eq, Copy, Clone, Debug, clap::ValueEnum)]
 pub enum CompileStage {
     Lex,
     Parse,
     Codegen,
+    #[value(name = "S")]
+    KeepAsm,
     Compile,
     Tacky,
     Validate,
@@ -37,6 +39,7 @@ pub fn compile(mut path: PathBuf) -> Result<PathBuf, Error> {
     let bytes = fs::read(&path).map_err(|_| Error::InvalidInput)?;
     let _ = fs::remove_file(&path);
     let stage = CONFIG.get().unwrap().stage;
+
     let tokens = lex::tokenize(&bytes)?;
     if stage == Some(CompileStage::Lex) {
         return Ok("".into());
@@ -45,6 +48,7 @@ pub fn compile(mut path: PathBuf) -> Result<PathBuf, Error> {
     if stage == Some(CompileStage::Parse) {
         return Ok("".into());
     }
+
     let program = semantics::check(program)?;
     if stage == Some(CompileStage::Validate) {
         return Ok("".into());
@@ -55,7 +59,6 @@ pub fn compile(mut path: PathBuf) -> Result<PathBuf, Error> {
     if matches!(stage, Some(CompileStage::Codegen | CompileStage::Tacky)) {
         return Ok("".into());
     }
-
     path.set_extension("S");
     fs::write(&path, &code)?;
     Ok(path)

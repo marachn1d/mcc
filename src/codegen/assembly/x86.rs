@@ -2,10 +2,8 @@ use super::tacky::Value;
 use super::Identifier;
 use super::InstructionSet;
 use super::Register;
-use crate::parse::BinaryOperator;
 use crate::parse::UnaryOperator;
 use std::fmt::{self, Display, Formatter};
-use std::io::Write;
 use std::rc::Rc;
 
 pub type Pseudo = BaseX86<PseudoOp>;
@@ -29,7 +27,10 @@ pub enum BaseX86<T: Operand> {
         op: T,
         dst_op: T,
     },
-    AllocateStack(isize),
+    AllocateStack(usize),
+    DeallocateStack(usize),
+    Push(T),
+    Call(Rc<Identifier>),
     Ret,
     Idiv {
         divisor: T,
@@ -110,6 +111,12 @@ pub trait Operand {}
 impl Display for X86 {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
+            Self::Call(fun) => write!(f, "call _{fun}"),
+            Self::DeallocateStack(size) => write!(f, "addq {size}, %rsp"),
+
+            Self::Push(Op::Register(r)) => write!(f, "pushq {}", r.eight_byte()),
+            Self::Push(op) => write!(f, "pushq {op}"),
+
             Self::Mov { src, dst } => write!(f, "movl  {src}, {dst}"),
             Self::Ret => write!(f, "movq %rbp, %rsp\n\tpopq %rbp\n\tret"),
             Self::Unary { operator, operand } => write!(f, "{operator} {operand}"),
@@ -159,7 +166,7 @@ impl Display for X86 {
 pub enum Op {
     Imm(u64),
     Register(Register),
-    Stack(isize),
+    Stack(usize),
 }
 impl Operand for Op {}
 
@@ -232,7 +239,7 @@ impl Display for Op {
         match self {
             Self::Imm(val) => write!(f, "${val}"),
             Self::Register(r) => write!(f, "{}", r.extended()),
-            Self::Stack(n) => write!(f, "{n}(%rbp)"),
+            Self::Stack(n) => write!(f, "-{n}(%rbp)"),
         }
     }
 }
@@ -269,6 +276,31 @@ impl<T: Into<Op>> From<T> for PseudoOp {
     }
 }
 
+impl Op {
+    pub const REGISTER_TABLE: [Register; 6] = [
+        Register::Di,
+        Register::Si,
+        Register::Dx,
+        Register::Cx,
+        Register::R8,
+        Register::R9,
+    ];
+
+    pub const fn param_dst(param_index: usize, params_len: usize) -> Self {
+        match param_index {
+            i @ 0..=5 => Self::Register(Self::REGISTER_TABLE[i]),
+            i @ 6.. => {
+                // the last one is gonna be 24 (stack already has rbp and maybe padding)
+                // second to last is gonna be 32
+                let distance_from_last = params_len - i + 1;
+                // if we're the last one then it'll be 1, second to last it'll be 2
+                // last one should be 3 because 8 * 3 = 24;
+                Self::Stack(distance_from_last * 8)
+            }
+        }
+    }
+}
+
 impl PseudoOp {
     pub const fn imm(value: u64) -> Self {
         Self::Normal(Op::Imm(value))
@@ -277,7 +309,7 @@ impl PseudoOp {
         Self::Normal(Op::Register(reg))
     }
 
-    pub const fn stack(offset: isize) -> Self {
+    pub const fn stack(offset: usize) -> Self {
         Self::Normal(Op::Stack(offset))
     }
 }

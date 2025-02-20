@@ -1,7 +1,7 @@
 use super::assembly;
 use super::Identifier;
 use crate::parse;
-use assembly::tacky::Function;
+use assembly::tacky::FunctionDefinition;
 use assembly::tacky::Instruction;
 use assembly::tacky::Program;
 use assembly::tacky::TackyBinary;
@@ -11,16 +11,16 @@ use parse::Binary as AstBinary;
 
 use crate::semantics;
 use parse::BinaryOperator as AstBinop;
-use parse::Declaration as AstDeclaration;
 use parse::Expression as AstExpression;
 use parse::Factor as AstFactor;
 use parse::ForInit;
 use parse::Unary as AstUnary;
-use semantics::Function as AstFunction;
+use semantics::Declaration as AstDeclaration;
+use semantics::FunctionDeclaration as AstFunctionDec;
 use semantics::Label as AstLabel;
 use semantics::Program as AstProgram;
 
-use semantics::LabelId;
+use parse::ParamList;
 
 use semantics::StatementLabels;
 
@@ -36,18 +36,31 @@ static TEMP_COUNT: AtomicUsize = AtomicUsize::new(0);
 static LABEL_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 pub fn emit(program: AstProgram) -> Program {
-    super::Program::<Instruction>(convert_function(program.0))
+    let mut fns = Vec::with_capacity(program.0.len());
+    for function in program.0 {
+        if let Some(f) = convert_function(function) {
+            fns.push(f);
+        }
+    }
+    super::Program::<Instruction>(fns.into_boxed_slice())
 }
 
-fn convert_function(function: AstFunction) -> Function {
-    let mut body = OpVec::new();
-    convert_block(function.body, &mut body);
-    body.push_one(Instruction::Return(Value::Constant(0)));
+fn convert_function(
+    AstFunctionDec { name, body, params }: AstFunctionDec,
+) -> Option<FunctionDefinition> {
+    let mut body_ops = OpVec::new();
+    convert_block(body?, &mut body_ops);
+    body_ops.push_one(Instruction::Return(Value::Constant(0)));
 
-    Function {
-        name: function.name,
-        body: body.into(),
-    }
+    Some(FunctionDefinition {
+        name: name.clone(),
+        params: match params {
+            ParamList::Void => [].into(),
+
+            ParamList::Int(names) => names,
+        },
+        body: body_ops.into(),
+    })
 }
 
 fn convert_block(block: AstBlock, instructions: &mut OpVec<Instruction>) {
@@ -123,7 +136,7 @@ fn convert_statement(statement: AstStatement, instructions: &mut OpVec<Instructi
             } = label.labels();
 
             match init {
-                Some(ForInit::D(d)) => convert_declaration(d, instructions),
+                Some(ForInit::D(d)) => convert_declaration(d.into(), instructions),
                 Some(ForInit::E(exp)) => {
                     convert_expression(exp, instructions);
                 }
@@ -267,17 +280,48 @@ fn convert_statement(statement: AstStatement, instructions: &mut OpVec<Instructi
 }
 
 fn convert_declaration(dec: AstDeclaration, instructions: &mut OpVec<Instruction>) {
-    if let Some(init) = dec.init {
-        let result = convert_expression(init, instructions);
-        instructions.push_one(Instruction::Copy {
-            src: result,
-            dst: Value::Var(dec.name),
-        })
+    match dec {
+        AstDeclaration::Function {
+            name: _,
+            params: _,
+            body: None,
+        } => {}
+
+        AstDeclaration::Function {
+            name: _,
+            params: _,
+            body: Some(_),
+        } => {
+            unreachable!();
+        }
+
+        AstDeclaration::Var { name, init } => {
+            if let Some(init) = init {
+                let result = convert_expression(init, instructions);
+                instructions.push_one(Instruction::Copy {
+                    src: result,
+                    dst: Value::Var(name),
+                })
+            }
+        }
     }
 }
 
 fn convert_expression(expression: AstExpression, instructions: &mut OpVec<Instruction>) -> Value {
     match expression {
+        AstExpression::FunctionCall { name, args } => {
+            let mut args_vec = Vec::new();
+            for arg in args {
+                args_vec.push(convert_expression(arg, instructions));
+            }
+            let result = Value::Var(new_var());
+            instructions.push_one(Instruction::FunCall {
+                name,
+                args: args_vec.into(),
+                dst: result.clone(),
+            });
+            result
+        }
         AstExpression::Assignment(v) => {
             let (var, rhs) = *v;
             let AstExpression::Var(var) = var else {
@@ -583,6 +627,19 @@ fn convert_factor(factor: AstFactor, instructions: &mut OpVec<Instruction>) -> V
                 },
             ]);
             Value::Var(old_value_location)
+        }
+        AstFactor::FunctionCall { name, args } => {
+            let mut args_vec = Vec::new();
+            for arg in args {
+                args_vec.push(convert_expression(arg, instructions));
+            }
+            let result = Value::Var(new_var());
+            instructions.push_one(Instruction::FunCall {
+                name,
+                args: args_vec.into(),
+                dst: result.clone(),
+            });
+            result
         }
     }
 }

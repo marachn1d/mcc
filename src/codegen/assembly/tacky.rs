@@ -5,7 +5,7 @@ use parse::UnaryOperator;
 use std::rc::Rc;
 
 pub type Program = super::Program<Instruction>;
-pub type Function = super::Function<Instruction>;
+pub type FunctionDefinition = super::FunctionDefinition<Instruction>;
 
 pub type TackyUnary = UnaryOperator;
 impl InstructionSet for Instruction {}
@@ -39,6 +39,11 @@ pub enum Instruction {
         target: Rc<Identifier>,
     },
     Label(Rc<Identifier>),
+    FunCall {
+        name: Rc<Identifier>,
+        args: Box<[Value]>,
+        dst: Value,
+    },
 }
 
 #[derive(Clone)]
@@ -47,7 +52,7 @@ pub enum Value {
     Var(Rc<Identifier>),
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum TackyBinary {
     Add,
     Subtract,

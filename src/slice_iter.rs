@@ -1,5 +1,5 @@
 use crate::lex::Token;
-use crate::lex::{Constant, Identifier, Keyword};
+use crate::lex::{Constant, Identifier};
 use std::iter::Iterator;
 use std::slice::Iter;
 pub struct SliceIter<'a, T: Copy>(Iter<'a, T>);
@@ -44,6 +44,17 @@ impl<'a, T: Copy> SliceIter<'a, T> {
 }
 
 pub struct TokenIter(Vec<Token>);
+use fmt::Debug;
+use fmt::Formatter;
+use std::fmt;
+impl Debug for TokenIter {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self.peek() {
+            Some(t) => write!(f, "TokenIter{{{t:?}}}"),
+            None => write!(f, "TokenIter{{_}}"),
+        }
+    }
+}
 
 use super::parse;
 impl TokenIter {

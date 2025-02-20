@@ -1,11 +1,14 @@
 mod check_labels;
 mod resolve;
+mod typecheck;
 use crate::lex::Identifier;
-use crate::parse::Declaration;
+use crate::parse;
 use crate::parse::Expression;
 use crate::parse::ForInit;
+use crate::parse::ParamList;
 use crate::parse::Program as AstProgram;
 pub use check_labels::check as check_labels;
+use parse::VariableDeclaration;
 use std::rc::Rc;
 mod resolve_loops;
 pub use resolve::resolve;
@@ -13,7 +16,11 @@ use std::collections::HashSet;
 
 pub fn check(mut program: AstProgram) -> Result<Program, Error> {
     let vars = resolve(&mut program).map_err(Error::Resolve)?;
-    handle_labels(program, vars)
+
+    let mut program = handle_labels(program, vars)?;
+
+    typecheck::typecheck(&mut program).map_err(Error::TypeCheck)?;
+    Ok(program)
 }
 
 fn handle_labels(
@@ -22,22 +29,8 @@ fn handle_labels(
 ) -> Result<Program, Error> {
     // make sure that all gotos are to real labeled statements and
     check_labels::check(&mut program, &var_map).map_err(Error::Label)?;
-    Ok(resolve_loops::label(program).map_err(Error::Loops)?)
+    resolve_loops::label(program).map_err(Error::Loops)
 }
-
-/*
- * (Do)While, For, and if
- *  Give a LabelId so that Breaks and Continues can have a target (like Break(LabelId) and
- *  Continue(LabelId) produces two label names
- *
- *  (Do)While and For also needs an id for jumping back to the top and jumping to the end
- *
- *  Switch
- *      Breaks get handled normally
- *      Continues throw error
- *      Switch gets Ids for conditionals
- *
- */
 
 #[derive(Debug, Copy, Clone)]
 pub struct LabelId(usize);
@@ -78,18 +71,38 @@ impl LabelId {
 pub type Block = Box<[BlockItem]>;
 
 #[derive(Debug)]
-pub struct Program(pub Function);
+pub struct Program(pub Box<[FunctionDeclaration]>);
 
 #[derive(Debug)]
-pub struct Function {
-    pub name: Identifier,
-    pub body: Block,
+pub struct FunctionDeclaration {
+    pub name: Rc<Identifier>,
+    pub params: ParamList,
+    pub body: Option<Block>,
 }
 
 #[derive(Debug)]
 pub enum BlockItem {
     S(Statement),
     D(Declaration),
+}
+
+#[derive(Debug)]
+pub enum Declaration {
+    Function {
+        name: Rc<Identifier>,
+        params: ParamList,
+        body: Option<Block>,
+    },
+    Var {
+        name: Rc<Identifier>,
+        init: Option<Expression>,
+    },
+}
+
+impl From<VariableDeclaration> for Declaration {
+    fn from(VariableDeclaration { name, init }: VariableDeclaration) -> Self {
+        Self::Var { name, init }
+    }
 }
 
 #[derive(Debug)]
@@ -143,24 +156,12 @@ pub enum Label {
     Default(LabelId),
 }
 
-use std::ptr::NonNull;
-#[derive(Debug)]
-struct SwitchBody {
-    statement: Box<Statement>,
-    cases: Box<[CaseRef]>,
-}
-
-#[derive(Debug)]
-struct CaseRef {
-    val: u64,
-    case: NonNull<Statement>,
-}
-
 #[derive(Debug)]
 pub enum Error {
     Label(LabelError),
     Loops(LoopError),
     Resolve(ResolveError),
+    TypeCheck(typecheck::Error),
 }
 
 pub use check_labels::Error as LabelError;

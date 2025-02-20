@@ -1,28 +1,28 @@
 use crate::lex::Identifier;
+use crate::parse::Block;
+use crate::parse::BlockItem;
+use crate::parse::Function;
+use crate::parse::FunctionDeclaration;
+use crate::parse::Label;
+use crate::parse::Program;
+use crate::parse::Statement;
 use std::collections::HashSet;
 use std::rc::Rc;
 
-use crate::parse::Program;
-
-use crate::parse::Label;
-
-use crate::parse::Statement;
-
-use crate::parse::BlockItem;
-
-use crate::parse::Block;
-
-use crate::parse::Function;
-
 pub fn check(program: &mut Program, vars: &HashSet<Rc<Identifier>>) -> Result<(), Error> {
-    check_function(&mut program.0, vars)
+    for r#fn in &mut program.0 {
+        check_function(r#fn, vars)?
+    }
+    Ok(())
 }
 
 fn check_function(
-    Function { name: _, body }: &mut Function,
+    FunctionDeclaration { body, .. }: &mut FunctionDeclaration,
     vars: &HashSet<Rc<Identifier>>,
 ) -> Result<(), Error> {
-    check_body(&body.0, vars)?;
+    if let Some(body) = body {
+        check_body(&body.0, vars)?;
+    }
     Ok(())
 }
 
@@ -127,7 +127,7 @@ fn check_gotos(statement: &Statement, labels: &HashSet<Rc<Identifier>>) -> Resul
         | Statement::DoWhile { body, .. }
         | Statement::Label { body, .. }
         | Statement::Switch { body, .. }
-        | Statement::For { body, .. } => check_gotos(&body, labels),
+        | Statement::For { body, .. } => check_gotos(body, labels),
 
         Statement::Ret(_)
         | Statement::Exp(_)

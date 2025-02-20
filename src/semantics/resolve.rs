@@ -11,8 +11,8 @@ use crate::parse::Program as AstProgram;
 use crate::parse::Statement as AstStatement;
 use parse::Binary as AstBinary;
 use parse::Declaration as AstDeclaration;
+
 use parse::Factor as AstFactor;
-use parse::Label as AstLabel;
 use parse::Unary as AstUnary;
 
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -27,29 +27,88 @@ type VarMap = HashMap<Rc<Identifier>, Var>;
 struct Var {
     name: Rc<Identifier>,
     from_current_block: bool,
+    has_external_linkage: bool,
 }
 
 impl Var {
-    fn new(name: &Rc<Identifier>) -> Self {
+    fn new_var(name: &Rc<Identifier>) -> Self {
         Self {
             name: name.clone(),
             from_current_block: true,
+            has_external_linkage: false,
+        }
+    }
+    fn new_fn(name: &Rc<Identifier>) -> Self {
+        Self {
+            name: name.clone(),
+            from_current_block: true,
+            has_external_linkage: true,
         }
     }
 }
 
-pub fn resolve(AstProgram(function): &mut AstProgram) -> Result<HashSet<Rc<Identifier>>, Error> {
+pub fn resolve(AstProgram(functions): &mut AstProgram) -> Result<HashSet<Rc<Identifier>>, Error> {
     let mut map: VarMap = VarMap::new();
-    resolve_function(function, &mut map)?;
+    for function in functions {
+        resolve_function_dec(function, &mut map)?;
+    }
     let vars: HashSet<Rc<Identifier>> = map.into_values().map(|x| x.name).collect();
     Ok(vars)
 }
 
-fn resolve_function(
-    AstFunction { name: _, body }: &mut AstFunction,
+fn resolve_fn_dec(
+    name: &mut Rc<Identifier>,
+    body: &mut Option<AstBlock>,
+    params: &mut parse::ParamList,
     map: &mut VarMap,
 ) -> Result<(), Error> {
-    resolve_block(body, map)?;
+    match map.entry(name.clone()) {
+        Entry::Occupied(mut e) => {
+            if e.get().from_current_block && !e.get().has_external_linkage {
+                Err(Error::DuplicateDeclaration)
+            } else {
+                e.insert(Var::new_fn(name));
+                let mut inner_map = new_scope(map);
+                resolve_param(params, &mut inner_map)?;
+                if let Some(body) = body {
+                    resolve_block(body, &mut inner_map)?;
+                }
+                Ok(())
+            }
+        }
+        Entry::Vacant(v) => {
+            v.insert(Var::new_fn(name));
+            let mut inner_map = new_scope(map);
+            resolve_param(params, &mut inner_map)?;
+            if let Some(body) = body {
+                resolve_block(body, &mut inner_map)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn resolve_function_dec(
+    parse::FunctionDeclaration { name, body, params }: &mut parse::FunctionDeclaration,
+    map: &mut VarMap,
+) -> Result<(), Error> {
+    resolve_fn_dec(name, body, params, map)
+}
+
+fn resolve_param(params: &mut parse::ParamList, map: &mut VarMap) -> Result<(), Error> {
+    for param in params.iter() {
+        if map
+            .get(param)
+            .is_some_and(|param| !param.has_external_linkage && param.from_current_block)
+        {
+            return Err(Error::DuplicateDeclaration);
+        }
+
+        let unique: Rc<Identifier> = new_var(&param.0).into();
+        map.insert(param.clone(), Var::new_var(&unique));
+
+        *param = unique;
+    }
     Ok(())
 }
 
@@ -68,31 +127,48 @@ fn resolve_block_item(block: &mut AstBlockItem, map: &mut VarMap) -> Result<(), 
     Ok(())
 }
 
-use std::collections::hash_map::Entry;
-fn resolve_declaration(dec: &mut AstDeclaration, map: &mut VarMap) -> Result<(), Error> {
-    let entry = map.entry(dec.name.clone());
-    match entry {
+fn resolve_var_dec(
+    name: &mut Rc<Identifier>,
+    init: &mut Option<AstExpression>,
+    map: &mut VarMap,
+) -> Result<(), Error> {
+    match map.entry(name.clone()) {
         Entry::Occupied(mut e) if !e.get().from_current_block => {
-            let unique: Rc<Identifier> = new_var(&dec.name.0).into();
+            let unique: Rc<Identifier> = new_var(&name.0).into();
 
-            *e.get_mut() = Var::new(&unique);
-            dec.name = unique;
-            if let Some(init) = &mut dec.init {
+            *e.get_mut() = Var::new_var(&unique);
+            *name = unique;
+            if let Some(init) = init {
                 resolve_expression(init, map)?;
             }
             Ok(())
         }
         Entry::Vacant(e) => {
-            let unique: Rc<Identifier> = new_var(&dec.name.0).into();
-            e.insert(Var::new(&unique));
-            dec.name = unique;
+            let unique: Rc<Identifier> = new_var(&name.0).into();
+            e.insert(Var::new_var(&unique));
+            *name = unique;
 
-            if let Some(init) = &mut dec.init {
+            if let Some(init) = init {
                 resolve_expression(init, map)?;
             }
             Ok(())
         }
         _ => Err(Error::DuplicateDeclaration),
+    }
+}
+
+use std::collections::hash_map::Entry;
+fn resolve_declaration(dec: &mut AstDeclaration, map: &mut VarMap) -> Result<(), Error> {
+    match dec {
+        AstDeclaration::Var { name, init } => resolve_var_dec(name, init, map),
+
+        AstDeclaration::Function { body: Some(_), .. } => Err(Error::LocalFnDecBody),
+
+        AstDeclaration::Function {
+            body: None,
+            name,
+            params,
+        } => resolve_fn_dec(name, &mut None, params, map),
     }
 }
 
@@ -169,7 +245,7 @@ fn new_scope(map: &VarMap) -> VarMap {
 fn resolve_init(init: &mut Option<AstForInit>, map: &mut VarMap) -> Result<(), Error> {
     match init {
         None => Ok(()),
-        Some(AstForInit::D(dec)) => resolve_declaration(dec, map),
+        Some(AstForInit::D(dec)) => resolve_var_dec(&mut dec.name, &mut dec.init, map),
         Some(AstForInit::E(exp)) => resolve_expression(exp, map),
     }
 }
@@ -233,6 +309,17 @@ fn resolve_expression(exp: &mut AstExpression, map: &mut VarMap) -> Result<(), E
         },
         AstExpression::Int(_) => Ok(()),
         AstExpression::Unary(inner) => resolve_factor(&mut inner.exp, map),
+        AstExpression::FunctionCall { name, args } => {
+            if let Some(new_name) = map.get(name) {
+                *name = new_name.name.clone();
+                for arg in args {
+                    resolve_expression(arg, map)?;
+                }
+                Ok(())
+            } else {
+                Err(Error::UndeclaredFn)
+            }
+        }
     }
 }
 
@@ -260,6 +347,17 @@ fn resolve_factor(factor: &mut AstFactor, map: &mut VarMap) -> Result<(), Error>
         AstFactor::Nested(exp) => resolve_expression(exp, map),
         AstFactor::Int(_) => Ok(()),
         AstFactor::Unary(AstUnary { exp, op: _ }) => resolve_factor(exp, map),
+        AstFactor::FunctionCall { name, args } => {
+            if let Some(new_name) = map.get(name) {
+                *name = new_name.name.clone();
+                for arg in args {
+                    resolve_expression(arg, map)?;
+                }
+                Ok(())
+            } else {
+                Err(Error::UndeclaredFn)
+            }
+        }
     }
 }
 
@@ -280,4 +378,6 @@ pub enum Error {
     DuplicateDeclaration,
     InvalidLval,
     UndeclaredVar,
+    UndeclaredFn,
+    LocalFnDecBody,
 }
