@@ -2,7 +2,6 @@ use super::Identifier;
 use super::InstructionSet;
 use crate::parse;
 use parse::UnaryOperator;
-use std::rc::Rc;
 
 pub type Program = super::Program<Instruction>;
 pub type FunctionDefinition = super::FunctionDefinition<Instruction>;
@@ -10,12 +9,13 @@ pub type FunctionDefinition = super::FunctionDefinition<Instruction>;
 pub type TackyUnary = UnaryOperator;
 impl InstructionSet for Instruction {}
 
+#[derive(Debug)]
 pub enum Instruction {
     Return(Value),
     Unary {
         op: TackyUnary,
         source: Value,
-        dst: Rc<Identifier>,
+        dst: Identifier,
     },
     Binary {
         operator: TackyBinary,
@@ -28,28 +28,28 @@ pub enum Instruction {
         dst: Value,
     },
     Jump {
-        target: Rc<Identifier>,
+        target: Identifier,
     },
     JumpIfZero {
         condition: Value,
-        target: Rc<Identifier>,
+        target: Identifier,
     },
     JumpIfNotZero {
         condition: Value,
-        target: Rc<Identifier>,
+        target: Identifier,
     },
-    Label(Rc<Identifier>),
+    Label(Identifier),
     FunCall {
-        name: Rc<Identifier>,
+        name: Identifier,
         args: Box<[Value]>,
         dst: Value,
     },
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Value {
     Constant(u64),
-    Var(Rc<Identifier>),
+    Var(Identifier),
 }
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]

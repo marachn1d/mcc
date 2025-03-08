@@ -2,6 +2,7 @@ use super::lex::Identifier;
 
 use super::lex::Keyword;
 use super::slice_iter::TokenIter;
+
 use super::Token;
 use std::fmt::{self, Display, Formatter};
 
@@ -18,25 +19,76 @@ pub fn parse(tokens: Box<[Token]>) -> Result<Program, Error> {
 fn program(tokens: &mut TokenIter) -> Result<Program, Error> {
     let mut functions = Vec::new();
     while !tokens.is_empty() {
-        functions.push(function_declaration(tokens)?);
+        functions.push(declaration(tokens)?);
     }
     Ok(Program(functions.into()))
 }
 
 #[derive(Debug)]
-pub struct Program(pub Box<[FunctionDeclaration]>);
+pub struct Program(pub Box<[Declaration]>);
 
-fn function_declaration(tokens: &mut TokenIter) -> Result<FunctionDeclaration, Error> {
-    tokens.consume(Keyword::Int)?;
-    let name = Rc::new(tokens.consume_identifier()?);
+fn declaration(tokens: &mut TokenIter) -> Result<Declaration, Error> {
+    let storage_class = specifiers(tokens)?;
 
-    tokens.consume(Token::OpenParen)?;
-    fndec_params_and_body(tokens, name)
+    let name = tokens.consume_identifier()?;
+
+    match tokens.consume_any()? {
+        Token::Equals => {
+            let exp = expression(tokens, None)?;
+            tokens.consume(Token::Semicolon)?;
+            Ok(Declaration::Var {
+                name,
+                init: Some(exp),
+                storage_class,
+            })
+        }
+        Token::OpenParen => {
+            fndec_params_and_body(tokens, name, storage_class).map(Declaration::from)
+        }
+        Token::Semicolon => Ok(Declaration::Var {
+            name,
+            init: None,
+            storage_class,
+        }),
+        _ => Err(Error::Catchall("expected initializer or semicolon")),
+    }
+}
+
+fn specifiers(tokens: &mut TokenIter) -> Result<Option<StorageClass>, Error> {
+    match tokens.as_slice() {
+        [] => expected_eof(),
+
+        [Token::Keyword(Keyword::Int), Token::Keyword(Keyword::Static), ..]
+        | [Token::Keyword(Keyword::Static), Token::Keyword(Keyword::Int), ..] => {
+            tokens.next();
+            tokens.next();
+            Ok(Some(StorageClass::Static))
+        }
+
+        [Token::Keyword(Keyword::Int), Token::Keyword(Keyword::Extern), ..]
+        | [Token::Keyword(Keyword::Extern), Token::Keyword(Keyword::Int), ..] => {
+            tokens.next();
+            tokens.next();
+            Ok(Some(StorageClass::Extern))
+        }
+
+        [Token::Keyword(Keyword::Static), Token::Keyword(Keyword::Extern), Token::Keyword(Keyword::Int), ..]
+        | [Token::Keyword(Keyword::Extern), Token::Keyword(Keyword::Static), Token::Keyword(Keyword::Int), ..] => {
+            Err(Error::ConflictingLinkage)
+        }
+
+        [Token::Keyword(Keyword::Int), ..] => {
+            tokens.next();
+            Ok(None)
+        }
+        _ => Err(Error::Expected(Keyword::Int.into())),
+    }
 }
 
 fn fndec_params_and_body(
     tokens: &mut TokenIter,
-    name: Rc<Identifier>,
+    name: Identifier,
+    storage_class: Option<StorageClass>,
 ) -> Result<FunctionDeclaration, Error> {
     let parameters = param_list(tokens)?;
     Ok(if tokens.next_if(|x| x == &Token::Semicolon).is_some() {
@@ -44,6 +96,7 @@ fn fndec_params_and_body(
             name,
             params: parameters,
             body: None,
+            storage_class,
         }
     } else {
         let body = Some(block(tokens)?);
@@ -51,6 +104,7 @@ fn fndec_params_and_body(
             name,
             params: parameters,
             body,
+            storage_class,
         }
     })
 }
@@ -66,14 +120,14 @@ fn param_list(tokens: &mut TokenIter) -> Result<ParamList, Error> {
         Token::Keyword(Keyword::Int) => {
             tokens.next();
             let mut ident = Vec::new();
-            ident.push(Rc::new(tokens.consume_identifier()?));
+            ident.push(tokens.consume_identifier()?);
             while param_continues(tokens)? {
-                ident.push(tokens.consume_identifier()?.into());
+                ident.push(tokens.consume_identifier()?);
             }
 
             Ok(ParamList::Int(ident.into()))
         }
-        _ => Err(Error::Catchall("invalid param list".into())),
+        _ => Err(Error::Catchall("invalid param list")),
     }
 }
 
@@ -88,7 +142,7 @@ fn param_continues(tokens: &mut TokenIter) -> Result<bool, Error> {
             tokens.next();
             Ok(false)
         }
-        _ => Err(Error::Catchall("expected ',' or ')'.".into())),
+        _ => Err(Error::Catchall("expected ',' or ')'.")),
     }
 }
 
@@ -107,57 +161,45 @@ fn block(tokens: &mut TokenIter) -> Result<Block, Error> {
 
 fn block_item(tokens: &mut TokenIter) -> Result<Option<BlockItem>, Error> {
     match tokens.peek_any()? {
-        Token::Keyword(Keyword::Int) => Ok(Some(BlockItem::D(declaration(tokens)?))),
+        Token::Keyword(Keyword::Int | Keyword::Static | Keyword::Extern) => {
+            Ok(Some(BlockItem::D(declaration(tokens)?)))
+        }
         Token::CloseBrace => Ok(None),
         _ => Ok(Some(BlockItem::S(statement(tokens)?))),
     }
 }
 
-fn declaration(tokens: &mut TokenIter) -> Result<Declaration, Error> {
-    tokens.consume(Keyword::Int)?;
-    let name = Rc::new(tokens.consume_identifier()?);
-
-    match tokens.consume_any()? {
-        Token::Equals => {
-            let exp = expression(tokens, None)?;
-            tokens.consume(Token::Semicolon)?;
-            Ok(Declaration::Var {
-                name,
-                init: Some(exp),
-            })
-        }
-        Token::OpenParen => fndec_params_and_body(tokens, name).map(Declaration::from),
-        Token::Semicolon => Ok(Declaration::Var { name, init: None }),
-        _ => Err(Error::Catchall("expected initializer or semicolon".into())),
-    }
-}
-
-fn var_declaration(tokens: &mut TokenIter) -> Result<VariableDeclaration, Error> {
+fn var_declaration(
+    tokens: &mut TokenIter,
+    storage_class: Option<StorageClass>,
+) -> Result<VariableDeclaration, Error> {
     tokens.consume(Keyword::Int)?;
     let name = tokens.consume_identifier()?;
     let init = match tokens.consume_any()? {
         Token::Equals => {
             let exp = expression(tokens, None)?;
+
             tokens.consume(Token::Semicolon)?;
             Ok(Some(exp))
         }
         Token::Semicolon => Ok(None),
-        _ => Err(Error::Catchall("expected initializer or semicolon".into())),
+        _ => Err(Error::Catchall("expected initializer or semicolon")),
     }?;
     Ok(VariableDeclaration {
-        name: name.into(),
+        name,
         init,
+        storage_class,
     })
 }
 
 #[derive(Debug)]
 pub enum ParamList {
     Void,
-    Int(Box<[Rc<Identifier>]>),
+    Int(Box<[Identifier]>),
 }
 
 impl ParamList {
-    pub fn iter(&mut self) -> std::slice::IterMut<Rc<Identifier>> {
+    pub fn iter(&mut self) -> std::slice::IterMut<Identifier> {
         match self {
             Self::Int(inner) => inner.iter_mut(),
             Self::Void => [].iter_mut(),
@@ -181,25 +223,54 @@ impl ParamList {
 
 pub enum Param {
     Void,
-    Int(Rc<Identifier>),
+    Int(Identifier),
 }
 
 #[derive(Debug)]
 pub struct FunctionDeclaration {
-    pub name: Rc<Identifier>,
+    pub name: Identifier,
     pub params: ParamList,
     pub body: Option<Block>,
+    pub storage_class: Option<StorageClass>,
 }
 
 #[derive(Debug)]
 pub struct VariableDeclaration {
-    pub name: Rc<Identifier>,
+    pub name: Identifier,
     pub init: Option<Expression>,
+    pub storage_class: Option<StorageClass>,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum StorageClass {
+    Static,
+    Extern,
+}
+
+impl PartialEq for StorageClass {
+    fn eq(&self, other: &Self) -> bool {
+        matches!(
+            (self, other),
+            (Self::Static, Self::Static) | (Self::Extern, Self::Extern)
+        )
+    }
 }
 
 impl From<FunctionDeclaration> for Declaration {
-    fn from(FunctionDeclaration { name, body, params }: FunctionDeclaration) -> Self {
-        Self::Function { name, body, params }
+    fn from(
+        FunctionDeclaration {
+            name,
+            body,
+            params,
+            storage_class,
+        }: FunctionDeclaration,
+    ) -> Self {
+        Self::Function {
+            name,
+            body,
+            params,
+            storage_class,
+        }
     }
 }
 impl From<VariableDeclaration> for Declaration {
@@ -207,6 +278,8 @@ impl From<VariableDeclaration> for Declaration {
         Self::Var {
             name: dec.name,
             init: dec.init,
+
+            storage_class: dec.storage_class,
         }
     }
 }
@@ -264,11 +337,11 @@ fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
             tokens.next();
             let identifier = tokens.consume_identifier()?;
             tokens.consume(Token::Semicolon)?;
-            Statement::Goto(identifier.into())
+            Statement::Goto(identifier)
         }
         // LABEL
         Token::Identifier(_) if tokens.peek_peek().is_some_and(|x| x == &Token::Colon) => {
-            let label = Label::Named(tokens.consume_identifier()?.into());
+            let label = Label::Named(tokens.consume_identifier()?);
             tokens.next();
             let body = statement(tokens)?.into();
             Statement::Label { label, body }
@@ -301,7 +374,7 @@ fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
                     let label = Label::Case(Expression::Int(num));
                     Ok(Statement::Label { label, body })
                 }
-                Some(_) => Err(Error::Catchall("expected integer constant".into())),
+                Some(_) => Err(Error::Catchall("expected integer constant")),
                 None => Err(Error::UnexpectedEof),
             }?
         }
@@ -324,15 +397,16 @@ fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
         Token::Keyword(Keyword::Do) => {
             tokens.next();
             let body = Box::new(statement(tokens)?);
-            tokens.consume_array([Keyword::While.into(), Token::OpenParen])?;
+            tokens.consume_arr([Keyword::While.into(), Token::OpenParen])?;
             let condition = expression(tokens, None)?;
-            tokens.consume_array([Token::CloseParen, Token::Semicolon])?;
+            tokens.consume_arr([Token::CloseParen, Token::Semicolon])?;
             Statement::DoWhile { body, condition }
         }
         Token::Keyword(Keyword::For) => {
             tokens.next();
             tokens.consume(Token::OpenParen)?;
             let init = for_init(tokens)?;
+
             let condition = optional_expr(tokens, Token::Semicolon)?;
 
             let post = optional_expr(tokens, Token::CloseParen)?;
@@ -373,11 +447,10 @@ fn print_return<T: fmt::Debug>(mut f: impl FnMut() -> T) -> T {
 }
 
 fn for_init(tokens: &mut TokenIter) -> Result<Option<ForInit>, Error> {
-    if let Ok(declaration) = var_declaration(tokens) {
+    if let Ok(declaration) = var_declaration(tokens, None) {
         Ok(Some(ForInit::D(declaration)))
     } else {
         let res = optional_expr(tokens, Token::Semicolon)?.map(ForInit::E);
-
         Ok(res)
     }
 }
@@ -386,6 +459,12 @@ fn for_init(tokens: &mut TokenIter) -> Result<Option<ForInit>, Error> {
 pub enum BlockItem {
     S(Statement),
     D(Declaration),
+}
+
+#[derive(Debug)]
+pub struct DebugStatement {
+    statement: Statement,
+    line: usize,
 }
 
 #[derive(Debug)]
@@ -418,7 +497,7 @@ pub enum Statement {
         label: Label,
         body: Box<Self>,
     },
-    Goto(Rc<Identifier>),
+    Goto(Identifier),
     Null,
     Switch {
         val: Expression,
@@ -434,21 +513,22 @@ pub enum ForInit {
 
 #[derive(Debug, Clone)]
 pub enum Label {
-    Named(Rc<Identifier>),
+    Named(Identifier),
     Case(Expression),
     Default,
 }
-use std::rc::Rc;
 #[derive(Debug)]
 pub enum Declaration {
     Function {
-        name: Rc<Identifier>,
+        name: Identifier,
         params: ParamList,
         body: Option<Block>,
+        storage_class: Option<StorageClass>,
     },
     Var {
-        name: Rc<Identifier>,
+        name: Identifier,
         init: Option<Expression>,
+        storage_class: Option<StorageClass>,
     },
 }
 /*
@@ -583,7 +663,6 @@ fn factor(tokens: &mut TokenIter) -> Result<Factor, Error> {
             Ok(Factor::Nested(exp))
         }
         Token::Identifier(ident) => {
-            let ident = Rc::new(ident);
             if tokens.peek() == Some(&Token::OpenParen) {
                 tokens.next();
                 let args = argument_list(tokens)?;
@@ -618,7 +697,7 @@ fn argument_list(tokens: &mut TokenIter) -> Result<Box<[Expression]>, Error> {
             Token::CloseParen => {
                 break;
             }
-            _ => return Err(Error::Catchall("idk".into())),
+            _ => return Err(Error::Catchall("idk")),
         }
     }
 
@@ -636,7 +715,7 @@ pub enum Expression {
     PrefixIncrement(Box<Self>),
     PrefixDecrement(Box<Self>),
 
-    Var(Rc<Identifier>),
+    Var(Identifier),
     Int(u64),
     Unary(Unary),
     Nested(Box<Self>),
@@ -647,7 +726,7 @@ pub enum Expression {
         r#false: Box<Self>,
     },
     FunctionCall {
-        name: Rc<Identifier>,
+        name: Identifier,
         args: Box<[Self]>,
     },
 }
@@ -710,7 +789,7 @@ impl From<Factor> for Expression {
 
 #[derive(Debug, Clone)]
 pub enum Factor {
-    Var(Rc<Identifier>),
+    Var(Identifier),
     Int(u64),
     Unary(Unary),
     PrefixIncrement(Box<Expression>),
@@ -719,7 +798,7 @@ pub enum Factor {
     PostfixDecrement(Box<Expression>),
     Nested(Box<Expression>),
     FunctionCall {
-        name: Rc<Identifier>,
+        name: Identifier,
         args: Box<[Expression]>,
     },
 }
@@ -932,6 +1011,16 @@ impl Display for Constant {
 }
 
 #[derive(Debug)]
+pub struct DebugError {
+    pub e: Error,
+    pub line: usize,
+}
+
+const fn expected_eof<T>() -> Result<T, Error> {
+    Err(Error::UnexpectedEof)
+}
+
+#[derive(Debug)]
 pub enum Error {
     UnexpectedEof,
     Expected(Token),
@@ -940,6 +1029,9 @@ pub enum Error {
     ExpectedExpression,
     ExpectedAnyKeyword,
     ExpectedKeyword(Keyword),
-    Catchall(String),
+    Catchall(&'static str),
     ExtraStuff,
+    DoubleDef,
+    NoType,
+    ConflictingLinkage,
 }

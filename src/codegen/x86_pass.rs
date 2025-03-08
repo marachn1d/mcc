@@ -1,42 +1,37 @@
 use super::assembly;
-
 use super::Binary;
 use super::{Identifier, Program};
+use crate::semantics::{Attr, SymbolTable};
 use assembly::FunctionDefinition;
 use assembly::Op;
 use assembly::OpVec;
 use assembly::Pseudo;
 use assembly::PseudoOp;
 use assembly::Register;
+use assembly::TopLevel;
 use assembly::X86;
 use std::collections::HashMap;
-use std::rc::Rc;
-
-pub fn fix_ast(program: Program<Pseudo>) -> Program<X86> {
-    let mut functions = Vec::with_capacity(program.0.len());
-    for function in program.0 {
-        let function = convert_function(function);
-        functions.push(function)
+pub fn fix_ast(program: Program<Pseudo>, table: &SymbolTable) -> Program<X86> {
+    let mut decs = Vec::with_capacity(program.0.len());
+    for dec in program.0 {
+        decs.push(match dec {
+            TopLevel::Fn(f) => TopLevel::Fn(convert_function(f, table)),
+            TopLevel::StaticVar(s) => TopLevel::StaticVar(s),
+        })
     }
-    Program(functions.into())
+    Program(decs.into())
 }
 
 fn convert_function(
-    FunctionDefinition { name, params, body }: FunctionDefinition<Pseudo>,
+    FunctionDefinition {
+        name,
+        params,
+        body,
+        global,
+    }: FunctionDefinition<Pseudo>,
+    table: &SymbolTable,
 ) -> FunctionDefinition<X86> {
-    let arg_bytes = if params.len() <= 6 {
-        0
-    } else {
-        (params.len() - 6) * 8
-    };
-    let padding_bytes = if params.len() > 6 && params.len() % 2 != 0 {
-        8
-    } else {
-        0
-    };
-
-    let stack_start = arg_bytes + padding_bytes;
-    let mut stack_frame = StackFrame::new(stack_start);
+    let mut stack_frame = StackFrame::new(table);
     let body_vec: Vec<X86> = Vec::with_capacity(body.len() + 1);
     let mut body_vec: OpVec<X86> = body_vec.into();
     body_vec.push_one(X86::AllocateStack(0));
@@ -58,43 +53,38 @@ fn convert_function(
         name,
         params,
         body: body.into(),
+        global,
     }
 }
 
 fn get_iter<T>(boxed_slice: Box<[T]>) -> std::vec::IntoIter<T> {
     <Box<[T]> as IntoIterator>::into_iter(boxed_slice)
 }
-#[derive(Default)]
-struct StackFrame {
-    map: HashMap<Rc<Identifier>, usize>,
+struct StackFrame<'a> {
+    map: HashMap<Identifier, isize>,
     size: usize,
-    push_offset: usize,
+    table: &'a SymbolTable,
 }
 
-impl StackFrame {
-    fn new(offset: usize) -> Self {
+impl<'a> StackFrame<'a> {
+    fn new(table: &'a SymbolTable) -> Self {
         Self {
             map: HashMap::new(),
-            size: offset,
-            push_offset: 0,
+            size: 0,
+            table,
         }
     }
 
-    const fn record_push(&mut self) {
-        self.push_offset += 8;
-    }
-
-    const fn record_pop(&mut self) {
-        self.push_offset -= 8;
-    }
-
-    fn get(&mut self, ident: &Rc<Identifier>) -> usize {
+    fn get(&mut self, ident: &Identifier) -> Op {
         if let Some(offset) = self.map.get(ident) {
-            *offset
+            Op::Stack(*offset)
+        } else if let Some(Attr::StaticInt { .. }) = self.table.get(ident) {
+            Op::Data(ident.clone())
         } else {
             self.size += 4;
-            self.map.insert(ident.clone(), self.size);
-            self.size + self.push_offset
+            let offset = -(self.size as isize);
+            self.map.insert(ident.clone(), offset);
+            Op::Stack(offset)
         }
     }
     fn fix_operand(&mut self, operand: PseudoOp) -> Op {
@@ -104,8 +94,8 @@ impl StackFrame {
         }
     }
 
-    fn fix_by_name(&mut self, name: &Rc<Identifier>) -> Op {
-        Op::Stack(self.get(name))
+    fn fix_by_name(&mut self, name: &Identifier) -> Op {
+        self.get(name)
     }
 
     /*
@@ -124,22 +114,19 @@ fn fix_instruction(op: Pseudo, stack_frame: &mut StackFrame, vec: &mut OpVec<X86
         Pseudo::DeallocateStack(bytes) => vec.push_one(X86::DeallocateStack(bytes)),
         Pseudo::Push(val) => {
             let val = stack_frame.fix_operand(val);
-            match val {
-                Op::Stack(_) => vec.push([
-                    X86::mov(val, Op::Register(Register::R10)),
-                    X86::Push(Op::Register(Register::R10)),
-                ]),
-                _ => vec.push_one(X86::Push(val)),
-            };
+            vec.push_one(X86::Push(val));
         }
         Pseudo::Call(fun) => vec.push_one(X86::Call(fun)),
         Pseudo::Mov { src, dst } => {
             let src = stack_frame.fix_operand(src);
             let dst = stack_frame.fix_operand(dst);
             // we can't have the stack in source, so replace it with two instructions
-            if let Op::Stack(_) = src {
+            if let Op::Stack(_) | Op::Data(_) = src {
                 let temp_register = Op::Register(Register::R10);
-                vec.push([X86::mov(src, temp_register), X86::mov(temp_register, dst)]);
+                vec.push([
+                    X86::mov(src, temp_register.clone()),
+                    X86::mov(temp_register, dst),
+                ]);
             } else {
                 vec.push_one(X86::mov(src, dst));
             }
@@ -159,7 +146,7 @@ fn fix_instruction(op: Pseudo, stack_frame: &mut StackFrame, vec: &mut OpVec<X86
             if let Op::Imm(value) = divisor {
                 let temp_register = Op::Register(Register::R10);
                 vec.push([
-                    X86::mov(Op::Imm(value), temp_register),
+                    X86::mov(Op::Imm(value), temp_register.clone()),
                     X86::Idiv {
                         divisor: temp_register,
                     },
@@ -224,7 +211,7 @@ fn fix_binary(
             let op = stack_frame.fix_operand(op);
             let dst_op = stack_frame.fix_by_name(&dst_name);
             instructions.push([
-                X86::mov(dst_op, Register::R11.into()),
+                X86::mov(dst_op.clone(), Register::R11.into()),
                 X86::binary(operator, op, Register::R11.into()),
                 X86::mov(Register::R11.into(), dst_op),
             ]);

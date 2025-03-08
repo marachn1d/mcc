@@ -4,7 +4,6 @@ use super::InstructionSet;
 use super::Register;
 use crate::parse::UnaryOperator;
 use std::fmt::{self, Display, Formatter};
-use std::rc::Rc;
 
 pub type Pseudo = BaseX86<PseudoOp>;
 pub type X86 = BaseX86<Op>;
@@ -30,7 +29,7 @@ pub enum BaseX86<T: Operand> {
     AllocateStack(usize),
     DeallocateStack(usize),
     Push(T),
-    Call(Rc<Identifier>),
+    Call(Identifier),
     Ret,
     Idiv {
         divisor: T,
@@ -40,16 +39,16 @@ pub enum BaseX86<T: Operand> {
         left: T,
         right: T,
     },
-    Jmp(Rc<Identifier>),
+    Jmp(Identifier),
     JmpCC {
         condition: CondCode,
-        label: Rc<Identifier>,
+        label: Identifier,
     },
     SetCC {
         condition: CondCode,
         op: T,
     },
-    Label(Rc<Identifier>),
+    Label(Identifier),
 }
 
 #[derive(Clone, Debug)]
@@ -112,7 +111,7 @@ impl Display for X86 {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
             Self::Call(fun) => write!(f, "call _{fun}"),
-            Self::DeallocateStack(size) => write!(f, "addq {size}, %rsp"),
+            Self::DeallocateStack(size) => write!(f, "addq ${size}, %rsp"),
 
             Self::Push(Op::Register(r)) => write!(f, "pushq {}", r.eight_byte()),
             Self::Push(op) => write!(f, "pushq {op}"),
@@ -162,11 +161,12 @@ impl Display for X86 {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub enum Op {
     Imm(u64),
     Register(Register),
-    Stack(usize),
+    Stack(isize),
+    Data(Identifier),
 }
 impl Operand for Op {}
 
@@ -239,7 +239,8 @@ impl Display for Op {
         match self {
             Self::Imm(val) => write!(f, "${val}"),
             Self::Register(r) => write!(f, "{}", r.extended()),
-            Self::Stack(n) => write!(f, "-{n}(%rbp)"),
+            Self::Stack(n) => write!(f, "{n}(%rbp)"),
+            Self::Data(name) => write!(f, "{name}(%rip)"),
         }
     }
 }
@@ -247,7 +248,7 @@ impl Display for Op {
 #[derive(Clone, Debug)]
 pub enum PseudoOp {
     Normal(Op),
-    PseudoRegister(Rc<Identifier>),
+    PseudoRegister(Identifier),
 }
 
 impl From<Value> for PseudoOp {
@@ -259,8 +260,8 @@ impl From<Value> for PseudoOp {
     }
 }
 
-impl From<Rc<Identifier>> for PseudoOp {
-    fn from(ident: Rc<Identifier>) -> Self {
+impl From<Identifier> for PseudoOp {
+    fn from(ident: Identifier) -> Self {
         Self::PseudoRegister(ident.clone())
     }
 }
@@ -272,6 +273,7 @@ impl<T: Into<Op>> From<T> for PseudoOp {
             Op::Imm(a) => Self::imm(a),
             Op::Register(a) => Self::register(a),
             Op::Stack(a) => Self::stack(a),
+            Op::Data(a) => Self::data(a),
         }
     }
 }
@@ -285,20 +287,6 @@ impl Op {
         Register::R8,
         Register::R9,
     ];
-
-    pub const fn param_dst(param_index: usize, params_len: usize) -> Self {
-        match param_index {
-            i @ 0..=5 => Self::Register(Self::REGISTER_TABLE[i]),
-            i @ 6.. => {
-                // the last one is gonna be 24 (stack already has rbp and maybe padding)
-                // second to last is gonna be 32
-                let distance_from_last = params_len - i + 1;
-                // if we're the last one then it'll be 1, second to last it'll be 2
-                // last one should be 3 because 8 * 3 = 24;
-                Self::Stack(distance_from_last * 8)
-            }
-        }
-    }
 }
 
 impl PseudoOp {
@@ -309,7 +297,11 @@ impl PseudoOp {
         Self::Normal(Op::Register(reg))
     }
 
-    pub const fn stack(offset: usize) -> Self {
+    pub const fn data(name: Identifier) -> Self {
+        Self::Normal(Op::Data(name))
+    }
+
+    pub const fn stack(offset: isize) -> Self {
         Self::Normal(Op::Stack(offset))
     }
 }

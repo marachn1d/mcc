@@ -1,13 +1,15 @@
+pub mod ast;
+
 use std::fs;
 use std::io;
 use std::path::PathBuf;
-
 pub mod codegen;
 pub mod lex;
 
 pub mod parse;
 pub mod semantics;
 pub mod slice_iter;
+pub use lex::DebugToken;
 pub use lex::Token;
 use std::sync::OnceLock;
 pub static CONFIG: OnceLock<Config> = OnceLock::new();
@@ -15,24 +17,6 @@ pub static CONFIG: OnceLock<Config> = OnceLock::new();
 pub struct Config {
     pub stage: Option<CompileStage>,
     pub version: CVersion,
-}
-
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum CVersion {
-    C17,
-    C23,
-}
-
-#[derive(PartialEq, Eq, Copy, Clone, Debug, clap::ValueEnum)]
-pub enum CompileStage {
-    Lex,
-    Parse,
-    Codegen,
-    #[value(name = "S")]
-    KeepAsm,
-    Compile,
-    Tacky,
-    Validate,
 }
 
 pub fn compile(mut path: PathBuf) -> Result<PathBuf, Error> {
@@ -44,17 +28,19 @@ pub fn compile(mut path: PathBuf) -> Result<PathBuf, Error> {
     if stage == Some(CompileStage::Lex) {
         return Ok("".into());
     }
+
+    let tokens = tokens.into_iter().map(|x| x.token).collect();
     let program = parse::parse(tokens)?;
     if stage == Some(CompileStage::Parse) {
         return Ok("".into());
     }
 
-    let program = semantics::check(program)?;
+    let (program, symbol_table) = semantics::check(program)?;
     if stage == Some(CompileStage::Validate) {
         return Ok("".into());
     }
 
-    let code = codegen::generate(program, stage != Some(CompileStage::Tacky));
+    let code = codegen::generate(program, stage != Some(CompileStage::Tacky), &symbol_table);
 
     if matches!(stage, Some(CompileStage::Codegen | CompileStage::Tacky)) {
         return Ok("".into());
@@ -62,6 +48,26 @@ pub fn compile(mut path: PathBuf) -> Result<PathBuf, Error> {
     path.set_extension("S");
     fs::write(&path, &code)?;
     Ok(path)
+}
+
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum CVersion {
+    C17,
+    C23,
+}
+
+#[derive(PartialEq, Eq, Copy, Clone, Debug)]
+pub enum CompileStage {
+    Lex,
+
+    Parse,
+    Codegen,
+
+    Compile,
+
+    Tacky,
+
+    Validate,
 }
 
 #[derive(Debug)]

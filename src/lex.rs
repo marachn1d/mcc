@@ -1,5 +1,57 @@
 use super::slice_iter::SliceIter;
+
 use std::fmt::{self, Display, Formatter};
+use std::rc::Rc;
+
+#[derive(Debug, Clone)]
+pub struct DebugToken {
+    pub token: Token,
+    pub line: usize,
+}
+
+impl DebugToken {
+    pub fn into_inner(self) -> (Token, usize) {
+        (self.token, self.line)
+    }
+
+    pub const fn line(&self) -> usize {
+        self.line
+    }
+}
+
+impl std::ops::Deref for DebugToken {
+    type Target = Token;
+
+    fn deref(&self) -> &Self::Target {
+        &self.token
+    }
+}
+use std::ops::Deref;
+
+use std::ops::DerefMut;
+impl AsRef<Token> for DebugToken {
+    fn as_ref(&self) -> &Token {
+        self.deref()
+    }
+}
+
+impl AsMut<Token> for DebugToken {
+    fn as_mut(&mut self) -> &mut Token {
+        self.deref_mut()
+    }
+}
+
+impl std::ops::DerefMut for DebugToken {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.token
+    }
+}
+
+impl From<DebugToken> for Token {
+    fn from(debug: DebugToken) -> Token {
+        debug.token
+    }
+}
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub enum Token {
@@ -52,17 +104,21 @@ pub enum Token {
     Colon,
 }
 
-pub fn tokenize(bytes: &[u8]) -> Result<Box<[Token]>, Error> {
+pub fn tokenize(bytes: &[u8]) -> Result<Box<[DebugToken]>, Error> {
     let mut iter = SliceIter::new(bytes);
 
     let mut tokens = Vec::new();
-    while let Some(token) = lex_slice(&mut iter)? {
-        tokens.push(token);
+    let mut cur_line = 0;
+    while let Some(token) = lex_slice(&mut iter, &mut cur_line)? {
+        tokens.push(DebugToken {
+            token,
+            line: cur_line,
+        });
     }
     Ok(tokens.into())
 }
 
-fn lex_slice(iter: &mut SliceIter<u8>) -> Result<Option<Token>, Error> {
+fn lex_slice(iter: &mut SliceIter<u8>, cur_line: &mut usize) -> Result<Option<Token>, Error> {
     match iter.as_slice() {
         [b'<', b'<', b'=', ..] => {
             iter.next();
@@ -169,8 +225,11 @@ fn lex_slice(iter: &mut SliceIter<u8>) -> Result<Option<Token>, Error> {
 
         [a, ..] if !a.is_ascii() => error("Invalid Character (I Only Accept Ascii :[)"),
         [a, ..] if a.is_ascii_whitespace() => {
+            if *a == b'\n' {
+                *cur_line += 1;
+            }
             iter.next();
-            lex_slice(iter)
+            lex_slice(iter, cur_line)
         }
         [a, ..] => {
             iter.next();
@@ -259,6 +318,8 @@ fn literal(byte: u8, iter: &mut SliceIter<u8>) -> Result<Token, Error> {
             b"switch" => Keyword::Switch.into(),
             b"case" => Keyword::Case.into(),
             b"default" => Keyword::Default.into(),
+            b"static" => Keyword::Static.into(),
+            b"extern" => Keyword::Extern.into(),
             _ => identifier(bytes.into())?.into(),
         })
     } else {
@@ -268,7 +329,7 @@ fn literal(byte: u8, iter: &mut SliceIter<u8>) -> Result<Token, Error> {
 
 fn identifier(bytes: Box<[u8]>) -> Result<Identifier, Error> {
     if word_start(bytes[0]) && bytes[1..].iter().all(|&x| word_character(x)) {
-        Ok(Identifier(bytes))
+        Ok(Identifier(bytes.into()))
     } else {
         Err(Error::InvalidIdentifier)
     }
@@ -368,15 +429,13 @@ impl PartialEq<Token> for Identifier {
 }
 
 #[derive(PartialEq, Eq, Clone, Hash)]
-pub struct Identifier(pub Box<[u8]>);
+pub struct Identifier(pub Rc<Box<[u8]>>);
 
 impl Identifier {
     pub fn new(name: &[u8]) -> Self {
-        Self(name.into())
-    }
-
-    pub fn new_rc(name: &[u8]) -> std::rc::Rc<Self> {
-        Self(name.into()).into()
+        let mut vec = Vec::new();
+        vec.extend_from_slice(name);
+        Self(Rc::new(vec.into_boxed_slice()))
     }
 }
 
@@ -389,6 +448,26 @@ impl fmt::Debug for Identifier {
 impl AsRef<[u8]> for Identifier {
     fn as_ref(&self) -> &[u8] {
         &self.0
+    }
+}
+
+impl From<String> for Identifier {
+    fn from(s: String) -> Self {
+        Self(s.into_bytes().into_boxed_slice().into())
+    }
+}
+
+impl From<&str> for Identifier {
+    fn from(s: &str) -> Self {
+        let r#box: Box<[u8]> = s.as_bytes().iter().copied().collect();
+        Self(r#box.into())
+    }
+}
+
+impl From<&[u8]> for Identifier {
+    fn from(s: &[u8]) -> Self {
+        let r#box: Box<[u8]> = s.iter().copied().collect();
+        Self(r#box.into())
     }
 }
 
@@ -426,6 +505,8 @@ pub enum Keyword {
     Switch,
     Default,
     Case,
+    Static,
+    Extern,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]

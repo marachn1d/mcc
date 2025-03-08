@@ -7,61 +7,61 @@ use assembly::tacky::Value;
 use assembly::Binary;
 use assembly::Op;
 use assembly::OpVec;
-use std::rc::Rc;
 
 use assembly::CondCode;
 use assembly::Pseudo;
 use assembly::PseudoOp;
 use assembly::TackyInstruction;
-
+use assembly::TopLevel;
 use assembly::{FunctionDefinition, Program, Register};
 
 pub fn emit(program: Program<TackyInstruction>) -> Program<Pseudo> {
-    let mut functions = Vec::with_capacity(program.0.len());
-    for function in program.0 {
-        functions.push(convert_function(function));
+    let mut decs = Vec::with_capacity(program.0.len());
+    for dec in program.0 {
+        decs.push(match dec {
+            TopLevel::Fn(f) => TopLevel::Fn(convert_function(f)),
+            TopLevel::StaticVar(v) => TopLevel::StaticVar(v),
+        })
     }
-    Program(functions.into())
-}
-
-struct SysVCallConvIter {
-    next_arg: usize,
-}
-
-impl Iterator for SysVCallConvIter {
-    type Item = PseudoOp;
-
-    fn next(&mut self) -> Option<PseudoOp> {
-        let res = Some(match self.next_arg {
-            0 => Register::Di.into(),
-            1 => Register::Si.into(),
-            2 => Register::Dx.into(),
-            3 => Register::Cx.into(),
-            4 => Register::R8.into(),
-            5 => Register::R9.into(),
-            n @ 6.. => Op::Stack((n - 4) * 8).into(),
-        });
-        self.next_arg += 1;
-        res
-    }
-}
-
-impl SysVCallConvIter {
-    const fn new() -> Self {
-        Self { next_arg: 0 }
-    }
+    Program(decs.into())
 }
 
 fn convert_function(
-    FunctionDefinition { name, body, params }: FunctionDefinition<TackyInstruction>,
+    FunctionDefinition {
+        name,
+        body,
+        params,
+        global,
+    }: FunctionDefinition<TackyInstruction>,
 ) -> FunctionDefinition<Pseudo> {
+    const REGISTER_ARGS: [Register; 6] = [
+        Register::Di,
+        Register::Si,
+        Register::Dx,
+        Register::Cx,
+        Register::R8,
+        Register::R9,
+    ];
+
     let mut instructions = OpVec::new();
 
-    for (dst, src) in params.iter().zip(SysVCallConvIter::new()) {
+    for (dst, src) in params
+        .iter()
+        .zip(REGISTER_ARGS.map(|x| PseudoOp::Normal(Op::Register(x))))
+    {
         instructions.push([Pseudo::Mov {
             src,
             dst: PseudoOp::PseudoRegister(dst.clone()),
         }])
+    }
+
+    let mut start = 16;
+    for param_n in params.iter().skip(6) {
+        instructions.push([Pseudo::Mov {
+            src: Op::Stack(start).into(),
+            dst: PseudoOp::PseudoRegister(param_n.clone()),
+        }]);
+        start += 8;
     }
 
     for op in body {
@@ -72,6 +72,7 @@ fn convert_function(
         name,
         params,
         body: instructions.into(),
+        global,
     }
 }
 
@@ -130,7 +131,6 @@ fn convert_instruction(instruction: TackyInstruction, instructions: &mut OpVec<P
 
 fn should_pad(args: &[Value]) -> bool {
     if args.len() <= 6 {
-        eprintln!("shouldn't pad");
         false
     } else {
         // each arg from here is 8 more bytes, but we want to be 16 byte
@@ -138,17 +138,11 @@ fn should_pad(args: &[Value]) -> bool {
         //
         // even number of non stack args, so the whole thing will be odd if the stack args are odd,
         // in which case we should pad
-        let res = args.len() % 2 != 0;
-        if res {
-            eprintln!("should");
-        } else {
-            eprintln!("shouldn't");
-        }
-        res
+        args.len() % 2 != 0
     }
 }
 
-fn push_args(args: &[Value], instructions: &mut OpVec<Pseudo>) {
+fn push_args(args: &[Value], instructions: &mut OpVec<Pseudo>) -> Option<usize> {
     const TABLE: [Register; 6] = Op::REGISTER_TABLE;
 
     for (i, arg) in args.iter().take(6).enumerate() {
@@ -156,38 +150,45 @@ fn push_args(args: &[Value], instructions: &mut OpVec<Pseudo>) {
     }
 
     if args.len() > 6 {
-        push_stack_args(&args[6..], instructions);
+        Some(push_stack_args(&args[6..], instructions))
+    } else {
+        None
     }
 }
 
-const fn stack_args_bytes(args: &[Value]) -> usize {
-    match args.len() {
-        0..=6 => 0,
-        more => (more - 6) * 8,
-    }
-}
-
-fn push_stack_args(stack_args: &[Value], instructions: &mut OpVec<Pseudo>) {
+fn push_stack_args(stack_args: &[Value], instructions: &mut OpVec<Pseudo>) -> usize {
+    let mut byte_count = 0;
     for arg in stack_args.iter().rev() {
-        match arg {
-            Value::Var(v) => {
-                instructions.push_one(Pseudo::Push(PseudoOp::PseudoRegister(v.clone())))
+        match arg.clone() {
+            Value::Constant(c) => instructions.push_one(Pseudo::Push(Op::Imm(c).into())),
+
+            Value::Var(c) => instructions.push([
+                Pseudo::Mov {
+                    src: PseudoOp::PseudoRegister(c),
+                    dst: Register::Ax.into(),
+                },
+                Pseudo::Push(Register::Ax.into()),
+            ]),
+            /*
+            PseudoOp::Normal(Op::Imm(_) | Op::Register(_)) => {
+                instructions.push_one(Pseudo::Push(op))
             }
-            Value::Constant(c) => {
-                instructions.push([
-                    Pseudo::Mov {
-                        src: Op::Imm(*c).into(),
-                        dst: Register::Ax.into(),
-                    },
-                    Pseudo::Push(Register::Ax.into()),
-                ]);
-            }
+            _ => instructions.push([
+                Pseudo::Mov {
+                    src: op,
+                    dst: Register::Ax.into(),
+                },
+                Pseudo::Push(Register::Ax.into()),
+            ]),
+            */
         }
+        byte_count += 8;
     }
+    byte_count
 }
 
 fn convert_funcall(
-    name: Rc<Identifier>,
+    name: Identifier,
     args: Box<[Value]>,
     dst: Value,
     instructions: &mut OpVec<Pseudo>,
@@ -199,13 +200,14 @@ fn convert_funcall(
         0
     };
 
-    push_args(&args, instructions);
+    let cleanup_bytes = push_args(&args, instructions);
+
     instructions.push_one(Pseudo::Call(name.clone()));
 
-    let cleanup_bytes = padding + stack_args_bytes(&args);
-    if cleanup_bytes != 0 {
-        instructions.push_one(Pseudo::DeallocateStack(cleanup_bytes));
+    if let Some(cleanup) = cleanup_bytes {
+        instructions.push_one(Pseudo::DeallocateStack(cleanup + padding));
     }
+
     instructions.push_one(Pseudo::Mov {
         src: Register::Ax.into(),
         dst: dst.into(),
@@ -242,11 +244,7 @@ fn convert_unary(instructions: &mut OpVec<Pseudo>, op: TackyUnary, src: PseudoOp
     }
 }
 
-fn convert_conditional_jump(
-    condition: Value,
-    label: Rc<TackyIdent>,
-    code: CondCode,
-) -> [Pseudo; 2] {
+fn convert_conditional_jump(condition: Value, label: TackyIdent, code: CondCode) -> [Pseudo; 2] {
     [
         Pseudo::Cmp {
             left: Op::Imm(0).into(),

@@ -3,14 +3,13 @@ use crate::parse;
 use crate::parse::BlockItem as AstBlockItem;
 
 use crate::parse::Block as AstBlock;
-
 use crate::parse::Expression as AstExpression;
 use crate::parse::ForInit as AstForInit;
-use crate::parse::Function as AstFunction;
 use crate::parse::Program as AstProgram;
 use crate::parse::Statement as AstStatement;
 use parse::Binary as AstBinary;
 use parse::Declaration as AstDeclaration;
+use parse::StorageClass;
 
 use parse::Factor as AstFactor;
 use parse::Unary as AstUnary;
@@ -20,79 +19,148 @@ use std::sync::atomic::{AtomicU32, Ordering};
 static COUNTER: AtomicU32 = AtomicU32::new(0);
 
 use std::collections::{HashMap, HashSet};
-use std::rc::Rc;
-type VarMap = HashMap<Rc<Identifier>, Var>;
+type VarMap = HashMap<Identifier, Var>;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 struct Var {
-    name: Rc<Identifier>,
+    name: Identifier,
     from_current_block: bool,
     has_external_linkage: bool,
 }
 
 impl Var {
-    fn new_var(name: &Rc<Identifier>) -> Self {
+    fn new_var(name: &Identifier, sc: &Option<StorageClass>) -> Self {
         Self {
             name: name.clone(),
             from_current_block: true,
-            has_external_linkage: false,
+            has_external_linkage: sc.is_some_and(|x| x == StorageClass::Extern),
         }
     }
-    fn new_fn(name: &Rc<Identifier>) -> Self {
+    fn new_fn(name: &Identifier, sc: &Option<StorageClass>) -> Self {
         Self {
             name: name.clone(),
             from_current_block: true,
-            has_external_linkage: true,
+            has_external_linkage: sc.is_some_and(|x| x == StorageClass::Extern),
         }
     }
 }
 
-pub fn resolve(AstProgram(functions): &mut AstProgram) -> Result<HashSet<Rc<Identifier>>, Error> {
+pub fn resolve(AstProgram(decs): &mut AstProgram) -> Result<HashSet<Identifier>, Error> {
     let mut map: VarMap = VarMap::new();
-    for function in functions {
-        resolve_function_dec(function, &mut map)?;
+    for dec in decs {
+        resolve_top_level_dec(dec, &mut map)?;
     }
-    let vars: HashSet<Rc<Identifier>> = map.into_values().map(|x| x.name).collect();
+    let vars: HashSet<Identifier> = map.into_values().map(|x| x.name).collect();
     Ok(vars)
 }
 
-fn resolve_fn_dec(
-    name: &mut Rc<Identifier>,
-    body: &mut Option<AstBlock>,
-    params: &mut parse::ParamList,
+fn insert_fndec(
     map: &mut VarMap,
+    name: &mut Identifier,
+    storage_class: &mut Option<StorageClass>,
 ) -> Result<(), Error> {
-    match map.entry(name.clone()) {
-        Entry::Occupied(mut e) => {
-            if e.get().from_current_block && !e.get().has_external_linkage {
-                Err(Error::DuplicateDeclaration)
-            } else {
-                e.insert(Var::new_fn(name));
-                let mut inner_map = new_scope(map);
-                resolve_param(params, &mut inner_map)?;
-                if let Some(body) = body {
-                    resolve_block(body, &mut inner_map)?;
-                }
-                Ok(())
-            }
+    eprintln!("function dec");
+    map.insert(name.clone(), Var::new_fn(name, storage_class));
+    Ok(())
+
+    /*
+    if map.get(name).is_some_and(|var| {
+        (Var::new_fn(name, storage_class) != *var)
+            && (var.from_current_block && !var.has_external_linkage)
+    }) {
+        Err(Error::DuplicateDeclaration)
+    } else {
+        map.insert(name.clone(), Var::new_fn(name, storage_class));
+        Ok(())
+    }
+        */
+}
+
+fn insert_local_var(
+    map: &mut VarMap,
+    name: &mut Identifier,
+    storage_class: &mut Option<StorageClass>,
+) -> Result<(), Error> {
+    if let Some(prev_decl) = map.get(name) {
+        if prev_decl.from_current_block
+            && !(prev_decl.has_external_linkage && *storage_class == Some(StorageClass::Extern))
+        {
+            return Err(Error::ConflictingDec);
         }
-        Entry::Vacant(v) => {
-            v.insert(Var::new_fn(name));
+    }
+
+    if *storage_class == Some(StorageClass::Extern) {
+        map.insert(
+            name.clone(),
+            Var {
+                name: name.clone(),
+                from_current_block: true,
+                has_external_linkage: true,
+            },
+        );
+    } else {
+        let unique: Identifier = new_var(&name.0);
+        map.insert(
+            name.clone(),
+            Var {
+                name: unique.clone(),
+                from_current_block: true,
+                has_external_linkage: false,
+            },
+        );
+        *name = unique.clone();
+    };
+    Ok(())
+}
+
+fn resolve_top_level_dec(dec: &mut AstDeclaration, map: &mut VarMap) -> Result<(), Error> {
+    match dec {
+        AstDeclaration::Var {
+            name,
+            init: _,
+            storage_class: _,
+        } => {
+            map.insert(
+                name.clone(),
+                Var {
+                    name: name.clone(),
+                    from_current_block: true,
+                    has_external_linkage: true,
+                },
+            );
+        }
+
+        AstDeclaration::Function {
+            name,
+            params,
+            storage_class,
+            body,
+        } => {
+            map.insert(name.clone(), Var::new_fn(name, storage_class));
             let mut inner_map = new_scope(map);
             resolve_param(params, &mut inner_map)?;
             if let Some(body) = body {
                 resolve_block(body, &mut inner_map)?;
             }
-            Ok(())
         }
     }
+    Ok(())
 }
 
-fn resolve_function_dec(
-    parse::FunctionDeclaration { name, body, params }: &mut parse::FunctionDeclaration,
+fn resolve_fn_dec(
+    name: &mut Identifier,
+    body: &mut Option<AstBlock>,
+    params: &mut parse::ParamList,
+    storage_class: &mut Option<StorageClass>,
     map: &mut VarMap,
 ) -> Result<(), Error> {
-    resolve_fn_dec(name, body, params, map)
+    insert_fndec(map, name, storage_class)?;
+    let mut inner_map = new_scope(map);
+    resolve_param(params, &mut inner_map)?;
+    if let Some(body) = body {
+        resolve_block(body, &mut inner_map)?;
+    }
+    Ok(())
 }
 
 fn resolve_param(params: &mut parse::ParamList, map: &mut VarMap) -> Result<(), Error> {
@@ -101,11 +169,12 @@ fn resolve_param(params: &mut parse::ParamList, map: &mut VarMap) -> Result<(), 
             .get(param)
             .is_some_and(|param| !param.has_external_linkage && param.from_current_block)
         {
+            eprintln!("duplicate declaration");
             return Err(Error::DuplicateDeclaration);
         }
 
-        let unique: Rc<Identifier> = new_var(&param.0).into();
-        map.insert(param.clone(), Var::new_var(&unique));
+        let unique: Identifier = new_var(&param.0);
+        map.insert(param.clone(), Var::new_var(&unique, &None));
 
         *param = unique;
     }
@@ -128,47 +197,40 @@ fn resolve_block_item(block: &mut AstBlockItem, map: &mut VarMap) -> Result<(), 
 }
 
 fn resolve_var_dec(
-    name: &mut Rc<Identifier>,
+    name: &mut Identifier,
     init: &mut Option<AstExpression>,
+    sc: &mut Option<StorageClass>,
     map: &mut VarMap,
 ) -> Result<(), Error> {
-    match map.entry(name.clone()) {
-        Entry::Occupied(mut e) if !e.get().from_current_block => {
-            let unique: Rc<Identifier> = new_var(&name.0).into();
-
-            *e.get_mut() = Var::new_var(&unique);
-            *name = unique;
-            if let Some(init) = init {
-                resolve_expression(init, map)?;
-            }
-            Ok(())
-        }
-        Entry::Vacant(e) => {
-            let unique: Rc<Identifier> = new_var(&name.0).into();
-            e.insert(Var::new_var(&unique));
-            *name = unique;
-
-            if let Some(init) = init {
-                resolve_expression(init, map)?;
-            }
-            Ok(())
-        }
-        _ => Err(Error::DuplicateDeclaration),
+    insert_local_var(map, name, sc)?;
+    if let Some(init) = init {
+        resolve_expression(init, map)?;
     }
+    Ok(())
 }
 
 use std::collections::hash_map::Entry;
 fn resolve_declaration(dec: &mut AstDeclaration, map: &mut VarMap) -> Result<(), Error> {
     match dec {
-        AstDeclaration::Var { name, init } => resolve_var_dec(name, init, map),
+        AstDeclaration::Var {
+            name,
+            init,
+            storage_class,
+        } => resolve_var_dec(name, init, storage_class, map),
 
         AstDeclaration::Function { body: Some(_), .. } => Err(Error::LocalFnDecBody),
+        AstDeclaration::Function { storage_class, .. }
+            if *storage_class == Some(StorageClass::Static) =>
+        {
+            Err(Error::StaticBlockScopeFn)
+        }
 
         AstDeclaration::Function {
             body: None,
             name,
             params,
-        } => resolve_fn_dec(name, &mut None, params, map),
+            storage_class,
+        } => resolve_fn_dec(name, &mut None, params, storage_class, map),
     }
 }
 
@@ -245,7 +307,9 @@ fn new_scope(map: &VarMap) -> VarMap {
 fn resolve_init(init: &mut Option<AstForInit>, map: &mut VarMap) -> Result<(), Error> {
     match init {
         None => Ok(()),
-        Some(AstForInit::D(dec)) => resolve_var_dec(&mut dec.name, &mut dec.init, map),
+        Some(AstForInit::D(dec)) => {
+            resolve_var_dec(&mut dec.name, &mut dec.init, &mut dec.storage_class, map)
+        }
         Some(AstForInit::E(exp)) => resolve_expression(exp, map),
     }
 }
@@ -363,14 +427,10 @@ fn resolve_factor(factor: &mut AstFactor, map: &mut VarMap) -> Result<(), Error>
 
 fn new_var(name: &[u8]) -> Identifier {
     let name = unsafe { std::str::from_utf8_unchecked(name) };
-    Identifier(
-        format!(
-            "t{name}.{number}",
-            number = COUNTER.fetch_add(1, Ordering::SeqCst)
-        )
-        .into_bytes()
-        .into(),
-    )
+    Identifier::from(format!(
+        "t{name}.{number}",
+        number = COUNTER.fetch_add(1, Ordering::SeqCst)
+    ))
 }
 
 #[derive(Debug)]
@@ -380,4 +440,6 @@ pub enum Error {
     UndeclaredVar,
     UndeclaredFn,
     LocalFnDecBody,
+    ConflictingDec,
+    StaticBlockScopeFn,
 }

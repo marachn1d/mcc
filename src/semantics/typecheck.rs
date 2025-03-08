@@ -1,49 +1,227 @@
 use super::Identifier;
 use super::{
-    BlockItem, Declaration, Expression, ForInit, FunctionDeclaration, ParamList, Program,
-    Statement, VariableDeclaration,
+    BlockItem, Declaration, Expression, ForInit, ParamList, Program, Statement, StorageClass,
+    VariableDeclaration,
 };
 use crate::parse::{Binary, Factor, Unary};
 use std::collections::HashMap;
-use std::rc::Rc;
 
-type SymbolTable = HashMap<Rc<Identifier>, Type>;
+use std::collections::hash_map::Entry;
 
-pub enum Type {
-    Int,
-    Fn { len: usize, defined: bool },
+pub type SymbolTable = HashMap<Identifier, Attr>;
+
+pub enum Attr {
+    StaticInt {
+        init: Option<InitialVal>,
+        global: bool,
+    },
+    Automatic,
+    Fn {
+        len: usize,
+        defined: bool,
+        global: bool,
+    },
+}
+
+pub enum InitialVal {
+    Tentative,
+    Initial(u64),
+}
+
+impl InitialVal {
+    pub fn as_num(&self) -> u64 {
+        match self {
+            Self::Initial(i) => *i,
+            Self::Tentative => 0,
+        }
+    }
 }
 
 // check FunctionDeclaration, VariableDeclaration,
 
-pub fn typecheck(p: &mut Program) -> Result<(), Error> {
+pub fn typecheck(p: &mut Program) -> Result<SymbolTable, Error> {
     let mut table = SymbolTable::new();
-    for FunctionDeclaration { name, params, body } in &mut p.0 {
-        function_declaration(name, params, body, &mut table)?
+    for dec in &mut p.0 {
+        top_level_declaration(dec, &mut table)?;
     }
 
+    Ok(table)
+}
+
+fn top_level_declaration(dec: &mut Declaration, table: &mut SymbolTable) -> Result<(), Error> {
+    match dec {
+        Declaration::Function {
+            name,
+            params,
+            body,
+            storage_class,
+        } => function_declaration(name, params, body, storage_class, table),
+        Declaration::Var {
+            name,
+            init,
+            storage_class,
+        } => top_level_var(name, init, storage_class, table),
+    }
+}
+
+fn top_level_var(
+    name: &mut Identifier,
+    init: &mut Option<Expression>,
+    storage_class: &mut Option<StorageClass>,
+    table: &mut SymbolTable,
+) -> Result<(), Error> {
+    let mut initial_val = tlv_initial(init, storage_class)?;
+
+    // if we're not static, then we're global, if we are static, then we're not global?
+    let mut global = *storage_class != Some(StorageClass::Static);
+
+    let table_entry = table.get(name);
+
+    if let Some(Attr::StaticInt {
+        init: old_init,
+        global: old_global,
+    }) = table_entry
+    {
+        check_linkage(&mut global, *old_global, storage_class)?;
+        check_initializer(old_init, &mut initial_val)?;
+    } else if table_entry.is_some() {
+        return Err(Error::ConflictingType);
+    };
+
+    table.insert(
+        name.clone(),
+        Attr::StaticInt {
+            init: initial_val,
+            global,
+        },
+    );
+
     Ok(())
+}
+
+fn check_linkage(
+    global: &mut bool,
+    old_global: bool,
+    sc: &Option<StorageClass>,
+) -> Result<(), Error> {
+    // if it's extern, then we go with it, otherwise they should be the same
+    if *sc == Some(StorageClass::Extern) {
+        *global = old_global;
+        Ok(())
+    } else if *global != old_global {
+        Err(Error::ConflictingLinkage)
+    } else {
+        Ok(())
+    }
+}
+
+fn check_initializer(old: &Option<InitialVal>, new: &mut Option<InitialVal>) -> Result<(), Error> {
+    match (&new, old) {
+        // if they're both declared something's wrong, even if it's the same definition
+        (Some(InitialVal::Initial(_)), Some(InitialVal::Initial(_))) => {
+            Err(Error::ConflictingDeclaration)
+        }
+        // if we have an initial pass then we take it
+        (Some(InitialVal::Initial(c)), _) | (_, Some(InitialVal::Initial(c))) => {
+            *new = Some(InitialVal::Initial(*c));
+            Ok(())
+        }
+        // if we have a tentative we take it
+        (Some(InitialVal::Tentative), _) | (_, Some(InitialVal::Tentative)) => {
+            *new = Some(InitialVal::Tentative);
+            Ok(())
+        }
+        // otherwise it's none, so we leave it as none
+        (None, None) => Ok(()),
+    }
+}
+
+fn tlv_initial(
+    init: &Option<Expression>,
+    sc: &Option<StorageClass>,
+) -> Result<Option<InitialVal>, Error> {
+    match (init, sc) {
+        (Some(Expression::Int(c)), _) => Ok(Some(InitialVal::Initial(*c))),
+        (None, Some(StorageClass::Extern)) => Ok(None),
+        (None, Some(StorageClass::Static)) => Ok(Some(InitialVal::Tentative)),
+        (None, None) => Ok(Some(InitialVal::Tentative)),
+        (_, _) => {
+            eprintln!("init {init:?} sc {sc:?}");
+            Err(Error::NotConstInitialized)
+        }
+    }
 }
 
 fn declaration(dec: &mut Declaration, table: &mut SymbolTable) -> Result<(), Error> {
     match dec {
-        Declaration::Function { name, params, body } => {
-            function_declaration(name, params, body, table)
-        }
-        Declaration::Var { name, init } => variable_declaration(name, init, table),
+        Declaration::Function {
+            name,
+            params,
+            body,
+            storage_class,
+        } => function_declaration(name, params, body, storage_class, table),
+        Declaration::Var {
+            name,
+            init,
+            storage_class,
+        } => variable_declaration(name, init, storage_class, table),
     }
 }
 
 fn variable_declaration(
-    name: &mut Rc<Identifier>,
+    name: &mut Identifier,
     init: &mut Option<Expression>,
+
+    sc: &mut Option<StorageClass>,
     table: &mut SymbolTable,
 ) -> Result<(), Error> {
-    table.insert(name.clone(), Type::Int);
-    if let Some(init) = init {
-        typecheck_expression(init, table)?;
+    match (sc, &init) {
+        (Some(StorageClass::Extern), Some(_)) => Err(Error::DeclaredExtern),
+        (Some(StorageClass::Extern), None) => match table.entry(name.clone()) {
+            Entry::Occupied(e) => {
+                if let Attr::Fn { .. } = e.get() {
+                    Err(Error::FnAsVar)
+                } else {
+                    Ok(())
+                }
+            }
+            Entry::Vacant(e) => {
+                e.insert(Attr::StaticInt {
+                    init: None,
+                    global: true,
+                });
+                Ok(())
+            }
+        },
+        (Some(StorageClass::Static), Some(Expression::Int(i))) => {
+            table.insert(
+                name.clone(),
+                Attr::StaticInt {
+                    init: Some(InitialVal::Initial(*i)),
+                    global: false,
+                },
+            );
+            Ok(())
+        }
+        (Some(StorageClass::Static), Some(_)) => Err(Error::NotConstInitialized),
+        (Some(StorageClass::Static), None) => {
+            table.insert(
+                name.clone(),
+                Attr::StaticInt {
+                    init: Some(InitialVal::Initial(0)),
+                    global: false,
+                },
+            );
+            Ok(())
+        }
+        (None, _) => {
+            table.insert(name.clone(), Attr::Automatic);
+            if let Some(init) = init {
+                typecheck_expression(init, table)?;
+            }
+            Ok(())
+        }
     }
-    Ok(())
 }
 
 fn typecheck_expression(expression: &mut Expression, table: &mut SymbolTable) -> Result<(), Error> {
@@ -79,21 +257,13 @@ fn typecheck_expression(expression: &mut Expression, table: &mut SymbolTable) ->
     }
 }
 
-fn typecheck_var(name: &mut Rc<Identifier>, table: &mut SymbolTable) -> Result<(), Error> {
-    match table.get(name) {
-        Some(Type::Int) => Ok(()),
-        Some(_) => Err(Error::FnAsVar),
-        None => Err(Error::UndefinedVar),
-    }
-}
-
 fn typecheck_fn_call(
-    name: &mut Rc<Identifier>,
+    name: &mut Identifier,
     args: &mut [Expression],
     table: &mut SymbolTable,
 ) -> Result<(), Error> {
     match table.get(name) {
-        Some(Type::Fn { len, .. }) => {
+        Some(Attr::Fn { len, .. }) => {
             if *len == args.len() {
                 for arg in args {
                     typecheck_expression(arg, table)?;
@@ -104,8 +274,16 @@ fn typecheck_fn_call(
                 Err(Error::WrongArgs)
             }
         }
-        Some(Type::Int) => Err(Error::VarAsFn),
+        Some(_) => Err(Error::VarAsFn),
         None => Err(Error::UndefinedFn),
+    }
+}
+
+fn typecheck_var(name: &mut Identifier, table: &mut SymbolTable) -> Result<(), Error> {
+    match table.get(name) {
+        Some(Attr::Automatic | Attr::StaticInt { .. }) => Ok(()),
+        Some(_) => Err(Error::FnAsVar),
+        None => Err(Error::UndefinedVar),
     }
 }
 
@@ -123,45 +301,78 @@ fn typecheck_factor(factor: &mut Factor, table: &mut SymbolTable) -> Result<(), 
     }
 }
 
+fn check_entry(
+    entry: &Entry<Identifier, Attr>,
+    params_len: usize,
+    has_body: bool,
+) -> Result<(), Error> {
+    let Entry::Occupied(e) = entry else {
+        return Ok(());
+    };
+    let Attr::Fn {
+        len,
+        defined,
+        global: _,
+    } = e.get()
+    else {
+        return Err(Error::ConflictingType);
+    };
+
+    if *len != params_len {
+        return Err(Error::WrongParams);
+    } else if *defined && has_body {
+        return Err(Error::DuplicateDefinition);
+    }
+
+    Ok(())
+}
+
 fn function_declaration(
-    name: &mut Rc<Identifier>,
+    name: &mut Identifier,
     params: &mut ParamList,
     body: &mut Option<Box<[BlockItem]>>,
+    sc: &mut Option<StorageClass>,
     table: &mut SymbolTable,
 ) -> Result<(), Error> {
-    use std::collections::hash_map::Entry;
+    let global = sc.is_some_and(|sc| sc != StorageClass::Static);
 
     let has_body = body.is_some();
 
-    match table.entry(name.clone()) {
-        Entry::Occupied(mut e) => match e.get_mut() {
-            Type::Int => Err(Error::ConflictingType),
-            Type::Fn { len, defined } => {
-                if body.is_some() && *defined {
-                    Err(Error::DuplicateDefinition)
-                } else if *len != params.len() {
-                    Err(Error::WrongParams)
-                } else if *defined && has_body {
-                    Err(Error::DuplicateDefinition)
-                } else if has_body {
-                    *defined = true;
-                    Ok(())
-                } else {
-                    Ok(())
-                }
+    let entry = table.entry(name.clone());
+
+    check_entry(&entry, params.len(), has_body)?;
+
+    match entry {
+        Entry::Occupied(mut e) => {
+            let Attr::Fn {
+                len: _,
+                defined,
+                global: was_global,
+            } = e.get_mut()
+            else {
+                unreachable!()
+            };
+            if has_body {
+                eprintln!("{name} is now defined");
+                *defined = true;
             }
-        },
+
+            if global && !(*was_global) {
+                eprintln!("{name} is now global");
+                *was_global = true;
+            }
+        }
         Entry::Vacant(e) => {
-            e.insert(Type::Fn {
+            e.insert(Attr::Fn {
                 len: params.len(),
                 defined: has_body,
+                global,
             });
-            Ok(())
         }
-    }?;
+    };
 
     for param in params.iter() {
-        table.insert(param.clone(), Type::Int);
+        table.insert(param.clone(), Attr::Automatic);
     }
 
     if let Some(body) = body {
@@ -227,9 +438,11 @@ fn typecheck_statement(stmt: &mut Statement, table: &mut SymbolTable) -> Result<
         } => {
             if let Some(init) = init {
                 match init {
-                    ForInit::D(VariableDeclaration { name, init }) => {
-                        variable_declaration(name, init, table)
-                    }
+                    ForInit::D(VariableDeclaration {
+                        name,
+                        init,
+                        storage_class,
+                    }) => variable_declaration(name, init, storage_class, table),
 
                     ForInit::E(e) => typecheck_expression(e, table),
                 }?;
@@ -274,4 +487,9 @@ pub enum Error {
     VarAsFn,
     WrongArgs,
     ConflictingType,
+    StaticGlobal,
+
+    NotConstInitialized,
+    ConflictingLinkage,
+    DeclaredExtern,
 }

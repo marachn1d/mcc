@@ -7,26 +7,25 @@ use crate::parse::Expression;
 use crate::parse::ForInit;
 use crate::parse::ParamList;
 use crate::parse::Program as AstProgram;
+use crate::parse::StorageClass;
 pub use check_labels::check as check_labels;
 use parse::VariableDeclaration;
-use std::rc::Rc;
+pub use typecheck::Attr;
+pub use typecheck::SymbolTable;
 mod resolve_loops;
 pub use resolve::resolve;
 use std::collections::HashSet;
 
-pub fn check(mut program: AstProgram) -> Result<Program, Error> {
+pub fn check(mut program: AstProgram) -> Result<(Program, SymbolTable), Error> {
     let vars = resolve(&mut program).map_err(Error::Resolve)?;
 
     let mut program = handle_labels(program, vars)?;
 
-    typecheck::typecheck(&mut program).map_err(Error::TypeCheck)?;
-    Ok(program)
+    let symbol_table = typecheck::typecheck(&mut program).map_err(Error::TypeCheck)?;
+    Ok((program, symbol_table))
 }
 
-fn handle_labels(
-    mut program: AstProgram,
-    var_map: HashSet<Rc<Identifier>>,
-) -> Result<Program, Error> {
+fn handle_labels(mut program: AstProgram, var_map: HashSet<Identifier>) -> Result<Program, Error> {
     // make sure that all gotos are to real labeled statements and
     check_labels::check(&mut program, &var_map).map_err(Error::Label)?;
     resolve_loops::label(program).map_err(Error::Loops)
@@ -37,47 +36,48 @@ pub struct LabelId(usize);
 
 #[derive(Debug, Clone)]
 pub struct StatementLabels {
-    pub start: Rc<Identifier>,
-    pub _break: Rc<Identifier>,
-    pub _continue: Rc<Identifier>,
-    pub end: Rc<Identifier>,
+    pub start: Identifier,
+    pub r#break: Identifier,
+    pub r#continue: Identifier,
+    pub end: Identifier,
 }
 
 impl LabelId {
     pub fn labels(&self) -> StatementLabels {
         StatementLabels {
-            start: Identifier::new_rc(&format!("s{}s", self.0).into_bytes()),
-            _break: self._break(),
-            _continue: self._continue(),
-            end: Identifier::new_rc(&format!("s{}e", self.0).into_bytes()),
+            start: Identifier::from(format!("s{}s", self.0)),
+            r#break: self.r#break(),
+            r#continue: self.r#continue(),
+            end: Identifier::from(format!("s{}e", self.0)),
         }
     }
 
-    pub fn _break(&self) -> Rc<Identifier> {
-        Identifier::new_rc(&format!("s{}b", self.0).into_bytes())
+    pub fn r#break(&self) -> Identifier {
+        Identifier::from(format!("s{}b", self.0))
     }
 
-    pub fn case(&self, value: u64) -> Rc<Identifier> {
-        Identifier::new_rc(&format!("sc{}{}", self.0, value).into_bytes())
+    pub fn case(&self, value: u64) -> Identifier {
+        Identifier::from(format!("sc{}{}", self.0, value))
     }
-    pub fn default(&self) -> Rc<Identifier> {
-        Identifier::new_rc(&format!("sc{}d", self.0).into_bytes())
+    pub fn default(&self) -> Identifier {
+        Identifier::from(format!("sc{}d", self.0))
     }
-    pub fn _continue(&self) -> Rc<Identifier> {
-        Identifier::new_rc(&format!("s{}c", self.0).into_bytes())
+    pub fn r#continue(&self) -> Identifier {
+        Identifier::from(format!("s{}c", self.0))
     }
 }
 
 pub type Block = Box<[BlockItem]>;
 
 #[derive(Debug)]
-pub struct Program(pub Box<[FunctionDeclaration]>);
+pub struct Program(pub Box<[Declaration]>);
 
 #[derive(Debug)]
 pub struct FunctionDeclaration {
-    pub name: Rc<Identifier>,
+    pub name: Identifier,
     pub params: ParamList,
     pub body: Option<Block>,
+    pub storage_class: Option<StorageClass>,
 }
 
 #[derive(Debug)]
@@ -89,19 +89,31 @@ pub enum BlockItem {
 #[derive(Debug)]
 pub enum Declaration {
     Function {
-        name: Rc<Identifier>,
+        name: Identifier,
         params: ParamList,
         body: Option<Block>,
+        storage_class: Option<StorageClass>,
     },
     Var {
-        name: Rc<Identifier>,
+        name: Identifier,
         init: Option<Expression>,
+        storage_class: Option<StorageClass>,
     },
 }
 
 impl From<VariableDeclaration> for Declaration {
-    fn from(VariableDeclaration { name, init }: VariableDeclaration) -> Self {
-        Self::Var { name, init }
+    fn from(
+        VariableDeclaration {
+            name,
+            init,
+            storage_class,
+        }: VariableDeclaration,
+    ) -> Self {
+        Self::Var {
+            name,
+            init,
+            storage_class,
+        }
     }
 }
 
@@ -138,7 +150,7 @@ pub enum Statement {
         name: Label,
         body: Box<Self>,
     },
-    Goto(Rc<Identifier>),
+    Goto(Identifier),
     Switch {
         val: Expression,
         body: Box<Self>,
@@ -151,7 +163,7 @@ pub enum Statement {
 
 #[derive(Debug, Clone)]
 pub enum Label {
-    Named(Rc<Identifier>),
+    Named(Identifier),
     Case { val: u64, id: LabelId },
     Default(LabelId),
 }

@@ -1,6 +1,4 @@
-use clap::Parser;
 use mcc::CompileStage;
-use std::env;
 use std::fmt;
 use std::io;
 
@@ -11,29 +9,92 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 
-#[derive(Parser)]
 struct Args {
     file: PathBuf,
-    #[arg(value_enum)]
     stage: Option<CompileStage>,
-    #[arg(short)]
     compile: bool,
+    keep_asm: bool,
 }
 
-/*
-#[derive(PartialEq, Eq, Copy, Clone, Debug)]
-pub enum Arg {
-    Lex,
-    Parse,
-    Codegen,
-    Compile,
-    Tacky,
-    Validate,
+impl Args {
+    fn parse() -> Option<Self> {
+        let mut path: Option<PathBuf> = None;
+        let mut stage: Option<CompileStage> = None;
+        let mut keep_asm = false;
+        let mut compile: bool = false;
+
+        let mut args = std::env::args();
+        args.next();
+
+        for arg in args {
+            match arg.as_str() {
+                "--lex" => {
+                    if !Self::try_update(&mut stage, CompileStage::Lex) {
+                        return None;
+                    }
+                }
+                "--parse" => {
+                    if !Self::try_update(&mut stage, CompileStage::Parse) {
+                        return None;
+                    }
+                }
+                "--codegen" => {
+                    if !Self::try_update(&mut stage, CompileStage::Codegen) {
+                        return None;
+                    }
+                }
+                "--tacky" => {
+                    if !Self::try_update(&mut stage, CompileStage::Tacky) {
+                        return None;
+                    }
+                }
+                "--validate" => {
+                    if !Self::try_update(&mut stage, CompileStage::Validate) {
+                        return None;
+                    }
+                }
+
+                "-S" => {
+                    if keep_asm {
+                        return None;
+                    }
+                    keep_asm = true;
+                }
+                "-c" => {
+                    if compile {
+                        return None;
+                    }
+                    compile = true;
+                }
+                new_path => {
+                    if !Self::try_update(&mut path, new_path.into()) {
+                        return None;
+                    }
+                }
+            };
+        }
+        path.map(|file| Self {
+            file,
+            stage,
+            compile,
+            keep_asm,
+        })
+    }
+
+    fn try_update<T>(option: &mut Option<T>, new: T) -> bool {
+        if option.is_none() {
+            *option = Some(new);
+            true
+        } else {
+            false
+        }
+    }
 }
-*/
 
 fn main() -> Result<(), MCCError> {
-    let args = Args::parse();
+    let Some(args) = Args::parse() else {
+        return Err(MCCError::Usage);
+    };
 
     let _ = CONFIG.set(Config {
         stage: args.stage,
@@ -46,70 +107,6 @@ fn main() -> Result<(), MCCError> {
         assemble(&object_file, args.compile).map_err(MCCError::Assemble)
     } else {
         Ok(())
-    }
-}
-
-fn parse_args() -> Result<PathBuf, ()> {
-    let mut args = env::args();
-    // file name
-    args.next();
-    let mut stage: Option<CompileStage> = None;
-    let mut version = CVersion::C17;
-    let mut path: Option<PathBuf> = None;
-
-    for arg in args.map(|x| Arg::parse(&x)) {
-        let Some(arg) = arg else {
-            return Err(());
-        };
-        match arg {
-            Arg::Path(p) => {
-                if path.is_some() {
-                    return Err(());
-                }
-                path = Some(p);
-            }
-            Arg::Stage(s) => {
-                if stage.is_some() {
-                    return Err(());
-                }
-                stage = Some(s);
-            }
-            Arg::Version(v) => {
-                if version == CVersion::C23 {
-                    return Err(());
-                }
-                version = v;
-            }
-        }
-    }
-
-    let _ = CONFIG.set(Config { stage, version });
-    let path = path.ok_or(())?;
-    Ok(path)
-}
-
-enum Arg {
-    Path(PathBuf),
-    Stage(CompileStage),
-    Version(CVersion),
-}
-
-impl Arg {
-    fn parse(arg: &str) -> Option<Self> {
-        match arg {
-            "--lex" => Some(Self::Stage(CompileStage::Lex)),
-            "--parse" => Some(Self::Stage(CompileStage::Parse)),
-            "--codegen" => Some(Self::Stage(CompileStage::Codegen)),
-            "-S" => Some(Self::Stage(CompileStage::Compile)),
-            "--tacky" => Some(Self::Stage(CompileStage::Tacky)),
-            "--validate" => Some(Self::Stage(CompileStage::Validate)),
-            "--C23" => Some(Self::Version(CVersion::C23)),
-            "--C17" => Some(Self::Version(CVersion::C17)),
-            _ => {
-                let file = PathBuf::from(arg);
-                file.is_file().then_some(Self::Path(file))
-            }
-        }
     }
 }
 

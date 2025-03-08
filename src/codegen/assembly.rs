@@ -1,5 +1,4 @@
 pub mod tacky;
-use std::rc::Rc;
 pub mod x86;
 use super::Identifier;
 use std::io::Write;
@@ -12,27 +11,46 @@ pub use x86::PseudoOp;
 pub use x86::X86;
 
 #[derive(Debug)]
-pub struct Program<T: InstructionSet>(pub Box<[FunctionDefinition<T>]>);
+pub struct Program<T: InstructionSet>(pub Box<[TopLevel<T>]>);
+
+#[derive(Debug)]
+pub enum TopLevel<T: InstructionSet> {
+    Fn(FunctionDefinition<T>),
+    StaticVar(StaticVar),
+}
+
+impl<T: InstructionSet> TopLevel<T> {
+    const fn global(&self) -> bool {
+        match self {
+            Self::StaticVar(StaticVar { global, .. })
+            | Self::Fn(FunctionDefinition { global, .. }) => *global,
+        }
+    }
+
+    const fn name(&self) -> &Identifier {
+        match self {
+            Self::StaticVar(StaticVar { name, .. }) | Self::Fn(FunctionDefinition { name, .. }) => {
+                name
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct StaticVar {
+    pub name: Identifier,
+    pub global: bool,
+    pub init: u64,
+}
 
 pub trait InstructionSet {}
 #[derive(Debug)]
 pub struct FunctionDefinition<T: InstructionSet> {
-    pub name: Rc<Identifier>,
+    pub name: Identifier,
     // empty for x86, which kinda sucks,
-    pub params: Box<[Rc<Identifier>]>,
+    pub params: Box<[Identifier]>,
+    pub global: bool,
     pub body: Box<[T]>,
-}
-
-impl<T: InstructionSet> FunctionDefinition<T> {
-    pub const fn stack_bytes(&self) -> usize {
-        if self.params.len() <= 6 {
-            return 0;
-        }
-
-        let padding_bytes = if self.params.len() % 2 == 0 { 0 } else { 8 };
-
-        ((self.params.len() - 6) * 8) + padding_bytes
-    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -49,27 +67,53 @@ pub enum Register {
 }
 
 pub fn emit(program: &Program<X86>) -> Box<[u8]> {
-    emit_function(&program.0)
-}
-
-fn emit_function(functions: &[FunctionDefinition<X86>]) -> Box<[u8]> {
     let mut bytes = Vec::new();
-    for FunctionDefinition {
-        name,
-        params: _,
-        body,
-    } in functions
-    {
-        let _ = write!(
-            bytes,
-            "\n.globl {name}\n{name}:\n\tpushq %rbp\n\tmovq %rsp, %rbp",
-            name = format_args!("_{}", name)
-        );
-        for instruction in body {
-            let _ = write!(bytes, "\n\t{instruction}");
+    for top_level in &program.0 {
+        if top_level.global() {
+            if let TopLevel::Fn(_) = top_level {
+                let _ = writeln!(bytes, "\t.globl _{}", top_level.name());
+            } else {
+                let _ = writeln!(bytes, "\t.globl {}", top_level.name());
+            }
+        }
+        match top_level {
+            TopLevel::Fn(FunctionDefinition {
+                name,
+                params: _,
+                body,
+                global: _,
+            }) => {
+                let _ = writeln!(
+                    bytes,
+                    "\t.text\n{name}:\n\t{prelude}",
+                    name = format_args!("_{}", name),
+                    prelude = format_args!("pushq %rbp\n\tmovq %rsp, %rbp")
+                );
+                for instruction in body {
+                    let _ = writeln!(bytes, "\t{instruction}");
+                }
+            }
+
+            TopLevel::StaticVar(StaticVar {
+                name,
+                global: _,
+                init,
+            }) => {
+                bytes.extend_from_slice(if *init == 0 {
+                    b"\t.bss\n"
+                } else {
+                    b"\t.data\n"
+                });
+                bytes.extend_from_slice(b"\t.balign 4\n");
+                let _ = writeln!(bytes, "{name}:");
+                if *init == 0 {
+                    bytes.extend_from_slice(b"\t .zero 4\n");
+                } else {
+                    let _ = writeln!(bytes, "\t.long {init}");
+                }
+            }
         }
     }
-
     bytes.into()
 }
 

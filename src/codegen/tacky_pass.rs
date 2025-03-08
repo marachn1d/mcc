@@ -7,49 +7,87 @@ use assembly::tacky::Program;
 use assembly::tacky::TackyBinary;
 use assembly::tacky::Value;
 use assembly::OpVec;
+use assembly::TopLevel;
 use parse::Binary as AstBinary;
 
 use crate::semantics;
+use assembly::StaticVar;
 use parse::BinaryOperator as AstBinop;
 use parse::Expression as AstExpression;
 use parse::Factor as AstFactor;
 use parse::ForInit;
 use parse::Unary as AstUnary;
+use semantics::Attr;
 use semantics::Declaration as AstDeclaration;
-use semantics::FunctionDeclaration as AstFunctionDec;
+
 use semantics::Label as AstLabel;
 use semantics::Program as AstProgram;
 
 use parse::ParamList;
-
+use parse::StorageClass;
 use semantics::StatementLabels;
 
 use semantics::Block as AstBlock;
 use semantics::BlockItem as AstBlockItem;
 use semantics::Statement as AstStatement;
-use std::rc::Rc;
+use semantics::SymbolTable;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
-
 static TEMP_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 static LABEL_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-pub fn emit(program: AstProgram) -> Program {
-    let mut fns = Vec::with_capacity(program.0.len());
-    for function in program.0 {
-        if let Some(f) = convert_function(function) {
-            fns.push(f);
+const fn function_is_global(sc: &Option<StorageClass>) -> bool {
+    if let Some(StorageClass::Static) = sc {
+        false
+    } else {
+        true
+    }
+}
+
+pub fn emit(program: AstProgram, symbol_table: &SymbolTable) -> Program {
+    let mut tlvs = Vec::with_capacity(program.0.len());
+    for dec in program.0 {
+        if let AstDeclaration::Function {
+            name,
+            params,
+            body,
+            storage_class,
+        } = dec
+        {
+            if let Some(f) =
+                convert_function(name, body, params, function_is_global(&storage_class))
+            {
+                tlvs.push(TopLevel::Fn(f));
+            }
         }
     }
-    super::Program::<Instruction>(fns.into_boxed_slice())
+
+    for (name, attr) in symbol_table {
+        if let Attr::StaticInt {
+            init: Some(init),
+            global,
+        } = attr
+        {
+            tlvs.push(TopLevel::StaticVar(StaticVar {
+                name: name.clone(),
+                global: *global,
+                init: init.as_num(),
+            }))
+        }
+    }
+
+    super::Program::<Instruction>(tlvs.into_boxed_slice())
 }
 
 fn convert_function(
-    AstFunctionDec { name, body, params }: AstFunctionDec,
+    name: Identifier,
+    body: Option<Box<[AstBlockItem]>>,
+    params: ParamList,
+    global: bool,
 ) -> Option<FunctionDefinition> {
     let mut body_ops = OpVec::new();
-    convert_block(body?, &mut body_ops);
+    convert_block(body?, &mut body_ops, &name);
     body_ops.push_one(Instruction::Return(Value::Constant(0)));
 
     Some(FunctionDefinition {
@@ -60,19 +98,24 @@ fn convert_function(
             ParamList::Int(names) => names,
         },
         body: body_ops.into(),
+        global,
     })
 }
 
-fn convert_block(block: AstBlock, instructions: &mut OpVec<Instruction>) {
+fn convert_block(block: AstBlock, instructions: &mut OpVec<Instruction>, fn_name: &Identifier) {
     for block in block {
         match block {
-            AstBlockItem::S(statement) => convert_statement(statement, instructions),
+            AstBlockItem::S(statement) => convert_statement(statement, instructions, fn_name),
             AstBlockItem::D(declaration) => convert_declaration(declaration, instructions),
         };
     }
 }
 
-fn convert_statement(statement: AstStatement, instructions: &mut OpVec<Instruction>) {
+fn convert_statement(
+    statement: AstStatement,
+    instructions: &mut OpVec<Instruction>,
+    fn_name: &Identifier,
+) {
     match statement {
         AstStatement::DoWhile {
             body,
@@ -81,20 +124,20 @@ fn convert_statement(statement: AstStatement, instructions: &mut OpVec<Instructi
         } => {
             let StatementLabels {
                 start,
-                _break,
-                _continue,
+                r#break,
+                r#continue,
                 end: _,
             } = label.labels();
             instructions.push_one(Instruction::Label(start.clone()));
-            convert_statement(*body, instructions);
-            instructions.push_one(Instruction::Label(_continue));
+            convert_statement(*body, instructions, fn_name);
+            instructions.push_one(Instruction::Label(r#continue));
             let result = convert_expression(condition, instructions);
             instructions.push([
                 Instruction::JumpIfNotZero {
                     condition: result,
                     target: start,
                 },
-                Instruction::Label(_break),
+                Instruction::Label(r#break),
             ]);
         }
         AstStatement::While {
@@ -104,21 +147,21 @@ fn convert_statement(statement: AstStatement, instructions: &mut OpVec<Instructi
         } => {
             let StatementLabels {
                 start: _,
-                _break,
-                _continue,
+                r#break,
+                r#continue,
                 end: _,
             } = label.labels();
 
-            instructions.push_one(Instruction::Label(_continue.clone()));
+            instructions.push_one(Instruction::Label(r#continue.clone()));
             let result = convert_expression(condition, instructions);
             instructions.push_one(Instruction::JumpIfZero {
                 condition: result,
-                target: _break.clone(),
+                target: r#break.clone(),
             });
-            convert_statement(*body, instructions);
+            convert_statement(*body, instructions, fn_name);
             instructions.push([
-                Instruction::Jump { target: _continue },
-                Instruction::Label(_break),
+                Instruction::Jump { target: r#continue },
+                Instruction::Label(r#break),
             ]);
         }
         AstStatement::For {
@@ -130,8 +173,8 @@ fn convert_statement(statement: AstStatement, instructions: &mut OpVec<Instructi
         } => {
             let StatementLabels {
                 start,
-                _break,
-                _continue,
+                r#break,
+                r#continue,
                 end: _,
             } = label.labels();
 
@@ -147,32 +190,32 @@ fn convert_statement(statement: AstStatement, instructions: &mut OpVec<Instructi
                 let v = convert_expression(condition, instructions);
                 instructions.push_one(Instruction::JumpIfZero {
                     condition: v,
-                    target: _break.clone(),
+                    target: r#break.clone(),
                 })
             }
-            convert_statement(*body, instructions);
+            convert_statement(*body, instructions, fn_name);
             //
-            instructions.push_one(Instruction::Label(_continue));
+            instructions.push_one(Instruction::Label(r#continue));
             if let Some(post) = post {
                 convert_expression(post, instructions);
             }
             instructions.push([
                 Instruction::Jump { target: start },
-                Instruction::Label(_break),
+                Instruction::Label(r#break),
             ])
         }
         AstStatement::Break(label) => {
             instructions.push_one(Instruction::Jump {
-                target: label._break(),
+                target: label.r#break(),
             });
         }
         AstStatement::Continue(label) => {
             instructions.push_one(Instruction::Jump {
-                target: label._continue(),
+                target: label.r#continue(),
             });
         }
 
-        AstStatement::Compound(block) => convert_block(block, instructions),
+        AstStatement::Compound(block) => convert_block(block, instructions, fn_name),
 
         AstStatement::Ret(e) => {
             let result = convert_expression(e, instructions);
@@ -193,7 +236,7 @@ fn convert_statement(statement: AstStatement, instructions: &mut OpVec<Instructi
                 condition: c,
                 target: label.clone(),
             });
-            convert_statement(*then, instructions);
+            convert_statement(*then, instructions, fn_name);
             instructions.push_one(Instruction::Label(label));
         }
         AstStatement::If {
@@ -208,36 +251,37 @@ fn convert_statement(statement: AstStatement, instructions: &mut OpVec<Instructi
                 condition: c,
                 target: else_label.clone(),
             });
-            convert_statement(*then, instructions);
+            convert_statement(*then, instructions, fn_name);
             instructions.push([
                 Instruction::Jump {
                     target: end.clone(),
                 },
                 Instruction::Label(else_label),
             ]);
-            convert_statement(*r#else, instructions);
+            convert_statement(*r#else, instructions, fn_name);
             instructions.push_one(Instruction::Label(end));
         }
+
         AstStatement::Label {
             name: AstLabel::Named(name),
             body,
         } => {
-            instructions.push_one(Instruction::Label(name));
-            convert_statement(*body, instructions);
+            instructions.push_one(Instruction::Label(named_label(&name, fn_name)));
+            convert_statement(*body, instructions, fn_name);
         }
         AstStatement::Label {
             name: AstLabel::Case { val, id },
             body,
         } => {
             instructions.push_one(Instruction::Label(id.case(val)));
-            convert_statement(*body, instructions);
+            convert_statement(*body, instructions, fn_name);
         }
         AstStatement::Label {
             name: AstLabel::Default(id),
             body,
         } => {
             instructions.push_one(Instruction::Label(id.default()));
-            convert_statement(*body, instructions);
+            convert_statement(*body, instructions, fn_name);
         }
         AstStatement::Switch {
             val,
@@ -246,7 +290,7 @@ fn convert_statement(statement: AstStatement, instructions: &mut OpVec<Instructi
             body,
             default,
         } => {
-            let end_label = label.labels()._break;
+            let end_label = label.labels().r#break;
             let switch_val = convert_expression(val, instructions);
             for case in cases {
                 let target_var = new_var();
@@ -272,10 +316,12 @@ fn convert_statement(statement: AstStatement, instructions: &mut OpVec<Instructi
                     end_label.clone()
                 },
             });
-            convert_statement(*body, instructions);
+            convert_statement(*body, instructions, fn_name);
             instructions.push_one(Instruction::Label(end_label));
         }
-        AstStatement::Goto(label) => instructions.push_one(Instruction::Jump { target: label }),
+        AstStatement::Goto(label) => instructions.push_one(Instruction::Jump {
+            target: named_label(&label, fn_name),
+        }),
     }
 }
 
@@ -285,17 +331,23 @@ fn convert_declaration(dec: AstDeclaration, instructions: &mut OpVec<Instruction
             name: _,
             params: _,
             body: None,
+            storage_class: _,
         } => {}
 
         AstDeclaration::Function {
             name: _,
             params: _,
             body: Some(_),
+            storage_class: _,
         } => {
             unreachable!();
         }
 
-        AstDeclaration::Var { name, init } => {
+        AstDeclaration::Var {
+            name,
+            init,
+            storage_class: _,
+        } => {
             if let Some(init) = init {
                 let result = convert_expression(init, instructions);
                 instructions.push_one(Instruction::Copy {
@@ -644,44 +696,49 @@ fn convert_factor(factor: AstFactor, instructions: &mut OpVec<Instruction>) -> V
     }
 }
 
-fn new_var() -> Rc<Identifier> {
+fn new_var() -> Identifier {
     let number = TEMP_COUNT.fetch_add(1, Ordering::SeqCst);
     let var_name: Box<[u8]> = format!("tmp_{number}").into_bytes().into();
-    Rc::new(Identifier(var_name))
+    Identifier(var_name.into())
 }
 
-fn and_label() -> Rc<Identifier> {
+fn and_label() -> Identifier {
     let number = LABEL_COUNT.fetch_add(1, Ordering::SeqCst);
     let var_name: Box<[u8]> = format!("and_false{number}").into_bytes().into();
-    Rc::new(Identifier(var_name))
+    Identifier(var_name.into())
 }
 
-fn or_label() -> Rc<Identifier> {
+fn or_label() -> Identifier {
     let number = LABEL_COUNT.fetch_add(1, Ordering::SeqCst);
     let var_name: Box<[u8]> = format!("or_true{number}").into_bytes().into();
-    Rc::new(Identifier(var_name))
+    Identifier(var_name.into())
 }
 
-fn end_label() -> Rc<Identifier> {
+fn end_label() -> Identifier {
     let number = LABEL_COUNT.fetch_add(1, Ordering::SeqCst);
     let var_name: Box<[u8]> = format!("end{number}").into_bytes().into();
-    Rc::new(Identifier(var_name))
+    Identifier(var_name.into())
 }
 
-fn if_label() -> Rc<Identifier> {
+fn if_label() -> Identifier {
     let number = LABEL_COUNT.fetch_add(1, Ordering::SeqCst);
     let var_name: Box<[u8]> = format!("if{number}").into_bytes().into();
-    Rc::new(Identifier(var_name))
+    Identifier(var_name.into())
 }
 
-fn else_label() -> Rc<Identifier> {
+fn named_label(function: &Identifier, label: &Identifier) -> Identifier {
+    let var_name: Box<[u8]> = format!("{function}f_{label}n").into_bytes().into();
+    Identifier(var_name.into())
+}
+
+fn else_label() -> Identifier {
     let number = LABEL_COUNT.fetch_add(1, Ordering::SeqCst);
     let var_name: Box<[u8]> = format!("else{number}").into_bytes().into();
-    Rc::new(Identifier(var_name))
+    Identifier(var_name.into())
 }
 
-fn conditional_label() -> Rc<Identifier> {
+fn conditional_label() -> Identifier {
     let number = LABEL_COUNT.fetch_add(1, Ordering::SeqCst);
     let var_name: Box<[u8]> = format!("c{number}").into_bytes().into();
-    Rc::new(Identifier(var_name))
+    Identifier(var_name.into())
 }
