@@ -461,6 +461,7 @@ pub enum BlockItem {
     D(Declaration),
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct DebugStatement {
     statement: Statement,

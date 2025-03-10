@@ -10,6 +10,7 @@ use std::collections::hash_map::Entry;
 
 pub type SymbolTable = HashMap<Identifier, Attr>;
 
+#[derive(Debug)]
 pub enum Attr {
     StaticInt {
         init: Option<InitialVal>,
@@ -23,6 +24,7 @@ pub enum Attr {
     },
 }
 
+#[derive(Debug)]
 pub enum InitialVal {
     Tentative,
     Initial(u64),
@@ -55,7 +57,7 @@ fn top_level_declaration(dec: &mut Declaration, table: &mut SymbolTable) -> Resu
             params,
             body,
             storage_class,
-        } => function_declaration(name, params, body, storage_class, table),
+        } => function_declaration(name, params, body, storage_class, table, false),
         Declaration::Var {
             name,
             init,
@@ -71,7 +73,6 @@ fn top_level_var(
     table: &mut SymbolTable,
 ) -> Result<(), Error> {
     let mut initial_val = tlv_initial(init, storage_class)?;
-
     // if we're not static, then we're global, if we are static, then we're not global?
     let mut global = *storage_class != Some(StorageClass::Static);
 
@@ -159,7 +160,7 @@ fn declaration(dec: &mut Declaration, table: &mut SymbolTable) -> Result<(), Err
             params,
             body,
             storage_class,
-        } => function_declaration(name, params, body, storage_class, table),
+        } => function_declaration(name, params, body, storage_class, table, true),
         Declaration::Var {
             name,
             init,
@@ -333,8 +334,9 @@ fn function_declaration(
     body: &mut Option<Box<[BlockItem]>>,
     sc: &mut Option<StorageClass>,
     table: &mut SymbolTable,
+    block_scope: bool,
 ) -> Result<(), Error> {
-    let global = sc.is_some_and(|sc| sc != StorageClass::Static);
+    let global = sc.is_none_or(|sc| sc == StorageClass::Extern);
 
     let has_body = body.is_some();
 
@@ -343,7 +345,7 @@ fn function_declaration(
     check_entry(&entry, params.len(), has_body)?;
 
     match entry {
-        Entry::Occupied(mut e) => {
+        Entry::Occupied(mut e) if !block_scope => {
             let Attr::Fn {
                 len: _,
                 defined,
@@ -352,16 +354,45 @@ fn function_declaration(
             else {
                 unreachable!()
             };
+
             if has_body {
-                eprintln!("{name} is now defined");
                 *defined = true;
             }
+            /*
+             * a function declared without the 'static'
+             * keyword always has external linkage
+             */
 
-            if global && !(*was_global) {
-                eprintln!("{name} is now global");
-                *was_global = true;
-            }
+            /*
+             * Can't define a symbol with external linkage,
+             * then redefine it with internal linkage
+             */
+
+            match (&sc, was_global) {
+                // is static now, was previously extern or none
+                // should conflict but we'll keep it
+                (Some(StorageClass::Static), true) => {
+                    return Err(Error::StaticRedec);
+                }
+                // is static now, was previously static
+                (Some(StorageClass::Static), false) => {}
+                // this is fine
+                (Some(StorageClass::Extern), true) => {}
+                // this conflicts
+                (Some(StorageClass::Extern), false) => {}
+                //
+                (None, true) => {
+                    // (No visibility qualitifer, previously declared (maybe as extern)
+
+                    // This is fine is fine
+                }
+                (None, false) => {
+                    *sc = Some(StorageClass::Static);
+                    // (No visibility qualitifer, but was previously declared as static
+                }
+            };
         }
+        Entry::Occupied(_) => {}
         Entry::Vacant(e) => {
             e.insert(Attr::Fn {
                 len: params.len(),
@@ -492,4 +523,5 @@ pub enum Error {
     NotConstInitialized,
     ConflictingLinkage,
     DeclaredExtern,
+    StaticRedec,
 }

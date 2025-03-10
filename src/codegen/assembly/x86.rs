@@ -240,7 +240,7 @@ impl Display for Op {
             Self::Imm(val) => write!(f, "${val}"),
             Self::Register(r) => write!(f, "{}", r.extended()),
             Self::Stack(n) => write!(f, "{n}(%rbp)"),
-            Self::Data(name) => write!(f, "{name}(%rip)"),
+            Self::Data(name) => write!(f, "_{name}(%rip)"),
         }
     }
 }

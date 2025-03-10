@@ -59,7 +59,6 @@ fn insert_fndec(
     name: &mut Identifier,
     storage_class: &mut Option<StorageClass>,
 ) -> Result<(), Error> {
-    eprintln!("function dec");
     map.insert(name.clone(), Var::new_fn(name, storage_class));
     Ok(())
 
@@ -169,7 +168,6 @@ fn resolve_param(params: &mut parse::ParamList, map: &mut VarMap) -> Result<(), 
             .get(param)
             .is_some_and(|param| !param.has_external_linkage && param.from_current_block)
         {
-            eprintln!("duplicate declaration");
             return Err(Error::DuplicateDeclaration);
         }
 
@@ -209,7 +207,6 @@ fn resolve_var_dec(
     Ok(())
 }
 
-use std::collections::hash_map::Entry;
 fn resolve_declaration(dec: &mut AstDeclaration, map: &mut VarMap) -> Result<(), Error> {
     match dec {
         AstDeclaration::Var {

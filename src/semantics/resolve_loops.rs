@@ -4,14 +4,11 @@ use super::AstProgram;
 
 use super::BlockItem;
 use super::Declaration;
-use super::FunctionDeclaration;
 use super::Label;
 use super::LabelId;
 use super::Program;
 use super::Statement;
 use parse::BlockItem as AstBlockItem;
-
-use parse::FunctionDeclaration as AstFunctionDeclaration;
 
 use parse::Declaration as AstDeclaration;
 use parse::Label as AstLabel;

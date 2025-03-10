@@ -38,11 +38,7 @@ static TEMP_COUNT: AtomicUsize = AtomicUsize::new(0);
 static LABEL_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 const fn function_is_global(sc: &Option<StorageClass>) -> bool {
-    if let Some(StorageClass::Static) = sc {
-        false
-    } else {
-        true
-    }
+    matches!(sc, Some(StorageClass::Extern) | None)
 }
 
 pub fn emit(program: AstProgram, symbol_table: &SymbolTable) -> Program {
@@ -63,6 +59,8 @@ pub fn emit(program: AstProgram, symbol_table: &SymbolTable) -> Program {
         }
     }
 
+    tlvs.reverse();
+
     for (name, attr) in symbol_table {
         if let Attr::StaticInt {
             init: Some(init),
@@ -77,6 +75,7 @@ pub fn emit(program: AstProgram, symbol_table: &SymbolTable) -> Program {
         }
     }
 
+    tlvs.reverse();
     super::Program::<Instruction>(tlvs.into_boxed_slice())
 }
 
@@ -345,17 +344,17 @@ fn convert_declaration(dec: AstDeclaration, instructions: &mut OpVec<Instruction
 
         AstDeclaration::Var {
             name,
-            init,
-            storage_class: _,
+            init: Some(init),
+            storage_class: None | Some(StorageClass::Extern),
         } => {
-            if let Some(init) = init {
-                let result = convert_expression(init, instructions);
-                instructions.push_one(Instruction::Copy {
-                    src: result,
-                    dst: Value::Var(name),
-                })
-            }
+            let result = convert_expression(init, instructions);
+            instructions.push_one(Instruction::Copy {
+                src: result,
+                dst: Value::Var(name),
+            })
         }
+
+        AstDeclaration::Var { .. } => {}
     }
 }
 

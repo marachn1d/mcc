@@ -70,11 +70,7 @@ pub fn emit(program: &Program<X86>) -> Box<[u8]> {
     let mut bytes = Vec::new();
     for top_level in &program.0 {
         if top_level.global() {
-            if let TopLevel::Fn(_) = top_level {
-                let _ = writeln!(bytes, "\t.globl _{}", top_level.name());
-            } else {
-                let _ = writeln!(bytes, "\t.globl {}", top_level.name());
-            }
+            let _ = writeln!(bytes, "\t.globl _{}", top_level.name());
         }
         match top_level {
             TopLevel::Fn(FunctionDefinition {
@@ -105,7 +101,7 @@ pub fn emit(program: &Program<X86>) -> Box<[u8]> {
                     b"\t.data\n"
                 });
                 bytes.extend_from_slice(b"\t.balign 4\n");
-                let _ = writeln!(bytes, "{name}:");
+                let _ = writeln!(bytes, "_{name}:");
                 if *init == 0 {
                     bytes.extend_from_slice(b"\t .zero 4\n");
                 } else {

@@ -1,7 +1,6 @@
 use crate::lex::Identifier;
 use crate::parse::Block;
 use crate::parse::BlockItem;
-use crate::parse::FunctionDeclaration;
 
 use crate::parse::Declaration;
 use crate::parse::Label;
@@ -26,16 +25,6 @@ fn check_dec(dec: &mut Declaration, vars: &HashSet<Identifier>) -> Result<(), Er
 
         Declaration::Var { .. } | Declaration::Function { .. } => Ok(()),
     }
-}
-
-fn check_function(
-    FunctionDeclaration { body, name, .. }: &mut FunctionDeclaration,
-    vars: &HashSet<Identifier>,
-) -> Result<(), Error> {
-    if let Some(body) = body {
-        check_body(&body.0, vars, name)?;
-    }
-    Ok(())
 }
 
 fn check_body(

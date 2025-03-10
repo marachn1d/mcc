@@ -13,7 +13,6 @@ struct Args {
     file: PathBuf,
     stage: Option<CompileStage>,
     compile: bool,
-    keep_asm: bool,
 }
 
 impl Args {
@@ -77,7 +76,6 @@ impl Args {
             file,
             stage,
             compile,
-            keep_asm,
         })
     }
 
@@ -104,7 +102,7 @@ fn main() -> Result<(), MCCError> {
     let preprocessed_file = preprocess(&args.file, output).map_err(MCCError::Preprocess)?;
     let object_file = mcc::compile(preprocessed_file).map_err(MCCError::Compile)?;
     if CONFIG.get().unwrap().stage.is_none() {
-        assemble(&object_file, args.compile).map_err(MCCError::Assemble)
+        assemble(&object_file, &args).map_err(MCCError::Assemble)
     } else {
         Ok(())
     }
@@ -121,13 +119,14 @@ fn preprocess(input: &Path, mut output: PathBuf) -> Result<PathBuf, io::Error> {
     Ok(output)
 }
 
-fn assemble(input: &Path, compile: bool) -> Result<(), io::Error> {
-    let output = input.with_extension(if compile { "o" } else { "" });
+fn assemble(input: &Path, args: &Args) -> Result<(), io::Error> {
+    let output = input.with_extension(if args.compile { "o" } else { "" });
     let mut command = Command::new("gcc");
     command.arg(input).arg("-o").arg(&output);
-    if compile {
+    if args.compile {
         command.arg("-c");
     }
+
     command.status().map(|_| ())
 }
 
