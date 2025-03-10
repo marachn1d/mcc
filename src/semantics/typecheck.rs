@@ -24,6 +24,15 @@ pub enum Attr {
     },
 }
 
+impl Attr {
+    pub const fn global(&self) -> bool {
+        match self {
+            Self::StaticInt { global, .. } | Self::Fn { global, .. } => *global,
+            Self::Automatic => false,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum InitialVal {
     Tentative,

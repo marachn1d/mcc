@@ -70,7 +70,7 @@ impl TokenIter {
     }
 
     pub fn peek(&self) -> Option<&Token> {
-        self.0.as_slice().get(0)
+        self.0.as_slice().first()
     }
 
     pub fn next_if(&mut self, f: impl Fn(&Token) -> bool) -> Option<Token> {
@@ -94,11 +94,7 @@ impl TokenIter {
     }
 
     pub fn peek_peek(&self) -> Option<&Token> {
-        if self.0.len() <= 2 {
-            None
-        } else {
-            self.0.as_slice().get(self.0.len() - 2)
-        }
+        self.0.as_slice().get(1)
     }
 
     pub fn consume(&mut self, token: impl Into<Token>) -> Result<(), parse::Error> {

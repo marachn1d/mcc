@@ -1,37 +1,33 @@
 use crate::lex::Identifier;
-use crate::parse::Block;
-use crate::parse::BlockItem;
+use crate::semantics::BlockItem;
 
-use crate::parse::Declaration;
-use crate::parse::Label;
-use crate::parse::Program;
-use crate::parse::Statement;
+use crate::semantics::Declaration;
+use crate::semantics::Label;
+use crate::semantics::Program;
+use crate::semantics::Statement;
+use crate::semantics::SymbolTable;
 use std::collections::HashSet;
 
-pub fn check(program: &mut Program, vars: &HashSet<Identifier>) -> Result<(), Error> {
-    for r#fn in &mut program.0 {
+pub fn check(program: &Program, vars: &SymbolTable) -> Result<(), Error> {
+    for r#fn in &program.0 {
         check_dec(r#fn, vars)?
     }
     Ok(())
 }
 
-fn check_dec(dec: &mut Declaration, vars: &HashSet<Identifier>) -> Result<(), Error> {
+fn check_dec(dec: &Declaration, vars: &SymbolTable) -> Result<(), Error> {
     match dec {
         Declaration::Function {
             name,
             body: Some(body),
             ..
-        } => check_body(&body.0, vars, name),
+        } => check_body(body, vars, name),
 
         Declaration::Var { .. } | Declaration::Function { .. } => Ok(()),
     }
 }
 
-fn check_body(
-    block: &[BlockItem],
-    vars: &HashSet<Identifier>,
-    fn_name: &Identifier,
-) -> Result<(), Error> {
+fn check_body(block: &[BlockItem], vars: &SymbolTable, fn_name: &Identifier) -> Result<(), Error> {
     let mut labels = HashSet::new();
     for item in block.iter() {
         if let BlockItem::S(statement) = item {
@@ -48,10 +44,19 @@ fn check_body(
     Ok(())
 }
 
+fn name_clashes(label: &Identifier, vars: &SymbolTable, fn_name: &Identifier) -> bool {
+    use super::Attr;
+    if label == fn_name {
+        false
+    } else {
+        !matches!(vars.get(label), None | Some(Attr::StaticInt { .. }))
+    }
+}
+
 fn handle_label(
     label: &Label,
     body: &Statement,
-    vars: &HashSet<Identifier>,
+    vars: &SymbolTable,
     labels: &mut HashSet<Identifier>,
     fn_name: &Identifier,
 ) -> Result<(), Error> {
@@ -60,7 +65,8 @@ fn handle_label(
         return check_labels(body, vars, labels, fn_name);
     };
     // if the label is already defined but it's not main bc main can be a label
-    if vars.contains(label) && label != fn_name {
+
+    if name_clashes(label, vars, fn_name) {
         Err(Error::ClashedLabel)
     } else if labels.insert(label.clone()) {
         check_labels(body, vars, labels, fn_name)
@@ -71,12 +77,12 @@ fn handle_label(
 
 fn check_labels(
     statement: &Statement,
-    vars: &HashSet<Identifier>,
+    vars: &SymbolTable,
     labels: &mut HashSet<Identifier>,
     fn_name: &Identifier,
 ) -> Result<(), Error> {
     match statement {
-        Statement::Compound(Block(block)) => {
+        Statement::Compound(block) => {
             for item in block {
                 if let BlockItem::S(s) = item {
                     check_labels(s, vars, labels, fn_name)?;
@@ -88,7 +94,7 @@ fn check_labels(
         | Statement::DoWhile { body, .. }
         | Statement::For { body, .. } => check_labels(body, vars, labels, fn_name),
 
-        Statement::Label { label, body } => handle_label(label, body, vars, labels, fn_name),
+        Statement::Label { name, body } => handle_label(name, body, vars, labels, fn_name),
         Statement::If {
             condition: _,
             then,
@@ -100,13 +106,13 @@ fn check_labels(
             };
             Ok(())
         }
-        Statement::Switch { val: _, body } => check_labels(body, vars, labels, fn_name),
+        Statement::Switch { body, .. } => check_labels(body, vars, labels, fn_name),
         Statement::Ret(_)
         | Statement::Exp(_)
         | Statement::Null
         | Statement::Goto(_)
-        | Statement::Continue
-        | Statement::Break => Ok(()),
+        | Statement::Continue(_)
+        | Statement::Break(_) => Ok(()),
     }
 }
 
@@ -130,7 +136,7 @@ fn check_gotos(statement: &Statement, labels: &HashSet<Identifier>) -> Result<()
             };
             Ok(())
         }
-        Statement::Compound(Block(b)) => {
+        Statement::Compound(b) => {
             for item in b {
                 if let BlockItem::S(statement) = item {
                     check_gotos(statement, labels)?;
@@ -147,8 +153,8 @@ fn check_gotos(statement: &Statement, labels: &HashSet<Identifier>) -> Result<()
         Statement::Ret(_)
         | Statement::Exp(_)
         | Statement::Null
-        | Statement::Break
-        | Statement::Continue => Ok(()),
+        | Statement::Break(_)
+        | Statement::Continue(_) => Ok(()),
     }
 }
 

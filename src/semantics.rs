@@ -14,21 +14,17 @@ pub use typecheck::Attr;
 pub use typecheck::SymbolTable;
 mod resolve_loops;
 pub use resolve::resolve;
-use std::collections::HashSet;
 
 pub fn check(mut program: AstProgram) -> Result<(Program, SymbolTable), Error> {
-    let vars = resolve(&mut program).map_err(Error::Resolve)?;
+    resolve(&mut program).map_err(Error::Resolve)?;
 
-    let mut program = handle_labels(program, vars)?;
+    let mut program = resolve_loops::label(program).map_err(Error::Loops)?;
 
     let symbol_table = typecheck::typecheck(&mut program).map_err(Error::TypeCheck)?;
-    Ok((program, symbol_table))
-}
 
-fn handle_labels(mut program: AstProgram, var_map: HashSet<Identifier>) -> Result<Program, Error> {
-    // make sure that all gotos are to real labeled statements and
-    check_labels::check(&mut program, &var_map).map_err(Error::Label)?;
-    resolve_loops::label(program).map_err(Error::Loops)
+    check_labels::check(&program, &symbol_table).map_err(Error::Label)?;
+
+    Ok((program, symbol_table))
 }
 
 #[derive(Debug, Copy, Clone)]

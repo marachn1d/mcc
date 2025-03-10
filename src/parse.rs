@@ -341,11 +341,14 @@ fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
         }
         // LABEL
         Token::Identifier(_) if tokens.peek_peek().is_some_and(|x| x == &Token::Colon) => {
-            let label = Label::Named(tokens.consume_identifier()?);
+            let name = tokens.consume_identifier()?;
+            let label = Label::Named(name.clone());
             tokens.next();
             let body = statement(tokens)?.into();
+
             Statement::Label { label, body }
         }
+
         Token::Keyword(Keyword::Default) => {
             tokens.next();
             tokens.consume(Token::Colon)?;
@@ -422,7 +425,9 @@ fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
         }
         _ => {
             let e = expression(tokens, None)?;
+
             tokens.consume(Token::Semicolon)?;
+
             Statement::Exp(e)
         }
     })
