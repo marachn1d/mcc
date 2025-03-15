@@ -40,7 +40,7 @@ impl<T: InstructionSet> TopLevel<T> {
 pub struct StaticVar {
     pub name: Identifier,
     pub global: bool,
-    pub init: u64,
+    pub init: i32,
 }
 
 pub trait InstructionSet {}

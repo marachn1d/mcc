@@ -48,7 +48,7 @@ pub enum Instruction {
 
 #[derive(Clone, Debug)]
 pub enum Value {
-    Constant(u64),
+    Constant(i32),
     Var(Identifier),
 }
 

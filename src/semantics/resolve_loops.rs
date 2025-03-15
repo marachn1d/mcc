@@ -27,8 +27,9 @@ fn new_label() -> LabelId {
     LabelId(LOOPS.fetch_add(1, Ordering::Acquire) + 1)
 }
 
+use super::LabeledProgram;
 use crate::parse;
-pub fn label(program: AstProgram) -> Result<Program, Error> {
+pub fn label<T>(program: AstProgram) -> Result<LabeledProgram, Error> {
     let mut decs = Vec::new();
     for dec in program.0 {
         decs.push(label_declaration(dec, &mut Scope::default())?);
@@ -36,16 +37,21 @@ pub fn label(program: AstProgram) -> Result<Program, Error> {
     Ok(Program(decs.into()))
 }
 
-fn label_declaration(dec: AstDeclaration, cur_loop: &mut Scope) -> Result<Declaration, Error> {
+fn label_declaration(
+    dec: AstDeclaration,
+    cur_loop: &mut Scope,
+) -> Result<Declaration<super::AstExpression>, Error> {
     match dec {
         AstDeclaration::Var {
             name,
             init,
             storage_class,
+            r#type,
         } => Ok(Declaration::Var {
             name,
             init,
             storage_class,
+            r#type,
         }),
 
         AstDeclaration::Function {
@@ -53,22 +59,26 @@ fn label_declaration(dec: AstDeclaration, cur_loop: &mut Scope) -> Result<Declar
             params,
             body: None,
             storage_class,
+            r#type,
         } => Ok(Declaration::Function {
             name,
             params,
             body: None,
             storage_class,
+            r#type,
         }),
         AstDeclaration::Function {
             name,
             params,
             body: Some(body),
             storage_class,
+            r#type,
         } => label_blocks(body.0, cur_loop).map(|body| Declaration::Function {
             name,
             params,
             body: Some(body),
             storage_class,
+            r#type,
         }),
     }
 }
@@ -76,7 +86,7 @@ fn label_declaration(dec: AstDeclaration, cur_loop: &mut Scope) -> Result<Declar
 fn label_blocks(
     block: Box<[parse::BlockItem]>,
     cur_loop: &mut Scope,
-) -> Result<Box<[BlockItem]>, Error> {
+) -> Result<Box<[BlockItem<super::AstExpression>]>, Error> {
     let mut vec = Vec::with_capacity(block.len());
     for item in block {
         vec.push(match item {
@@ -87,7 +97,10 @@ fn label_blocks(
     Ok(vec.into())
 }
 
-fn label_statement(statement: parse::Statement, cur: &mut Scope) -> Result<Statement, Error> {
+fn label_statement(
+    statement: parse::Statement,
+    cur: &mut Scope,
+) -> Result<Statement<super::AstExpression>, Error> {
     use parse::Statement as Stmt;
     match statement {
         Stmt::DoWhile { body, condition } => {
@@ -119,7 +132,21 @@ fn label_statement(statement: parse::Statement, cur: &mut Scope) -> Result<State
             Ok(Statement::For {
                 body,
                 post,
-                init,
+                init: match init {
+                    None => None,
+                    Some(parse::ForInit::D(parse::VariableDeclaration {
+                        name,
+                        init,
+                        storage_class,
+                        r#type,
+                    })) => Some(super::ForInit::D {
+                        name,
+                        initializer: init,
+                        sc: storage_class,
+                        r#type,
+                    }),
+                    Some(parse::ForInit::E(e)) => Some(super::ForInit::E(e)),
+                },
                 condition,
                 label,
             })
@@ -215,9 +242,7 @@ fn label_statement(statement: parse::Statement, cur: &mut Scope) -> Result<State
             let Some(switch) = &mut cur.switch else {
                 return Err(Error::Switch);
             };
-            let Some(num) = exp.number() else {
-                return Err(Error::Case);
-            };
+            let num = exp.int();
             switch.cases.push(num);
             let body = label_statement(*body, cur)?.into();
             let id = cur.switch.as_ref().unwrap().label;
@@ -264,7 +289,7 @@ struct Scope {
 #[derive(Clone)]
 struct SwitchState {
     default: bool,
-    cases: Vec<u64>,
+    cases: Vec<i32>,
     label: LabelId,
 }
 

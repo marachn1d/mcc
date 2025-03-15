@@ -11,9 +11,6 @@ use parse::Binary as AstBinary;
 use parse::Declaration as AstDeclaration;
 use parse::StorageClass;
 
-use parse::Factor as AstFactor;
-use parse::Unary as AstUnary;
-
 use std::sync::atomic::{AtomicU32, Ordering};
 
 static COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -114,11 +111,7 @@ fn insert_local_var(
 
 fn resolve_top_level_dec(dec: &mut AstDeclaration, map: &mut VarMap) -> Result<(), Error> {
     match dec {
-        AstDeclaration::Var {
-            name,
-            init: _,
-            storage_class: _,
-        } => {
+        AstDeclaration::Var { name, .. } => {
             map.insert(
                 name.clone(),
                 Var {
@@ -134,6 +127,7 @@ fn resolve_top_level_dec(dec: &mut AstDeclaration, map: &mut VarMap) -> Result<(
             params,
             storage_class,
             body,
+            r#type: _,
         } => {
             map.insert(name.clone(), Var::new_fn(name, storage_class));
             let mut inner_map = new_scope(map);
@@ -149,7 +143,7 @@ fn resolve_top_level_dec(dec: &mut AstDeclaration, map: &mut VarMap) -> Result<(
 fn resolve_fn_dec(
     name: &mut Identifier,
     body: &mut Option<AstBlock>,
-    params: &mut parse::ParamList,
+    params: &mut super::ParamList,
     storage_class: &mut Option<StorageClass>,
     map: &mut VarMap,
 ) -> Result<(), Error> {
@@ -162,8 +156,8 @@ fn resolve_fn_dec(
     Ok(())
 }
 
-fn resolve_param(params: &mut parse::ParamList, map: &mut VarMap) -> Result<(), Error> {
-    for param in params.iter() {
+fn resolve_param(params: &mut super::ParamList, map: &mut VarMap) -> Result<(), Error> {
+    for param in params.iter_mut().map(|x| &mut x.name) {
         if map
             .get(param)
             .is_some_and(|param| !param.has_external_linkage && param.from_current_block)
@@ -213,6 +207,7 @@ fn resolve_declaration(dec: &mut AstDeclaration, map: &mut VarMap) -> Result<(),
             name,
             init,
             storage_class,
+            r#type: _,
         } => resolve_var_dec(name, init, storage_class, map),
 
         AstDeclaration::Function { body: Some(_), .. } => Err(Error::LocalFnDecBody),
@@ -227,6 +222,7 @@ fn resolve_declaration(dec: &mut AstDeclaration, map: &mut VarMap) -> Result<(),
             name,
             params,
             storage_class,
+            r#type: _,
         } => resolve_fn_dec(name, &mut None, params, storage_class, map),
     }
 }
@@ -368,8 +364,8 @@ fn resolve_expression(exp: &mut AstExpression, map: &mut VarMap) -> Result<(), E
             }
             None => Err(Error::UndeclaredVar),
         },
-        AstExpression::Int(_) => Ok(()),
-        AstExpression::Unary(inner) => resolve_factor(&mut inner.exp, map),
+        AstExpression::Const(_) => Ok(()),
+        AstExpression::Unary(inner) => resolve_expression(&mut inner.exp, map),
         AstExpression::FunctionCall { name, args } => {
             if let Some(new_name) = map.get(name) {
                 *name = new_name.name.clone();
@@ -381,44 +377,7 @@ fn resolve_expression(exp: &mut AstExpression, map: &mut VarMap) -> Result<(), E
                 Err(Error::UndeclaredFn)
             }
         }
-    }
-}
-
-fn resolve_factor(factor: &mut AstFactor, map: &mut VarMap) -> Result<(), Error> {
-    match factor {
-        AstFactor::PrefixIncrement(inner)
-        | AstFactor::PrefixDecrement(inner)
-        | AstFactor::PostfixIncrement(inner)
-        | AstFactor::PostfixDecrement(inner) => {
-            resolve_expression(inner, map)?;
-            if inner.lvalue() {
-                Ok(())
-            } else {
-                Err(Error::InvalidLval)
-            }
-        }
-        AstFactor::Var(var) => match map.get(var) {
-            Some(new_name) => {
-                *var = new_name.name.clone();
-                Ok(())
-            }
-            None => Err(Error::UndeclaredVar),
-        },
-
-        AstFactor::Nested(exp) => resolve_expression(exp, map),
-        AstFactor::Int(_) => Ok(()),
-        AstFactor::Unary(AstUnary { exp, op: _ }) => resolve_factor(exp, map),
-        AstFactor::FunctionCall { name, args } => {
-            if let Some(new_name) = map.get(name) {
-                *name = new_name.name.clone();
-                for arg in args {
-                    resolve_expression(arg, map)?;
-                }
-                Ok(())
-            } else {
-                Err(Error::UndeclaredFn)
-            }
-        }
+        AstExpression::Cast { target: _, exp } => resolve_expression(exp, map),
     }
 }
 

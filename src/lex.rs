@@ -55,7 +55,25 @@ impl From<DebugToken> for Token {
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub enum Token {
-    Keyword(Keyword),
+    // Keywords
+    Int,
+    Void,
+    Return,
+    If,
+    Else,
+    Goto,
+    Do,
+    While,
+    For,
+    Break,
+    Continue,
+    Switch,
+    Default,
+    Case,
+    Static,
+    Extern,
+    Long,
+
     Constant(Constant),
     Identifier(Identifier),
     OpenParen,
@@ -289,11 +307,20 @@ fn constant_number(start: AsciiDigit, iter: &mut SliceIter<u8>) -> Result<Consta
     while let Some(constant) = next_if_number(iter) {
         bytes.push(constant);
     }
-    if iter.peek().is_some_and(|byte| !word_character(byte)) {
-        let number = parse_digit(&bytes);
-        Ok(Constant::Integer(number))
-    } else {
-        Err(Error::InvalidConstant)
+
+    match iter.peek() {
+        Some(x) if !word_character(x) => {
+            let long = parse_long(&bytes);
+            Ok(match i32::try_from(long) {
+                Ok(int) => Constant::Integer(int),
+                Err(_) => Constant::Long(long),
+            })
+        }
+        Some(b'l') => {
+            iter.next();
+            Ok(Constant::Long(parse_long(&bytes)))
+        }
+        _ => Err(Error::InvalidConstant),
     }
 }
 
@@ -304,22 +331,23 @@ fn literal(byte: u8, iter: &mut SliceIter<u8>) -> Result<Token, Error> {
     }
     if iter.peek().is_some_and(|byte| !word_character(byte)) {
         Ok(match bytes.as_slice() {
-            b"int" => Keyword::Int.into(),
-            b"return" => Keyword::Return.into(),
-            b"void" => Keyword::Void.into(),
-            b"if" => Keyword::If.into(),
-            b"else" => Keyword::Else.into(),
-            b"goto" => Keyword::Goto.into(),
-            b"do" => Keyword::Do.into(),
-            b"while" => Keyword::While.into(),
-            b"for" => Keyword::For.into(),
-            b"break" => Keyword::Break.into(),
-            b"continue" => Keyword::Continue.into(),
-            b"switch" => Keyword::Switch.into(),
-            b"case" => Keyword::Case.into(),
-            b"default" => Keyword::Default.into(),
-            b"static" => Keyword::Static.into(),
-            b"extern" => Keyword::Extern.into(),
+            b"int" => Token::Int,
+            b"return" => Token::Return.into(),
+            b"void" => Token::Void.into(),
+            b"if" => Token::If.into(),
+            b"else" => Token::Else.into(),
+            b"goto" => Token::Goto.into(),
+            b"do" => Token::Do.into(),
+            b"while" => Token::While.into(),
+            b"for" => Token::For.into(),
+            b"break" => Token::Break.into(),
+            b"continue" => Token::Continue.into(),
+            b"switch" => Token::Switch.into(),
+            b"case" => Token::Case.into(),
+            b"default" => Token::Default.into(),
+            b"static" => Token::Static.into(),
+            b"extern" => Token::Extern.into(),
+            b"long" => Token::Long.into(),
             _ => identifier(bytes.into())?.into(),
         })
     } else {
@@ -373,14 +401,21 @@ enum AsciiDigit {
     Nine = 9,
 }
 
-fn parse_digit(slice: &[AsciiDigit]) -> u64 {
-    let mut cur = 0u64;
-    for (place, digit) in slice.iter().map(|&x| u64::from(x as u8)).rev().enumerate() {
-        cur += 10u64.pow(place as u32) * digit;
+fn parse_digit(slice: &[AsciiDigit]) -> i32 {
+    let mut cur = 0i32;
+    for (place, digit) in slice.iter().map(|&x| i32::from(x as u8)).rev().enumerate() {
+        cur += 10i32.pow(place as u32) * digit;
     }
     cur
 }
 
+fn parse_long(slice: &[AsciiDigit]) -> i64 {
+    let mut cur = 0i64;
+    for (place, digit) in slice.iter().map(|&x| i64::from(x as u8)).rev().enumerate() {
+        cur += 10i64.pow(place as u32) * digit;
+    }
+    cur
+}
 impl Token {
     pub const fn identifier(&self) -> bool {
         matches!(self, Self::Identifier(_))
@@ -389,23 +424,13 @@ impl Token {
         matches!(self, Self::Constant(_))
     }
 
-    pub const fn keyword(&self) -> bool {
-        matches!(self, Self::Keyword(_))
+    const fn is_type(&self) -> bool {
+        matches!(self, Self::Int | Self::Long | Self::Void)
     }
 }
 
 fn next_if_word(iter: &mut SliceIter<u8>) -> Option<u8> {
     iter.next_if(word_character)
-}
-
-impl PartialEq<Token> for Keyword {
-    fn eq(&self, other: &Token) -> bool {
-        if let Token::Keyword(k) = other {
-            k == self
-        } else {
-            false
-        }
-    }
 }
 
 impl PartialEq<Token> for Constant {
@@ -477,12 +502,6 @@ impl From<Identifier> for Token {
     }
 }
 
-impl From<Keyword> for Token {
-    fn from(k: Keyword) -> Self {
-        Self::Keyword(k)
-    }
-}
-
 impl From<Constant> for Token {
     fn from(c: Constant) -> Self {
         Self::Constant(c)
@@ -490,28 +509,9 @@ impl From<Constant> for Token {
 }
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
-pub enum Keyword {
-    Int,
-    Void,
-    Return,
-    If,
-    Else,
-    Goto,
-    Do,
-    While,
-    For,
-    Break,
-    Continue,
-    Switch,
-    Default,
-    Case,
-    Static,
-    Extern,
-}
-
-#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Constant {
-    Integer(u64),
+    Integer(i32),
+    Long(i64),
 }
 
 #[derive(Debug)]

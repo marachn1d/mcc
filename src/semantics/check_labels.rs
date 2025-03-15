@@ -8,14 +8,14 @@ use crate::semantics::Statement;
 use crate::semantics::SymbolTable;
 use std::collections::HashSet;
 
-pub fn check(program: &Program, vars: &SymbolTable) -> Result<(), Error> {
+pub fn check<T>(program: &Program<T>, vars: &SymbolTable) -> Result<(), Error> {
     for r#fn in &program.0 {
         check_dec(r#fn, vars)?
     }
     Ok(())
 }
 
-fn check_dec(dec: &Declaration, vars: &SymbolTable) -> Result<(), Error> {
+fn check_dec<T>(dec: &Declaration<T>, vars: &SymbolTable) -> Result<(), Error> {
     match dec {
         Declaration::Function {
             name,
@@ -27,7 +27,11 @@ fn check_dec(dec: &Declaration, vars: &SymbolTable) -> Result<(), Error> {
     }
 }
 
-fn check_body(block: &[BlockItem], vars: &SymbolTable, fn_name: &Identifier) -> Result<(), Error> {
+fn check_body<T>(
+    block: &[BlockItem<T>],
+    vars: &SymbolTable,
+    fn_name: &Identifier,
+) -> Result<(), Error> {
     let mut labels = HashSet::new();
     for item in block.iter() {
         if let BlockItem::S(statement) = item {
@@ -49,13 +53,13 @@ fn name_clashes(label: &Identifier, vars: &SymbolTable, fn_name: &Identifier) ->
     if label == fn_name {
         false
     } else {
-        !matches!(vars.get(label), None | Some(Attr::StaticInt { .. }))
+        !matches!(vars.get(label), None | Some(Attr::Static { .. }))
     }
 }
 
-fn handle_label(
+fn handle_label<T>(
     label: &Label,
-    body: &Statement,
+    body: &Statement<T>,
     vars: &SymbolTable,
     labels: &mut HashSet<Identifier>,
     fn_name: &Identifier,
@@ -75,8 +79,8 @@ fn handle_label(
     }
 }
 
-fn check_labels(
-    statement: &Statement,
+fn check_labels<T>(
+    statement: &Statement<T>,
     vars: &SymbolTable,
     labels: &mut HashSet<Identifier>,
     fn_name: &Identifier,
@@ -116,7 +120,7 @@ fn check_labels(
     }
 }
 
-fn check_gotos(statement: &Statement, labels: &HashSet<Identifier>) -> Result<(), Error> {
+fn check_gotos<T>(statement: &Statement<T>, labels: &HashSet<Identifier>) -> Result<(), Error> {
     match statement {
         Statement::Goto(goto) => {
             if labels.contains(goto) {

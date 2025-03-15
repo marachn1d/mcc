@@ -1,7 +1,6 @@
 use super::lex::Identifier;
-
-use super::lex::Keyword;
 use super::slice_iter::TokenIter;
+use lex::Constant;
 
 use super::Token;
 use std::fmt::{self, Display, Formatter};
@@ -28,7 +27,10 @@ fn program(tokens: &mut TokenIter) -> Result<Program, Error> {
 pub struct Program(pub Box<[Declaration]>);
 
 fn declaration(tokens: &mut TokenIter) -> Result<Declaration, Error> {
-    let storage_class = specifiers(tokens)?;
+    let SpecifierList {
+        storage_class,
+        r#type,
+    } = specifiers(tokens)?;
 
     let name = tokens.consume_identifier()?;
 
@@ -40,109 +42,221 @@ fn declaration(tokens: &mut TokenIter) -> Result<Declaration, Error> {
                 name,
                 init: Some(exp),
                 storage_class,
+                r#type,
             })
         }
         Token::OpenParen => {
-            fndec_params_and_body(tokens, name, storage_class).map(Declaration::from)
+            let params = param_list(tokens)?;
+
+            let fn_type = FnType {
+                ret: Some(r#type.into()),
+                params: params.iter().map(|p| p.r#type).collect(),
+            };
+
+            let body = if tokens.next_if(|x| x == &Token::Semicolon).is_some() {
+                None
+            } else {
+                Some(block(tokens)?)
+            };
+
+            Ok(Declaration::Function {
+                name,
+                params,
+                body,
+                r#type: fn_type,
+                storage_class,
+            })
         }
         Token::Semicolon => Ok(Declaration::Var {
             name,
             init: None,
             storage_class,
+            r#type,
         }),
         _ => Err(Error::Catchall("expected initializer or semicolon")),
     }
 }
 
-fn specifiers(tokens: &mut TokenIter) -> Result<Option<StorageClass>, Error> {
-    match tokens.as_slice() {
-        [] => expected_eof(),
+// type specifier
 
-        [Token::Keyword(Keyword::Int), Token::Keyword(Keyword::Static), ..]
-        | [Token::Keyword(Keyword::Static), Token::Keyword(Keyword::Int), ..] => {
-            tokens.next();
-            tokens.next();
-            Ok(Some(StorageClass::Static))
-        }
+struct SpecifierList {
+    storage_class: Option<StorageClass>,
+    r#type: VarType,
+}
 
-        [Token::Keyword(Keyword::Int), Token::Keyword(Keyword::Extern), ..]
-        | [Token::Keyword(Keyword::Extern), Token::Keyword(Keyword::Int), ..] => {
-            tokens.next();
-            tokens.next();
-            Ok(Some(StorageClass::Extern))
-        }
+#[derive(Debug, Clone)]
+pub struct SpeclistFsm {
+    storage_class: Option<StorageClass>,
+    int: bool,
+    r#type: Option<VarType>,
+}
 
-        [Token::Keyword(Keyword::Static), Token::Keyword(Keyword::Extern), Token::Keyword(Keyword::Int), ..]
-        | [Token::Keyword(Keyword::Extern), Token::Keyword(Keyword::Static), Token::Keyword(Keyword::Int), ..] => {
-            Err(Error::ConflictingLinkage)
+impl SpeclistFsm {
+    const fn new() -> Self {
+        Self {
+            storage_class: None,
+            r#type: None,
+            int: false,
         }
+    }
 
-        [Token::Keyword(Keyword::Int), ..] => {
-            tokens.next();
-            Ok(None)
+    fn done(self) -> Result<SpecifierList, Error> {
+        if let Some(r#type) = self.r#type {
+            Ok(SpecifierList {
+                storage_class: self.storage_class,
+                r#type,
+            })
+        } else {
+            Err(Error::Catchall("invalid specifier list"))
         }
-        _ => Err(Error::Expected(Keyword::Int.into())),
+    }
+
+    fn type_specifier(self) -> Result<VarType, Error> {
+        match self {
+            Self {
+                storage_class: Some(_),
+                ..
+            } => Err(Error::NoStorageClass),
+            Self {
+                storage_class: None,
+                r#type: None,
+                int: _,
+            } => Err(Error::InvalidSpecifiers),
+            Self {
+                storage_class: None,
+                r#type: Some(typ),
+                int: _,
+            } => Ok(typ),
+        }
+    }
+
+    const fn r#extern(&mut self) -> Result<(), Error> {
+        match self.storage_class {
+            Some(StorageClass::Static) => Err(Error::ConflictingLinkage),
+            Some(StorageClass::Extern) => Err(Error::InvalidSpecifiers),
+            None => {
+                self.storage_class = Some(StorageClass::Extern);
+                Ok(())
+            }
+        }
+    }
+
+    const fn r#static(&mut self) -> Result<(), Error> {
+        match self.storage_class {
+            Some(StorageClass::Static) => Err(Error::InvalidSpecifiers),
+            Some(StorageClass::Extern) => Err(Error::ConflictingLinkage),
+            None => {
+                self.storage_class = Some(StorageClass::Static);
+                Ok(())
+            }
+        }
+    }
+
+    fn long(&mut self) -> Result<(), Error> {
+        eprintln!("got a long, int:{}", self.int);
+        match self.r#type {
+            Some(VarType::Int) => {
+                self.r#type = Some(VarType::Long);
+                self.int = true;
+                Ok(())
+            }
+            Some(VarType::Long) => self.invalid_type(),
+            None => {
+                self.r#type = Some(VarType::Long);
+                Ok(())
+            }
+        }
+    }
+
+    fn int(&mut self) -> Result<(), Error> {
+        match self.r#type {
+            None => {
+                self.r#type = Some(VarType::Int);
+                self.int = true;
+                Ok(())
+            }
+            Some(VarType::Long) if !self.int => Ok(()),
+            Some(VarType::Int | VarType::Long) => self.invalid_type(),
+        }
+    }
+
+    fn invalid_type<T>(&self) -> Result<T, Error> {
+        Err(Error::InvalidType(self.clone()))
     }
 }
 
-fn fndec_params_and_body(
-    tokens: &mut TokenIter,
-    name: Identifier,
-    storage_class: Option<StorageClass>,
-) -> Result<FunctionDeclaration, Error> {
-    let parameters = param_list(tokens)?;
-    Ok(if tokens.next_if(|x| x == &Token::Semicolon).is_some() {
-        FunctionDeclaration {
-            name,
-            params: parameters,
-            body: None,
-            storage_class,
+fn get_specifiers(tokens: &mut TokenIter) -> Result<SpeclistFsm, Error> {
+    let mut builder = SpeclistFsm::new();
+
+    tokens.take_until(|token| {
+        eprintln!("next is {token:?} builder is at {builder:?}");
+        match token {
+            Token::Int => builder.int().map(|_| true),
+            Token::Long => builder.long().map(|_| true),
+            Token::Static => builder.r#static().map(|_| true),
+            Token::Extern => builder.r#extern().map(|_| true),
+            _ => {
+                eprintln!("invalid, so we return false");
+                Ok(false)
+            }
         }
-    } else {
-        let body = Some(block(tokens)?);
-        FunctionDeclaration {
-            name,
-            params: parameters,
-            body,
-            storage_class,
-        }
-    })
+    })?;
+    Ok(builder)
+}
+
+fn specifiers(tokens: &mut TokenIter) -> Result<SpecifierList, Error> {
+    let builder = get_specifiers(tokens)?;
+    builder.done()
+}
+
+fn type_specifier(tokens: &mut TokenIter) -> Result<VarType, Error> {
+    let builder = get_specifiers(tokens)?;
+    builder.type_specifier()
 }
 
 fn param_list(tokens: &mut TokenIter) -> Result<ParamList, Error> {
-    match tokens.peek_any()? {
-        Token::Keyword(Keyword::Void) => {
-            tokens.next();
-
-            tokens.consume(Token::CloseParen)?;
-            Ok(ParamList::Void)
-        }
-        Token::Keyword(Keyword::Int) => {
-            tokens.next();
-            let mut ident = Vec::new();
-            ident.push(tokens.consume_identifier()?);
-            while param_continues(tokens)? {
-                ident.push(tokens.consume_identifier()?);
-            }
-
-            Ok(ParamList::Int(ident.into()))
-        }
-        _ => Err(Error::Catchall("invalid param list")),
+    if tokens.consume(Token::Void).is_ok() {
+        tokens.consume(Token::CloseParen)?;
+        return Ok(Box::new([]));
     }
+
+    let mut params = Vec::new();
+
+    let mut p = param(tokens)?;
+
+    while !p.last {
+        params.push(p);
+        p = param(tokens)?;
+    }
+
+    params.push(p);
+    Ok(params.into())
 }
 
-fn param_continues(tokens: &mut TokenIter) -> Result<bool, Error> {
-    match tokens.peek_any()? {
-        Token::Comma => {
-            tokens.next();
-            tokens.consume(Keyword::Int)?;
-            Ok(true)
-        }
-        Token::CloseParen => {
-            tokens.next();
-            Ok(false)
-        }
-        _ => Err(Error::Catchall("expected ',' or ')'.")),
+#[derive(Debug, Clone)]
+pub struct Parameter {
+    pub r#type: VarType,
+    pub name: Identifier,
+    pub last: bool,
+}
+
+fn param(tokens: &mut TokenIter) -> Result<Parameter, Error> {
+    if let Ok(r#type) = type_specifier(tokens) {
+        let name = tokens.consume_identifier()?;
+        let last = match tokens.peek_any()? {
+            Token::Comma => {
+                tokens.next();
+                Ok(false)
+            }
+            Token::CloseParen => {
+                tokens.next();
+                Ok(true)
+            }
+            _ => Err(Error::Catchall("expected ',' or ')'.")),
+        }?;
+        Ok(Parameter { r#type, name, last })
+    } else {
+        Err(Error::Catchall("expected ',' or ')'."))
     }
 }
 
@@ -161,7 +275,7 @@ fn block(tokens: &mut TokenIter) -> Result<Block, Error> {
 
 fn block_item(tokens: &mut TokenIter) -> Result<Option<BlockItem>, Error> {
     match tokens.peek_any()? {
-        Token::Keyword(Keyword::Int | Keyword::Static | Keyword::Extern) => {
+        Token::Int | Token::Static | Token::Extern | Token::Long => {
             Ok(Some(BlockItem::D(declaration(tokens)?)))
         }
         Token::CloseBrace => Ok(None),
@@ -173,7 +287,7 @@ fn var_declaration(
     tokens: &mut TokenIter,
     storage_class: Option<StorageClass>,
 ) -> Result<VariableDeclaration, Error> {
-    tokens.consume(Keyword::Int)?;
+    let r#type = type_specifier(tokens)?;
     let name = tokens.consume_identifier()?;
     let init = match tokens.consume_any()? {
         Token::Equals => {
@@ -188,38 +302,12 @@ fn var_declaration(
     Ok(VariableDeclaration {
         name,
         init,
+        r#type,
         storage_class,
     })
 }
 
-#[derive(Debug)]
-pub enum ParamList {
-    Void,
-    Int(Box<[Identifier]>),
-}
-
-impl ParamList {
-    pub fn iter(&mut self) -> std::slice::IterMut<Identifier> {
-        match self {
-            Self::Int(inner) => inner.iter_mut(),
-            Self::Void => [].iter_mut(),
-        }
-    }
-
-    pub const fn len(&self) -> usize {
-        match self {
-            Self::Void => 0,
-            Self::Int(inner) => inner.len(),
-        }
-    }
-
-    pub const fn is_empty(&self) -> bool {
-        match self {
-            Self::Void => true,
-            Self::Int(_) => false,
-        }
-    }
-}
+pub type ParamList = Box<[Parameter]>;
 
 pub enum Param {
     Void,
@@ -227,18 +315,40 @@ pub enum Param {
 }
 
 #[derive(Debug)]
-pub struct FunctionDeclaration {
-    pub name: Identifier,
-    pub params: ParamList,
-    pub body: Option<Block>,
-    pub storage_class: Option<StorageClass>,
-}
-
-#[derive(Debug)]
 pub struct VariableDeclaration {
     pub name: Identifier,
     pub init: Option<Expression>,
     pub storage_class: Option<StorageClass>,
+    pub r#type: VarType,
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum VarType {
+    Int,
+    Long,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum Type {
+    Var(VarType),
+    Fn(FnType),
+}
+
+impl VarType {
+    pub const fn common_type(&self, other: &Self) -> Option<Self> {
+        match (self, other) {
+            (Self::Long, Self::Long) | (Self::Long, Self::Int) | (Self::Int, Self::Long) => {
+                Some(Self::Long)
+            }
+            (Self::Int, Self::Int) => Some(Self::Int),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FnType {
+    pub ret: Option<VarType>,
+    pub params: Box<[VarType]>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -256,29 +366,12 @@ impl PartialEq for StorageClass {
     }
 }
 
-impl From<FunctionDeclaration> for Declaration {
-    fn from(
-        FunctionDeclaration {
-            name,
-            body,
-            params,
-            storage_class,
-        }: FunctionDeclaration,
-    ) -> Self {
-        Self::Function {
-            name,
-            body,
-            params,
-            storage_class,
-        }
-    }
-}
 impl From<VariableDeclaration> for Declaration {
     fn from(dec: VariableDeclaration) -> Self {
         Self::Var {
             name: dec.name,
             init: dec.init,
-
+            r#type: dec.r#type,
             storage_class: dec.storage_class,
         }
     }
@@ -298,7 +391,7 @@ impl Display for Function {
 
 fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
     Ok(match tokens.peek_any()? {
-        Token::Keyword(Keyword::Return) => {
+        Token::Return => {
             tokens.next();
             let expression = expression(tokens, None)?;
             tokens.consume(Token::Semicolon)?;
@@ -308,13 +401,13 @@ fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
             tokens.next();
             Statement::Null
         }
-        Token::Keyword(Keyword::If) => {
+        Token::If => {
             tokens.next();
             tokens.consume(Token::OpenParen)?;
             let condition = expression(tokens, None)?;
             tokens.consume(Token::CloseParen)?;
             let stmnt = statement(tokens)?;
-            let r#else = if tokens.consume(Token::Keyword(Keyword::Else)).is_ok() {
+            let r#else = if tokens.consume(Token::Else).is_ok() {
                 Some(Box::new(statement(tokens)?))
             } else {
                 None
@@ -325,7 +418,7 @@ fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
                 r#else,
             }
         }
-        Token::Keyword(Keyword::Switch) => {
+        Token::Switch => {
             tokens.next();
             tokens.consume(Token::OpenParen)?;
             let val = expression(tokens, None)?;
@@ -333,7 +426,7 @@ fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
             let body = Box::new(statement(tokens)?);
             Statement::Switch { val, body }
         }
-        Token::Keyword(Keyword::Goto) => {
+        Token::Goto => {
             tokens.next();
             let identifier = tokens.consume_identifier()?;
             tokens.consume(Token::Semicolon)?;
@@ -349,7 +442,7 @@ fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
             Statement::Label { label, body }
         }
 
-        Token::Keyword(Keyword::Default) => {
+        Token::Default => {
             tokens.next();
             tokens.consume(Token::Colon)?;
             let body = statement(tokens)?.into();
@@ -362,31 +455,29 @@ fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
             let block = block(tokens)?;
             Statement::Compound(block)
         }
-        Token::Keyword(Keyword::Break) => {
+        Token::Break => {
             tokens.next();
             tokens.consume(Token::Semicolon)?;
 
             Statement::Break
         }
-        Token::Keyword(Keyword::Case) => {
+        Token::Case => {
             tokens.next();
-            match tokens.next() {
-                Some(Token::Constant(lex::Constant::Integer(num))) => {
-                    tokens.consume(Token::Colon)?;
-                    let body = statement(tokens)?.into();
-                    let label = Label::Case(Expression::Int(num));
-                    Ok(Statement::Label { label, body })
-                }
-                Some(_) => Err(Error::Catchall("expected integer constant")),
-                None => Err(Error::UnexpectedEof),
-            }?
+            let Token::Constant(con) = tokens.consume_any()? else {
+                return Err(Error::Catchall("expected constant"));
+            };
+
+            tokens.consume(Token::Colon)?;
+            let label = Label::Case(ConstExpr::Literal(con));
+            let body = statement(tokens)?.into();
+            Ok(Statement::Label { label, body })?
         }
-        Token::Keyword(Keyword::Continue) => {
+        Token::Continue => {
             tokens.next();
             tokens.consume(Token::Semicolon)?;
             Statement::Continue
         }
-        Token::Keyword(Keyword::While) => {
+        Token::While => {
             tokens.next();
             tokens.consume(Token::OpenParen)?;
             let condition = expression(tokens, None)?;
@@ -397,15 +488,15 @@ fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
                 body: Box::new(statement(tokens)?),
             }
         }
-        Token::Keyword(Keyword::Do) => {
+        Token::Do => {
             tokens.next();
             let body = Box::new(statement(tokens)?);
-            tokens.consume_arr([Keyword::While.into(), Token::OpenParen])?;
+            tokens.consume_arr([Token::While, Token::OpenParen])?;
             let condition = expression(tokens, None)?;
             tokens.consume_arr([Token::CloseParen, Token::Semicolon])?;
             Statement::DoWhile { body, condition }
         }
-        Token::Keyword(Keyword::For) => {
+        Token::For => {
             tokens.next();
             tokens.consume(Token::OpenParen)?;
             let init = for_init(tokens)?;
@@ -520,9 +611,10 @@ pub enum ForInit {
 #[derive(Debug, Clone)]
 pub enum Label {
     Named(Identifier),
-    Case(Expression),
+    Case(ConstExpr),
     Default,
 }
+
 #[derive(Debug)]
 pub enum Declaration {
     Function {
@@ -530,11 +622,13 @@ pub enum Declaration {
         params: ParamList,
         body: Option<Block>,
         storage_class: Option<StorageClass>,
+        r#type: FnType,
     },
     Var {
         name: Identifier,
         init: Option<Expression>,
         storage_class: Option<StorageClass>,
+        r#type: VarType,
     },
 }
 /*
@@ -647,7 +741,7 @@ fn factor(tokens: &mut TokenIter) -> Result<Factor, Error> {
             let exp = Box::new(factor(tokens)?.into());
             Ok(Factor::PrefixDecrement(exp))
         }
-        Token::Constant(lex::Constant::Integer(c)) => Ok(Factor::Int(c)),
+        Token::Constant(c) => Ok(Factor::Const(c)),
 
         t @ (Token::Minus | Token::Tilde | Token::Not) => {
             let operator = if t == Token::Minus {
@@ -657,16 +751,19 @@ fn factor(tokens: &mut TokenIter) -> Result<Factor, Error> {
             } else {
                 UnaryOperator::Not
             };
-            let factor = Box::new(factor(tokens)?);
-            Ok(Factor::Unary(Unary {
-                exp: factor,
-                op: operator,
-            }))
+            let exp = Box::new(factor(tokens)?.into());
+            Ok(Factor::Unary(Unary { exp, op: operator }))
         }
         Token::OpenParen => {
-            let exp = Box::new(expression(tokens, None)?);
-            tokens.consume(Token::CloseParen)?;
-            Ok(Factor::Nested(exp))
+            if let Some(target) = tokens.consume_type() {
+                tokens.consume(Token::CloseParen)?;
+                let exp = factor(tokens)?.into();
+                Ok(Factor::Cast { target, exp })
+            } else {
+                let exp = Box::new(expression(tokens, None)?);
+                tokens.consume(Token::CloseParen)?;
+                Ok(Factor::Nested(exp))
+            }
         }
         Token::Identifier(ident) => {
             if tokens.peek() == Some(&Token::OpenParen) {
@@ -714,6 +811,10 @@ fn argument_list(tokens: &mut TokenIter) -> Result<Box<[Expression]>, Error> {
 pub enum Expression {
     Assignment(Box<(Self, Self)>),
     Binary(Binary),
+    Cast {
+        target: VarType,
+        exp: Box<Self>,
+    },
 
     //factors
     PostfixIncrement(Box<Self>),
@@ -722,7 +823,7 @@ pub enum Expression {
     PrefixDecrement(Box<Self>),
 
     Var(Identifier),
-    Int(u64),
+    Const(Constant),
     Unary(Unary),
     Nested(Box<Self>),
 
@@ -737,6 +838,27 @@ pub enum Expression {
     },
 }
 
+#[derive(Debug, Copy, Clone)]
+pub enum ConstExpr {
+    Literal(Constant),
+}
+
+impl ConstExpr {
+    pub const fn long(&self) -> i64 {
+        match self {
+            Self::Literal(Constant::Long(l)) => *l,
+            Self::Literal(Constant::Integer(i)) => *i as i64,
+        }
+    }
+
+    pub const fn int(&self) -> i32 {
+        match self {
+            Self::Literal(Constant::Integer(i)) => *i,
+            Self::Literal(Constant::Long(l)) => *l as i32,
+        }
+    }
+}
+
 impl Expression {
     pub const fn lvalue(&self) -> bool {
         match self {
@@ -746,10 +868,10 @@ impl Expression {
         }
     }
 
-    pub const fn number(&self) -> Option<u64> {
+    pub const fn number(&self) -> Option<Constant> {
         match self {
             Self::Nested(e) => e.number(),
-            Self::Int(val) => Some(*val),
+            Self::Const(c) => Some(*c),
             _ => None,
         }
     }
@@ -761,7 +883,7 @@ impl TryFrom<Expression> for Factor {
     fn try_from(expression: Expression) -> Result<Factor, ()> {
         match expression {
             Expression::Var(v) => Ok(Self::Var(v)),
-            Expression::Int(i) => Ok(Self::Int(i)),
+            Expression::Const(i) => Ok(Self::Const(i)),
             Expression::Unary(u) => Ok(Self::Unary(u)),
             Expression::PrefixIncrement(p) => Ok(Self::PrefixIncrement(p)),
             Expression::PrefixDecrement(p) => Ok(Self::PrefixDecrement(p)),
@@ -778,8 +900,16 @@ impl TryFrom<Expression> for Factor {
 impl From<Factor> for Expression {
     fn from(factor: Factor) -> Self {
         match factor {
+            Factor::Cast { target, exp } => {
+                let factor: Factor = *exp;
+                let exp: Expression = factor.into();
+                Self::Cast {
+                    target,
+                    exp: Box::new(exp),
+                }
+            }
             Factor::Var(v) => Self::Var(v),
-            Factor::Int(i) => Self::Int(i),
+            Factor::Const(c) => Self::Const(c),
             Factor::Unary(u) => Self::Unary(u),
             Factor::PrefixIncrement(p) => Self::PrefixIncrement(p),
             Factor::PrefixDecrement(p) => Self::PrefixDecrement(p),
@@ -795,8 +925,12 @@ impl From<Factor> for Expression {
 
 #[derive(Debug, Clone)]
 pub enum Factor {
+    Cast {
+        target: VarType,
+        exp: Box<Self>,
+    },
     Var(Identifier),
-    Int(u64),
+    Const(lex::Constant),
     Unary(Unary),
     PrefixIncrement(Box<Expression>),
     PostfixIncrement(Box<Expression>),
@@ -809,15 +943,9 @@ pub enum Factor {
     },
 }
 
-#[derive(Debug, Eq, PartialEq, Copy, Clone)]
-pub enum Fixness {
-    Prefix,
-    Postfix,
-}
-
 #[derive(Debug, Clone)]
 pub struct Unary {
-    pub exp: Box<Factor>,
+    pub exp: Box<Expression>,
     pub op: UnaryOperator,
 }
 
@@ -939,30 +1067,6 @@ impl Display for Program {
     }
 }
 
-impl Display for FunctionDeclaration {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(
-            f,
-            "Function(\n{}({}){{{:?}}}\n)",
-            self.name, self.params, self.body
-        )
-    }
-}
-
-impl Display for ParamList {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        match self {
-            ParamList::Void => write!(f, "void"),
-            ParamList::Int(identifiers) => {
-                for ident in identifiers {
-                    write!(f, "int {ident}")?
-                }
-                Ok(())
-            }
-        }
-    }
-}
-
 impl Display for Statement {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
@@ -995,24 +1099,9 @@ impl Display for Label {
     }
 }
 
-impl From<Constant> for Factor {
-    fn from(c: Constant) -> Self {
-        Self::Int(c.0)
-    }
-}
-
 impl From<Unary> for Factor {
     fn from(u: Unary) -> Self {
         Self::Unary(u)
-    }
-}
-
-#[derive(Debug)]
-pub struct Constant(pub u64);
-
-impl Display for Constant {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "Constant({})", self.0)
     }
 }
 
@@ -1034,10 +1123,12 @@ pub enum Error {
     ExpectedConstant,
     ExpectedExpression,
     ExpectedAnyKeyword,
-    ExpectedKeyword(Keyword),
     Catchall(&'static str),
     ExtraStuff,
     DoubleDef,
     NoType,
     ConflictingLinkage,
+    InvalidSpecifiers,
+    InvalidType(SpeclistFsm),
+    NoStorageClass,
 }

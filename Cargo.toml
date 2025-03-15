@@ -10,4 +10,10 @@ edition = "2024"
 [profile.release]
 debug = true
 
+[features]
+    default = ["semantics"]
+    codegen = ["semantics"]
+    semantics = ["parse"]
+    parse = ["lex"]
+    lex = []
 

@@ -56,10 +56,18 @@ impl Debug for TokenIter {
         }
     }
 }
-
 use super::parse;
+use parse::VarType;
 
 impl TokenIter {
+    pub fn consume_type(&mut self) -> Option<VarType> {
+        match self.next_if(|x| x == &Token::Int || x == &Token::Long) {
+            Some(Token::Int) => Some(VarType::Int),
+            Some(Token::Long) => Some(VarType::Long),
+            _ => None,
+        }
+    }
+
     pub fn new(tokens: Box<[Token]>) -> Self {
         let tokens: Vec<Token> = tokens.into();
         Self(tokens.into_iter())
@@ -138,6 +146,21 @@ impl TokenIter {
     }
     pub fn token_slice(&self) -> &[Token] {
         self.as_slice()
+    }
+
+    pub fn take_until(
+        &mut self,
+        mut f: impl FnMut(&Token) -> Result<bool, parse::Error>,
+    ) -> Result<(), parse::Error> {
+        let mut next = self.peek_any()?;
+
+        eprintln!("calling f({next:?}");
+        while f(next)? {
+            eprintln!("done, going to next and incrementing");
+            self.next();
+            next = self.peek_any()?;
+        }
+        Ok(())
     }
 }
 

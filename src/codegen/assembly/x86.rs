@@ -163,7 +163,7 @@ impl Display for X86 {
 
 #[derive(Clone, Debug)]
 pub enum Op {
-    Imm(u64),
+    Imm(i32),
     Register(Register),
     Stack(isize),
     Data(Identifier),
@@ -290,7 +290,7 @@ impl Op {
 }
 
 impl PseudoOp {
-    pub const fn imm(value: u64) -> Self {
+    pub const fn imm(value: i32) -> Self {
         Self::Normal(Op::Imm(value))
     }
     pub const fn register(reg: Register) -> Self {
