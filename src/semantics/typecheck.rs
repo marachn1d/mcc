@@ -126,11 +126,14 @@ fn top_level_var(
     if let Some(Attr::Static {
         init: old_init,
         global: old_global,
-        r#type: _,
+        r#type: old_type,
     }) = table_entry
     {
         check_linkage(&mut global, *old_global, &storage_class)?;
         check_initializer(old_init, &mut initial)?;
+        if r#type != *old_type {
+            return Err(Error::ConflictingType);
+        }
     } else if table_entry.is_some() {
         return Err(Error::ConflictingType);
     };
@@ -271,6 +274,17 @@ fn vardec_inner(
         (Some(StorageClass::Extern), None) => {
             match table.entry(name.clone()) {
                 Entry::Occupied(e) => {
+                    match e.get() {
+                        Attr::Fn { .. } => return Err(Error::FnAsVar),
+                        Attr::Static {
+                            r#type: old_type, ..
+                        }
+                        | Attr::Automatic(old_type) => {
+                            if *old_type != r#type {
+                                return Err(Error::ConflictingType);
+                            }
+                        }
+                    }
                     if let Attr::Fn { .. } = e.get() {
                         return Err(Error::FnAsVar);
                     }
@@ -421,7 +435,7 @@ fn typecheck_expression(
                 r#type: if op == UnaryOperator::Not {
                     VarType::Int
                 } else {
-                    exp.r#type.clone()
+                    exp.r#type
                 },
                 exp: Box::new(Expression::Unary {
                     operator: op,
@@ -495,12 +509,12 @@ fn typecheck_expression(
 fn convert_to(exp: &mut TypedExp, ty: &VarType) {
     if &exp.r#type != ty {
         let cast = Expression::Cast {
-            target: ty.clone(),
+            target: *ty,
             exp: exp.clone(),
         }
         .into();
         *exp = TypedExp {
-            r#type: ty.clone(),
+            r#type: *ty,
             exp: cast,
         }
     }
@@ -575,15 +589,22 @@ fn check_entry(
 
     if *defined && has_body {
         Err(Error::DuplicateDefinition)
-    } else if params
-        .iter()
-        .zip(new_params)
-        .all(|(old, new)| *old == new.r#type)
-    {
-        Ok(())
     } else {
-        Err(Error::WrongParams)
+        param_typecheck(new_params, params)
     }
+}
+
+fn param_typecheck(new: &ParamList, old: &[VarType]) -> Result<(), Error> {
+    if new.len() != old.len() {
+        return Err(Error::WrongParams);
+    }
+    let new_iter = new.iter().map(|param| param.r#type);
+    for (new, &old) in new_iter.zip(old) {
+        if new != old {
+            return Err(Error::WrongParams);
+        }
+    }
+    Ok(())
 }
 
 fn function_declaration(
@@ -714,15 +735,22 @@ fn typecheck_statement(
             condition,
             then,
             r#else,
-        } => {
-            typecheck_expression(condition, table)?;
-            typecheck_statement(*then, return_type, table)?;
-            if let Some(r#else) = r#else {
-                typecheck_statement(*r#else, return_type, table)
-            } else {
-                todo!()
-            }
-        }
+        } => typecheck_expression(condition, table).and_then(|condition| {
+            typecheck_statement(*then, return_type, table)
+                .map(Box::new)
+                .and_then(|then| {
+                    r#else
+                        .map(|r#else| {
+                            typecheck_statement(*r#else, return_type, table).map(Box::new)
+                        })
+                        .transpose()
+                        .map(|r#else| Statement::If {
+                            condition,
+                            then,
+                            r#else,
+                        })
+                })
+        }),
         Statement::DoWhile {
             body,
             condition,
@@ -806,9 +834,10 @@ fn typecheck_statement(
             typecheck_expression(val, table)?;
             typecheck_statement(*body, return_type, table)
         }
-        Statement::Null | Statement::Goto(_) | Statement::Break(_) | Statement::Continue(_) => {
-            todo!()
-        }
+        Statement::Null => Ok(Statement::Null),
+        Statement::Goto(g) => Ok(Statement::Goto(g)),
+        Statement::Break(l) => Ok(Statement::Break(l)),
+        Statement::Continue(c) => Ok(Statement::Continue(c)),
     }
 }
 

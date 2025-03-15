@@ -2,7 +2,6 @@ use std::fs;
 use std::io;
 use std::path::PathBuf;
 
-pub(crate) mod ast;
 pub mod lex;
 pub use lex::DebugToken;
 pub use lex::Token;

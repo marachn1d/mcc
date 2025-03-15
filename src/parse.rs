@@ -153,7 +153,6 @@ impl SpeclistFsm {
     }
 
     fn long(&mut self) -> Result<(), Error> {
-        eprintln!("got a long, int:{}", self.int);
         match self.r#type {
             Some(VarType::Int) => {
                 self.r#type = Some(VarType::Long);
@@ -188,18 +187,12 @@ impl SpeclistFsm {
 fn get_specifiers(tokens: &mut TokenIter) -> Result<SpeclistFsm, Error> {
     let mut builder = SpeclistFsm::new();
 
-    tokens.take_until(|token| {
-        eprintln!("next is {token:?} builder is at {builder:?}");
-        match token {
-            Token::Int => builder.int().map(|_| true),
-            Token::Long => builder.long().map(|_| true),
-            Token::Static => builder.r#static().map(|_| true),
-            Token::Extern => builder.r#extern().map(|_| true),
-            _ => {
-                eprintln!("invalid, so we return false");
-                Ok(false)
-            }
-        }
+    tokens.take_until(|token| match token {
+        Token::Int => builder.int().map(|_| true),
+        Token::Long => builder.long().map(|_| true),
+        Token::Static => builder.r#static().map(|_| true),
+        Token::Extern => builder.r#extern().map(|_| true),
+        _ => Ok(false),
     })?;
     Ok(builder)
 }
