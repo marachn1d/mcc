@@ -252,7 +252,10 @@ fn label_statement(
             })
         }
 
-        Stmt::Switch { val, body } => {
+        Stmt::Switch {
+            val: parse::ConstExpr::Literal(val),
+            body,
+        } => {
             let label = new_label();
             let prev_switch = cur.switch.replace(SwitchState::new(label));
             let body = label_statement(*body, cur)?.into();
@@ -269,7 +272,7 @@ fn label_statement(
             // make sure the cases are unique, hmm.
             //
             Ok(Statement::Switch {
-                val,
+                val: super::AstExpression::Const(val),
                 body,
                 cases: switch_info.cases.into(),
                 default: switch_info.default,

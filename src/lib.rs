@@ -60,10 +60,10 @@ fn parse(tokens: Box<[DebugToken]>, stage: Option<CompileStage>) -> Result<Box<[
 
 #[cfg(feature = "semantics")]
 fn semantics(program: parse::Program, stage: Option<CompileStage>) -> Result<Box<[u8]>, Error> {
-    let (program, symbol_table) = semantics::check(program)?;
+    let (program, mut symbol_table) = semantics::check(program)?;
     #[cfg(feature = "codegen")]
     {
-        Ok(codegen(program, stage, symbol_table))
+        Ok(codegen(program, stage, &mut symbol_table))
     }
 
     #[cfg(not(feature = "codegen"))]
@@ -72,11 +72,11 @@ fn semantics(program: parse::Program, stage: Option<CompileStage>) -> Result<Box
 
 #[cfg(feature = "codegen")]
 fn codegen(
-    program: semantics::Program,
+    program: semantics::TypedProgram,
     stage: Option<CompileStage>,
-    table: semantics::SymbolTable,
+    table: &mut semantics::SymbolTable,
 ) -> Box<[u8]> {
-    codegen::generate(program, stage != Some(CompileStage::Tacky), &table)
+    codegen::generate(program, stage != Some(CompileStage::Tacky), table)
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]

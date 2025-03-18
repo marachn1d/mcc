@@ -514,6 +514,22 @@ pub enum Constant {
     Long(i64),
 }
 
+impl Constant {
+    pub fn int(&self) -> i32 {
+        match self {
+            Self::Integer(i) => *i,
+            Self::Long(l) => *l as i32,
+        }
+    }
+
+    pub fn long(&self) -> i64 {
+        match self {
+            Self::Integer(i) => *i as i64,
+            Self::Long(l) => *l,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum Error {
     InvalidConstant,

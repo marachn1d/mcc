@@ -336,6 +336,13 @@ impl VarType {
             (Self::Int, Self::Int) => Some(Self::Int),
         }
     }
+
+    pub const fn alignment(&self) -> u32 {
+        match self {
+            Self::Int => 4,
+            Self::Long => 8,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -414,10 +421,15 @@ fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
         Token::Switch => {
             tokens.next();
             tokens.consume(Token::OpenParen)?;
-            let val = expression(tokens, None)?;
+            let Expression::Const(c) = expression(tokens, None)? else {
+                todo!()
+            };
             tokens.consume(Token::CloseParen)?;
             let body = Box::new(statement(tokens)?);
-            Statement::Switch { val, body }
+            Statement::Switch {
+                val: ConstExpr::Literal(c),
+                body,
+            }
         }
         Token::Goto => {
             tokens.next();
@@ -590,7 +602,7 @@ pub enum Statement {
     Goto(Identifier),
     Null,
     Switch {
-        val: Expression,
+        val: ConstExpr,
         body: Box<Self>,
     },
 }
@@ -868,7 +880,18 @@ impl Expression {
             _ => None,
         }
     }
+
+    pub const fn static_init(&self) -> Option<StaticInit> {
+        match self {
+            Self::Nested(e) => e.static_init(),
+            Self::Const(Constant::Long(c)) => Some(StaticInit::Long(*c)),
+            Self::Const(Constant::Integer(c)) => Some(StaticInit::Int(*c)),
+            _ => None,
+        }
+    }
 }
+
+use crate::semantics::typecheck::StaticInit;
 
 impl TryFrom<Expression> for Factor {
     type Error = ();

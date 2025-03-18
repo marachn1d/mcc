@@ -7,37 +7,49 @@ use std::fmt::{self, Display, Formatter};
 
 pub type Pseudo = BaseX86<PseudoOp>;
 pub type X86 = BaseX86<Op>;
-
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum AsmType {
+    Longword,
+    Quadword,
+}
 impl InstructionSet for X86 {}
 impl InstructionSet for Pseudo {}
 
 #[derive(Clone, Debug)]
 pub enum BaseX86<T: Operand> {
     Mov {
+        ty: AsmType,
+        src: T,
+        dst: T,
+    },
+    Movsx {
+        ty: AsmType,
         src: T,
         dst: T,
     },
     Unary {
         operator: Unary,
         operand: T,
+        ty: AsmType,
     },
     Binary {
         operator: Binary,
         op: T,
         dst_op: T,
+        ty: AsmType,
     },
-    AllocateStack(usize),
-    DeallocateStack(usize),
     Push(T),
     Call(Identifier),
     Ret,
     Idiv {
         divisor: T,
+        ty: AsmType,
     },
-    Cdq,
+    Cdq(AsmType),
     Cmp {
         left: T,
         right: T,
+        ty: AsmType,
     },
     Jmp(Identifier),
     JmpCC {
@@ -78,72 +90,139 @@ impl Display for CondCode {
     }
 }
 
+impl BaseX86<PseudoOp> {
+    pub const fn allocate_stack(n: i64) -> Self {
+        Self::Binary {
+            operator: Binary::Sub,
+            op: Op::Imm(n).pseudo(),
+            dst_op: Op::Register(Register::Sp).pseudo(),
+            ty: AsmType::Quadword,
+        }
+    }
+
+    pub const fn deallocate_stack(n: i64) -> Self {
+        Self::Binary {
+            operator: Binary::Add,
+            op: Op::Imm(n).pseudo(),
+            dst_op: Op::Register(Register::Sp).pseudo(),
+            ty: AsmType::Quadword,
+        }
+    }
+}
+
+impl BaseX86<Op> {
+    pub const fn allocate_stack(n: i64) -> Self {
+        Self::Binary {
+            operator: Binary::Sub,
+            op: Op::Imm(n),
+            dst_op: Op::Register(Register::Sp),
+            ty: AsmType::Quadword,
+        }
+    }
+
+    pub const fn deallocate_stack(n: i64) -> Self {
+        Self::Binary {
+            operator: Binary::Add,
+            op: Op::Imm(n),
+            dst_op: Op::Register(Register::Sp),
+            ty: AsmType::Quadword,
+        }
+    }
+}
+
 impl<T: Operand> BaseX86<T> {
-    pub const fn mov(src: T, dst: T) -> Self {
-        Self::Mov { dst, src }
+    pub const fn mov(src: T, dst: T, ty: AsmType) -> Self {
+        Self::Mov { dst, src, ty }
     }
 
     #[allow(dead_code)]
-    pub const fn unary(operator: Unary, operand: T) -> Self {
-        Self::Unary { operator, operand }
+    pub const fn unary(operator: Unary, operand: T, ty: AsmType) -> Self {
+        Self::Unary {
+            operator,
+            operand,
+            ty,
+        }
     }
 
-    pub const fn binary(operator: Binary, op: T, dst_op: T) -> Self {
+    pub const fn binary(operator: Binary, op: T, dst_op: T, ty: AsmType) -> Self {
         Self::Binary {
             operator,
             op,
             dst_op,
+            ty,
         }
     }
 
-    pub const fn idiv(divisor: T) -> Self {
-        Self::Idiv { divisor }
+    pub const fn idiv(divisor: T, ty: AsmType) -> Self {
+        Self::Idiv { divisor, ty }
     }
 
-    pub const fn cmp(left: T, right: T) -> Self {
-        Self::Cmp { left, right }
+    pub const fn cmp(left: T, right: T, ty: AsmType) -> Self {
+        Self::Cmp { left, right, ty }
+    }
+
+    pub const fn movsx(src: T, dst: T) -> Self {
+        Self::Mov {
+            ty: AsmType::Quadword,
+            src,
+            dst,
+        }
     }
 }
 
 pub trait Operand {}
 
+impl Display for AsmType {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        f.write_str(match self {
+            Self::Longword => "l",
+            Self::Quadword => "q",
+        })
+    }
+}
+
 impl Display for X86 {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
             Self::Call(fun) => write!(f, "call _{fun}"),
-            Self::DeallocateStack(size) => write!(f, "addq ${size}, %rsp"),
 
             Self::Push(Op::Register(r)) => write!(f, "pushq {}", r.eight_byte()),
             Self::Push(op) => write!(f, "pushq {op}"),
 
-            Self::Mov { src, dst } => write!(f, "movl  {src}, {dst}"),
+            Self::Mov { src, dst, ty } => write!(f, "mov{ty}  {src}, {dst}"),
             Self::Ret => write!(f, "movq %rbp, %rsp\n\tpopq %rbp\n\tret"),
-            Self::Unary { operator, operand } => write!(f, "{operator} {operand}"),
-            Self::AllocateStack(amnt) => {
-                write!(f, "subq ${amnt}, %rsp")
-            }
+            Self::Unary {
+                operator,
+                operand,
+                ty,
+            } => write!(f, "{operator}{ty} {operand}"),
             Self::Binary {
                 operator: operator @ (Binary::ShiftLeft | Binary::ShiftRight),
                 op: Op::Register(r),
                 dst_op,
+                ty,
             } => {
-                write!(f, "{operator} {reg}, {dst_op}", reg = r.one_byte())
+                write!(f, "{operator}{ty} {reg}, {dst_op}", reg = r.one_byte())
             }
             Self::Binary {
                 operator,
                 op,
                 dst_op,
+                ty,
             } => {
-                write!(f, "{operator} {op}, {dst_op}")
+                write!(f, "{operator}{ty} {op}, {dst_op}")
             }
-            Self::Idiv { divisor } => {
-                write!(f, "idivl {divisor}")
+            Self::Idiv { divisor, ty } => {
+                write!(f, "idiv{ty} {divisor}")
             }
-            Self::Cdq => {
+            Self::Cdq(AsmType::Longword) => {
                 write!(f, "cdq")
             }
-            Self::Cmp { left, right } => {
-                write!(f, "cmpl {left}, {right}")
+            Self::Cdq(AsmType::Quadword) => {
+                write!(f, "cdo")
+            }
+            Self::Cmp { left, right, ty } => {
+                write!(f, "cmp{ty} {left}, {right}")
             }
             Self::Jmp(label) => {
                 write!(f, "jmp L{label}")
@@ -157,13 +236,22 @@ impl Display for X86 {
             Self::Label(label) => {
                 write!(f, "L{label}:")
             }
+            Self::Movsx { src, dst, ty: _ } => {
+                write!(f, "movslq {src}, {dst}")
+            }
         }
+    }
+}
+
+impl Op {
+    pub const fn pseudo(self) -> PseudoOp {
+        PseudoOp::Normal(self)
     }
 }
 
 #[derive(Clone, Debug)]
 pub enum Op {
-    Imm(i32),
+    Imm(i64),
     Register(Register),
     Stack(isize),
     Data(Identifier),
@@ -202,8 +290,8 @@ impl Display for Unary {
             f,
             "{}",
             (match self {
-                Self::Not => "notl",
-                Self::Neg => "negl",
+                Self::Not => "not",
+                Self::Neg => "neg",
             })
         )
     }
@@ -212,14 +300,14 @@ impl Display for Unary {
 impl Display for Binary {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         f.write_str(match self {
-            Self::Add => "addl",
-            Self::Sub => "subl",
-            Self::Mult => "imull",
-            Self::And => "andl",
-            Self::Or => "orl",
-            Self::Xor => "xorl",
-            Self::ShiftLeft => "sall",
-            Self::ShiftRight => "sarl",
+            Self::Add => "add",
+            Self::Sub => "sub",
+            Self::Mult => "imul",
+            Self::And => "and",
+            Self::Or => "or",
+            Self::Xor => "xor",
+            Self::ShiftLeft => "sal",
+            Self::ShiftRight => "sar",
         })
     }
 }
@@ -250,11 +338,11 @@ pub enum PseudoOp {
     Normal(Op),
     PseudoRegister(Identifier),
 }
-
 impl From<Value> for PseudoOp {
     fn from(val: Value) -> Self {
         match val {
-            Value::Constant(c) => Self::imm(c),
+            Value::Constant(c) => Self::imm(c.long()),
+
             Value::Var(v) => Self::PseudoRegister(v),
         }
     }
@@ -290,7 +378,7 @@ impl Op {
 }
 
 impl PseudoOp {
-    pub const fn imm(value: i32) -> Self {
+    pub const fn imm(value: i64) -> Self {
         Self::Normal(Op::Imm(value))
     }
     pub const fn register(reg: Register) -> Self {

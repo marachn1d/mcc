@@ -1,6 +1,6 @@
 mod check_labels;
 mod resolve;
-mod typecheck;
+pub mod typecheck;
 use crate::lex::Identifier;
 use crate::parse;
 use crate::parse::Expression as AstExpression;
@@ -12,6 +12,7 @@ use parse::FnType;
 use parse::VarType;
 use parse::VariableDeclaration;
 pub use typecheck::Attr;
+pub use typecheck::StaticInit;
 pub use typecheck::SymbolTable;
 mod resolve_loops;
 pub use resolve::resolve;
@@ -89,8 +90,8 @@ pub type TypedProgram = Program<TypedExp>;
 
 #[derive(Debug, Clone)]
 pub struct TypedExp {
-    r#type: VarType,
-    exp: Box<Expression>,
+    pub r#type: VarType,
+    pub exp: Box<Expression>,
 }
 
 #[derive(Debug, Clone)]

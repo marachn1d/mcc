@@ -11,7 +11,7 @@ edition = "2024"
 debug = true
 
 [features]
-    default = ["semantics"]
+    default = ["codegen"]
     codegen = ["semantics"]
     semantics = ["parse"]
     parse = ["lex"]

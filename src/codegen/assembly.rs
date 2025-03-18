@@ -1,14 +1,55 @@
 pub mod tacky;
 pub mod x86;
 use super::Identifier;
+pub use crate::parse::VarType;
+use crate::semantics::Attr;
+pub use crate::semantics::StaticInit;
+use std::collections::HashMap;
 use std::io::Write;
 pub use tacky::Instruction as TackyInstruction;
+use x86::AsmType;
 pub use x86::Binary;
 pub use x86::CondCode;
 pub use x86::Op;
 pub use x86::Pseudo;
 pub use x86::PseudoOp;
 pub use x86::X86;
+pub type SymbolTable = HashMap<Identifier, BackendSymbol>;
+
+pub fn update_table(mut table: crate::semantics::SymbolTable) -> SymbolTable {
+    let mut tbl = SymbolTable::new();
+    for (key, val) in table.drain() {
+        tbl.insert(key, BackendSymbol::from(val));
+    }
+    tbl
+}
+
+const fn asm_type(ty: VarType) -> AsmType {
+    match ty {
+        VarType::Int => AsmType::Longword,
+        VarType::Long => AsmType::Quadword,
+    }
+}
+
+impl From<Attr> for BackendSymbol {
+    fn from(attr: Attr) -> Self {
+        match attr {
+            Attr::Fn { defined, .. } => Self::Fn { defined },
+            Attr::Static { r#type: ty, .. } | Attr::Automatic(ty) => {
+                let is_static = matches!(attr, Attr::Static { .. });
+                Self::Obj {
+                    ty: asm_type(ty),
+                    is_static,
+                }
+            }
+        }
+    }
+}
+
+pub enum BackendSymbol {
+    Obj { ty: AsmType, is_static: bool },
+    Fn { defined: bool },
+}
 
 #[derive(Debug)]
 pub struct Program<T: InstructionSet>(pub Box<[TopLevel<T>]>);
@@ -40,7 +81,8 @@ impl<T: InstructionSet> TopLevel<T> {
 pub struct StaticVar {
     pub name: Identifier,
     pub global: bool,
-    pub init: i32,
+    pub alignment: u32,
+    pub init: StaticInit,
 }
 
 pub trait InstructionSet {}
@@ -64,6 +106,7 @@ pub enum Register {
     R9,
     R10,
     R11,
+    Sp,
 }
 
 pub fn emit(program: &Program<X86>) -> Box<[u8]> {
@@ -94,19 +137,22 @@ pub fn emit(program: &Program<X86>) -> Box<[u8]> {
                 name,
                 global: _,
                 init,
+                alignment,
             }) => {
-                bytes.extend_from_slice(if *init == 0 {
-                    b"\t.bss\n"
-                } else {
-                    b"\t.data\n"
-                });
-                bytes.extend_from_slice(b"\t.balign 4\n");
-                let _ = writeln!(bytes, "_{name}:");
-                if *init == 0 {
-                    bytes.extend_from_slice(b"\t .zero 4\n");
-                } else {
-                    let _ = writeln!(bytes, "\t.long {init}");
-                }
+                let init_is_zero = matches!(*init, StaticInit::Long(0) | StaticInit::Int(0));
+
+                bytes.extend_from_slice(
+                    if init_is_zero{
+                        b"\t.bss\n"
+                    } else {
+                        b"\t.data\n"
+                    },
+                );
+                let _ = writeln!(bytes, "\t.balign {}\n", alignment)
+
+                let _ = writeln!(bytes, "_{name}:\n \t {init}");
+
+
             }
         }
     }

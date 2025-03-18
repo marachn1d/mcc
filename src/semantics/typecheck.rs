@@ -53,22 +53,49 @@ use crate::lex::Constant;
 #[derive(Debug, Copy, Clone)]
 pub enum InitialVal {
     Tentative,
-    Initial(Constant),
+    Initial(StaticInit),
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum StaticInit {
+    Int(i32),
+    Long(i64),
+}
+
+impl std::fmt::Display for StaticInit {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::Int(0) => f.write_str(".zero 4"),
+            Self::Long(0) => f.write_str(".zero 8"),
+            Self::Int(i) => write!(f, "long {i}"),
+            Self::Long(i) => write!(f, "quad {i}"),
+        }
+    }
+}
+
+impl From<Constant> for StaticInit {
+    fn from(c: Constant) -> Self {
+        match c {
+            Constant::Integer(i) => Self::Int(i),
+
+            Constant::Long(i) => Self::Long(i),
+        }
+    }
 }
 
 impl InitialVal {
     pub fn as_long(&self) -> i64 {
         match self {
-            Self::Initial(Constant::Long(i)) => *i,
-            Self::Initial(Constant::Integer(i)) => (*i).into(),
+            Self::Initial(StaticInit::Long(i)) => *i,
+            Self::Initial(StaticInit::Int(i)) => (*i).into(),
             Self::Tentative => 0,
         }
     }
 
     pub const fn as_int(&self) -> i32 {
         match self {
-            Self::Initial(Constant::Integer(i)) => *i,
-            Self::Initial(Constant::Long(i)) => *i as i32,
+            Self::Initial(StaticInit::Int(i)) => *i,
+            Self::Initial(StaticInit::Long(i)) => *i as i32,
             Self::Tentative => 0,
         }
     }
@@ -116,9 +143,13 @@ fn top_level_var(
     r#type: VarType,
     table: &mut SymbolTable,
 ) -> Result<Declaration<TypedExp>, Error> {
-    let mut initial = tlv_initial(&init, &storage_class)?;
+    let mut initial = if storage_class == Some(StorageClass::Extern) {
+        extern_initializer(&init)?
+    } else {
+        Some(top_level_initializer(init.as_ref())?)
+    };
 
-    // if we're not static, then we're global, if we are static, then we're not global?
+    // we're global unless static
     let mut global = storage_class != Some(StorageClass::Static);
 
     let table_entry = table.get(&name);
@@ -130,7 +161,7 @@ fn top_level_var(
     }) = table_entry
     {
         check_linkage(&mut global, *old_global, &storage_class)?;
-        check_initializer(old_init, &mut initial)?;
+        check_initializer_conflict(old_init, &mut initial)?;
         if r#type != *old_type {
             return Err(Error::ConflictingType);
         }
@@ -161,6 +192,26 @@ fn top_level_var(
     })
 }
 
+fn extern_initializer(init: &Option<AstExpression>) -> Result<Option<InitialVal>, Error> {
+    init.as_ref()
+        .map(|expr| {
+            expr.static_init()
+                .map(InitialVal::Initial)
+                .ok_or(Error::NotConstInitialized)
+        })
+        .transpose()
+}
+
+fn top_level_initializer(init: Option<&AstExpression>) -> Result<InitialVal, Error> {
+    if let Some(init) = init {
+        init.static_init()
+            .map(InitialVal::Initial)
+            .ok_or(Error::NotConstInitialized)
+    } else {
+        Ok(InitialVal::Tentative)
+    }
+}
+
 fn check_linkage(
     global: &mut bool,
     old_global: bool,
@@ -177,7 +228,10 @@ fn check_linkage(
     }
 }
 
-fn check_initializer(old: &Option<InitialVal>, new: &mut Option<InitialVal>) -> Result<(), Error> {
+fn check_initializer_conflict(
+    old: &Option<InitialVal>,
+    new: &mut Option<InitialVal>,
+) -> Result<(), Error> {
     match (&new, old) {
         // if they're both declared something's wrong, even if it's the same definition
         (Some(InitialVal::Initial(_)), Some(InitialVal::Initial(_))) => {
@@ -195,19 +249,6 @@ fn check_initializer(old: &Option<InitialVal>, new: &mut Option<InitialVal>) -> 
         }
         // otherwise it's none, so we leave it as none
         (None, None) => Ok(()),
-    }
-}
-
-fn tlv_initial(
-    init: &Option<AstExpression>,
-    sc: &Option<StorageClass>,
-) -> Result<Option<InitialVal>, Error> {
-    match (init, sc) {
-        (Some(AstExpression::Const(c)), _) => Ok(Some(InitialVal::Initial(*c))),
-        (None, Some(StorageClass::Extern)) => Ok(None),
-        (None, Some(StorageClass::Static)) => Ok(Some(InitialVal::Tentative)),
-        (None, None) => Ok(Some(InitialVal::Tentative)),
-        (_, _) => Err(Error::NotConstInitialized),
     }
 }
 
@@ -303,7 +344,7 @@ fn vardec_inner(
             table.insert(
                 name.clone(),
                 Attr::Static {
-                    init: Some(InitialVal::Initial(*i)),
+                    init: Some(InitialVal::Initial((*i).into())),
                     global: false,
                     r#type,
                 },
@@ -318,7 +359,7 @@ fn vardec_inner(
             table.insert(
                 name.clone(),
                 Attr::Static {
-                    init: Some(InitialVal::Initial(Constant::Long(0))),
+                    init: Some(InitialVal::Initial(StaticInit::Long(0))),
                     global: false,
                     r#type,
                 },

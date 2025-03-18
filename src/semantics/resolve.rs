@@ -280,8 +280,8 @@ fn resolve_statement(statement: &mut AstStatement, map: &mut VarMap) -> Result<(
             resolve_statement(body, &mut new_map)
         }
 
-        AstStatement::Switch { val, body } => {
-            resolve_expression(val, map)?;
+        AstStatement::Switch { val: _, body } => {
+            //resolve_expression(val, map)?;
             resolve_statement(body, map)
         }
 
