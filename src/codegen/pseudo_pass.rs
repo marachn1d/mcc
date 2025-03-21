@@ -57,7 +57,7 @@ const fn get_type(ty: &VarType) -> AsmType {
 }
 
 fn var_type(var: &Identifier, table: &SymbolTable) -> AsmType {
-    let Some(Attr::Automatic(typ)) = table.get(var) else {
+    let Some(Attr::Automatic(typ) | Attr::Static { r#type: typ, .. }) = table.get(var) else {
         panic!(
             "unexpected symbol result: {:?} (expected automatic)",
             table.get(var)

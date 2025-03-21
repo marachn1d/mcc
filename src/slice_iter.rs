@@ -154,9 +154,7 @@ impl TokenIter {
     ) -> Result<(), parse::Error> {
         let mut next = self.peek_any()?;
 
-        eprintln!("calling f({next:?}");
         while f(next)? {
-            eprintln!("done, going to next and incrementing");
             self.next();
             next = self.peek_any()?;
         }

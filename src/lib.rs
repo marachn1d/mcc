@@ -1,3 +1,5 @@
+pub mod ast;
+
 use std::fs;
 use std::io;
 use std::path::PathBuf;
@@ -60,10 +62,10 @@ fn parse(tokens: Box<[DebugToken]>, stage: Option<CompileStage>) -> Result<Box<[
 
 #[cfg(feature = "semantics")]
 fn semantics(program: parse::Program, stage: Option<CompileStage>) -> Result<Box<[u8]>, Error> {
-    let (program, mut symbol_table) = semantics::check(program)?;
+    let (program, symbol_table) = semantics::check(program)?;
     #[cfg(feature = "codegen")]
     {
-        Ok(codegen(program, stage, &mut symbol_table))
+        Ok(codegen(program, stage, symbol_table))
     }
 
     #[cfg(not(feature = "codegen"))]
@@ -74,7 +76,7 @@ fn semantics(program: parse::Program, stage: Option<CompileStage>) -> Result<Box
 fn codegen(
     program: semantics::TypedProgram,
     stage: Option<CompileStage>,
-    table: &mut semantics::SymbolTable,
+    table: semantics::SymbolTable,
 ) -> Box<[u8]> {
     codegen::generate(program, stage != Some(CompileStage::Tacky), table)
 }

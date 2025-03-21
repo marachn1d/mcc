@@ -189,20 +189,27 @@ impl Display for X86 {
             Self::Push(Op::Register(r)) => write!(f, "pushq {}", r.eight_byte()),
             Self::Push(op) => write!(f, "pushq {op}"),
 
-            Self::Mov { src, dst, ty } => write!(f, "mov{ty}  {src}, {dst}"),
+            Self::Mov { src, dst, ty } => {
+                write!(f, "mov{ty}  {}, {}", src.sized_fmt(*ty), dst.sized_fmt(*ty))
+            }
             Self::Ret => write!(f, "movq %rbp, %rsp\n\tpopq %rbp\n\tret"),
             Self::Unary {
                 operator,
                 operand,
                 ty,
-            } => write!(f, "{operator}{ty} {operand}"),
+            } => write!(f, "{operator}{ty} {}", operand.sized_fmt(*ty)),
             Self::Binary {
                 operator: operator @ (Binary::ShiftLeft | Binary::ShiftRight),
                 op: Op::Register(r),
                 dst_op,
                 ty,
             } => {
-                write!(f, "{operator}{ty} {reg}, {dst_op}", reg = r.one_byte())
+                write!(
+                    f,
+                    "{operator}{ty} {reg}, {}",
+                    dst_op.sized_fmt(*ty),
+                    reg = r.one_byte(),
+                )
             }
             Self::Binary {
                 operator,
@@ -210,10 +217,15 @@ impl Display for X86 {
                 dst_op,
                 ty,
             } => {
-                write!(f, "{operator}{ty} {op}, {dst_op}")
+                write!(
+                    f,
+                    "{operator}{ty} {}, {}",
+                    op.sized_fmt(*ty),
+                    dst_op.sized_fmt(*ty)
+                )
             }
             Self::Idiv { divisor, ty } => {
-                write!(f, "idiv{ty} {divisor}")
+                write!(f, "idiv{ty} {}", divisor.sized_fmt(*ty))
             }
             Self::Cdq(AsmType::Longword) => {
                 write!(f, "cdq")
@@ -222,7 +234,12 @@ impl Display for X86 {
                 write!(f, "cdo")
             }
             Self::Cmp { left, right, ty } => {
-                write!(f, "cmp{ty} {left}, {right}")
+                write!(
+                    f,
+                    "cmp{ty} {}, {}",
+                    left.sized_fmt(*ty),
+                    right.sized_fmt(*ty)
+                )
             }
             Self::Jmp(label) => {
                 write!(f, "jmp L{label}")
@@ -236,8 +253,8 @@ impl Display for X86 {
             Self::Label(label) => {
                 write!(f, "L{label}:")
             }
-            Self::Movsx { src, dst, ty: _ } => {
-                write!(f, "movslq {src}, {dst}")
+            Self::Movsx { src, dst, ty } => {
+                write!(f, "movslq {}, {}", src.sized_fmt(*ty), dst.sized_fmt(*ty))
             }
         }
     }
@@ -329,6 +346,19 @@ impl Display for Op {
             Self::Register(r) => write!(f, "{}", r.extended()),
             Self::Stack(n) => write!(f, "{n}(%rbp)"),
             Self::Data(name) => write!(f, "_{name}(%rip)"),
+        }
+    }
+}
+
+impl Op {
+    fn sized_fmt(&self, size: AsmType) -> String {
+        if let (Self::Register(r)) = self {
+            match size {
+                AsmType::Longword => r.extended().into(),
+                AsmType::Quadword => r.eight_byte().into(),
+            }
+        } else {
+            format!("{self}")
         }
     }
 }

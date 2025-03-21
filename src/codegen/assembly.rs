@@ -141,18 +141,14 @@ pub fn emit(program: &Program<X86>) -> Box<[u8]> {
             }) => {
                 let init_is_zero = matches!(*init, StaticInit::Long(0) | StaticInit::Int(0));
 
-                bytes.extend_from_slice(
-                    if init_is_zero{
-                        b"\t.bss\n"
-                    } else {
-                        b"\t.data\n"
-                    },
-                );
-                let _ = writeln!(bytes, "\t.balign {}\n", alignment)
+                bytes.extend_from_slice(if init_is_zero {
+                    b"\t.bss\n"
+                } else {
+                    b"\t.data\n"
+                });
+                let _ = writeln!(bytes, "\t.balign {}\n", alignment);
 
                 let _ = writeln!(bytes, "_{name}:\n \t {init}");
-
-
             }
         }
     }
@@ -208,6 +204,7 @@ impl Register {
             Register::R9 => "%r9d",
             Register::R10 => "%r10d",
             Register::R11 => "%r11d",
+            Register::Sp => "%esp",
         }
     }
 
@@ -222,6 +219,7 @@ impl Register {
             Register::R9 => "%r9",
             Register::R10 => "%r10",
             Register::R11 => "%r11",
+            Register::Sp => "%rsp",
         }
     }
 
@@ -236,6 +234,7 @@ impl Register {
             Register::R9 => "%r9b",
             Register::R10 => "%r10b",
             Register::R11 => "%r11b",
+            Register::Sp => "%spl",
         }
     }
 }

@@ -49,7 +49,7 @@ fn declaration(tokens: &mut TokenIter) -> Result<Declaration, Error> {
             let params = param_list(tokens)?;
 
             let fn_type = FnType {
-                ret: Some(r#type.into()),
+                ret: Some(r#type),
                 params: params.iter().map(|p| p.r#type).collect(),
             };
 
