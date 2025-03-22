@@ -1,6 +1,13 @@
+mod ast;
+mod specifier_list;
+
+pub use ast::{
+    Arr, BinOp, Binary, Block, BlockItem, Dec, Expr, FnDec, FnType, ForInit, Label, Param,
+    ParamList, Program, Stmnt, StorageClass, UnOp, Unary, VarDec, VarType,
+};
+
 use super::lex::Identifier;
 use super::slice_iter::TokenIter;
-use lex::Constant;
 
 use super::Token;
 use std::fmt::{self, Display, Formatter};
@@ -23,187 +30,81 @@ fn program(tokens: &mut TokenIter) -> Result<Program, Error> {
     Ok(Program(functions.into()))
 }
 
-#[derive(Debug)]
-pub struct Program(pub Box<[Declaration]>);
-
-fn declaration(tokens: &mut TokenIter) -> Result<Declaration, Error> {
-    let SpecifierList {
-        storage_class,
-        r#type,
-    } = specifiers(tokens)?;
+fn declaration(tokens: &mut TokenIter) -> Result<Dec, Error> {
+    let spec_list @ SpecifierList { sc, typ } = specifiers(tokens)?;
 
     let name = tokens.consume_identifier()?;
 
     match tokens.consume_any()? {
-        Token::Equals => {
-            let exp = expression(tokens, None)?;
-            tokens.consume(Token::Semicolon)?;
-            Ok(Declaration::Var {
-                name,
-                init: Some(exp),
-                storage_class,
-                r#type,
-            })
-        }
-        Token::OpenParen => {
-            let params = param_list(tokens)?;
-
-            let fn_type = FnType {
-                ret: Some(r#type),
-                params: params.iter().map(|p| p.r#type).collect(),
-            };
-
-            let body = if tokens.next_if(|x| x == &Token::Semicolon).is_some() {
-                None
-            } else {
-                Some(block(tokens)?)
-            };
-
-            Ok(Declaration::Function {
-                name,
-                params,
-                body,
-                r#type: fn_type,
-                storage_class,
-            })
-        }
-        Token::Semicolon => Ok(Declaration::Var {
+        Token::Equals => top_level_vardec(tokens, spec_list, name).map(Dec::from),
+        Token::OpenParen => top_level_fndec(tokens, spec_list, name).map(Dec::from),
+        // Variable Declaration no Initializer
+        Token::Semicolon => Ok(Dec::Var(VarDec {
             name,
             init: None,
-            storage_class,
-            r#type,
-        }),
+            sc,
+            typ,
+        })),
         _ => Err(Error::Catchall("expected initializer or semicolon")),
     }
 }
 
+fn top_level_fndec(
+    tokens: &mut TokenIter,
+    SpecifierList { sc, typ }: SpecifierList,
+    name: Identifier,
+) -> Result<FnDec, Error> {
+    let params = param_list(tokens)?;
+
+    let fn_type = FnType {
+        ret: Some(typ),
+        params: params.iter().map(|p| p.typ).collect(),
+    };
+
+    let body = if tokens.next_if(|x| x == &Token::Semicolon).is_some() {
+        None
+    } else {
+        Some(block(tokens)?)
+    };
+
+    Ok(FnDec {
+        name,
+        params,
+        body,
+        typ: fn_type,
+        sc,
+    })
+}
+
+fn top_level_vardec(
+    iter: &mut TokenIter,
+    SpecifierList { sc, typ }: SpecifierList,
+    name: Identifier,
+) -> Result<VarDec, Error> {
+    let exp = expression(iter, None)?;
+    iter.consume(Token::Semicolon)?;
+    Ok(VarDec {
+        name,
+        init: Some(exp),
+        sc,
+        typ,
+    })
+}
+
 // type specifier
 
-struct SpecifierList {
-    storage_class: Option<StorageClass>,
-    r#type: VarType,
-}
-
-#[derive(Debug, Clone)]
-pub struct SpeclistFsm {
-    storage_class: Option<StorageClass>,
-    int: bool,
-    r#type: Option<VarType>,
-}
-
-impl SpeclistFsm {
-    const fn new() -> Self {
-        Self {
-            storage_class: None,
-            r#type: None,
-            int: false,
-        }
-    }
-
-    fn done(self) -> Result<SpecifierList, Error> {
-        if let Some(r#type) = self.r#type {
-            Ok(SpecifierList {
-                storage_class: self.storage_class,
-                r#type,
-            })
-        } else {
-            Err(Error::Catchall("invalid specifier list"))
-        }
-    }
-
-    fn type_specifier(self) -> Result<VarType, Error> {
-        match self {
-            Self {
-                storage_class: Some(_),
-                ..
-            } => Err(Error::NoStorageClass),
-            Self {
-                storage_class: None,
-                r#type: None,
-                int: _,
-            } => Err(Error::InvalidSpecifiers),
-            Self {
-                storage_class: None,
-                r#type: Some(typ),
-                int: _,
-            } => Ok(typ),
-        }
-    }
-
-    const fn r#extern(&mut self) -> Result<(), Error> {
-        match self.storage_class {
-            Some(StorageClass::Static) => Err(Error::ConflictingLinkage),
-            Some(StorageClass::Extern) => Err(Error::InvalidSpecifiers),
-            None => {
-                self.storage_class = Some(StorageClass::Extern);
-                Ok(())
-            }
-        }
-    }
-
-    const fn r#static(&mut self) -> Result<(), Error> {
-        match self.storage_class {
-            Some(StorageClass::Static) => Err(Error::InvalidSpecifiers),
-            Some(StorageClass::Extern) => Err(Error::ConflictingLinkage),
-            None => {
-                self.storage_class = Some(StorageClass::Static);
-                Ok(())
-            }
-        }
-    }
-
-    fn long(&mut self) -> Result<(), Error> {
-        match self.r#type {
-            Some(VarType::Int) => {
-                self.r#type = Some(VarType::Long);
-                self.int = true;
-                Ok(())
-            }
-            Some(VarType::Long) => self.invalid_type(),
-            None => {
-                self.r#type = Some(VarType::Long);
-                Ok(())
-            }
-        }
-    }
-
-    fn int(&mut self) -> Result<(), Error> {
-        match self.r#type {
-            None => {
-                self.r#type = Some(VarType::Int);
-                self.int = true;
-                Ok(())
-            }
-            Some(VarType::Long) if !self.int => Ok(()),
-            Some(VarType::Int | VarType::Long) => self.invalid_type(),
-        }
-    }
-
-    fn invalid_type<T>(&self) -> Result<T, Error> {
-        Err(Error::InvalidType(self.clone()))
-    }
-}
-
-fn get_specifiers(tokens: &mut TokenIter) -> Result<SpeclistFsm, Error> {
-    let mut builder = SpeclistFsm::new();
-
-    tokens.take_until(|token| match token {
-        Token::Int => builder.int().map(|_| true),
-        Token::Long => builder.long().map(|_| true),
-        Token::Static => builder.r#static().map(|_| true),
-        Token::Extern => builder.r#extern().map(|_| true),
-        _ => Ok(false),
-    })?;
-    Ok(builder)
+pub struct SpecifierList {
+    sc: Option<StorageClass>,
+    typ: VarType,
 }
 
 fn specifiers(tokens: &mut TokenIter) -> Result<SpecifierList, Error> {
-    let builder = get_specifiers(tokens)?;
+    let builder = specifier_list::get_specifiers(tokens)?;
     builder.done()
 }
 
 fn type_specifier(tokens: &mut TokenIter) -> Result<VarType, Error> {
-    let builder = get_specifiers(tokens)?;
+    let builder = specifier_list::get_specifiers(tokens)?;
     builder.type_specifier()
 }
 
@@ -215,28 +116,21 @@ fn param_list(tokens: &mut TokenIter) -> Result<ParamList, Error> {
 
     let mut params = Vec::new();
 
-    let mut p = param(tokens)?;
+    let (mut p, mut last) = param(tokens)?;
 
-    while !p.last {
+    while !last {
         params.push(p);
-        p = param(tokens)?;
+        (p, last) = param(tokens)?;
     }
 
     params.push(p);
     Ok(params.into())
 }
 
-#[derive(Debug, Clone)]
-pub struct Parameter {
-    pub r#type: VarType,
-    pub name: Identifier,
-    pub last: bool,
-}
-
-fn param(tokens: &mut TokenIter) -> Result<Parameter, Error> {
-    if let Ok(r#type) = type_specifier(tokens) {
+fn param(tokens: &mut TokenIter) -> Result<(Param, bool), Error> {
+    if let Ok(typ) = type_specifier(tokens) {
         let name = tokens.consume_identifier()?;
-        let last = match tokens.peek_any()? {
+        let last = match tokens.consume_any()? {
             Token::Comma => {
                 tokens.next();
                 Ok(false)
@@ -247,14 +141,11 @@ fn param(tokens: &mut TokenIter) -> Result<Parameter, Error> {
             }
             _ => Err(Error::Catchall("expected ',' or ')'.")),
         }?;
-        Ok(Parameter { r#type, name, last })
+        Ok((Param { typ, name }, last))
     } else {
         Err(Error::Catchall("expected ',' or ')'."))
     }
 }
-
-#[derive(Debug)]
-pub struct Block(pub Box<[BlockItem]>);
 
 fn block(tokens: &mut TokenIter) -> Result<Block, Error> {
     tokens.consume(Token::OpenBrace)?;
@@ -263,7 +154,7 @@ fn block(tokens: &mut TokenIter) -> Result<Block, Error> {
         body.push(item);
     }
     tokens.consume(Token::CloseBrace)?;
-    Ok(Block(body.into()))
+    Ok(body.into())
 }
 
 fn block_item(tokens: &mut TokenIter) -> Result<Option<BlockItem>, Error> {
@@ -276,11 +167,8 @@ fn block_item(tokens: &mut TokenIter) -> Result<Option<BlockItem>, Error> {
     }
 }
 
-fn var_declaration(
-    tokens: &mut TokenIter,
-    storage_class: Option<StorageClass>,
-) -> Result<VariableDeclaration, Error> {
-    let r#type = type_specifier(tokens)?;
+fn var_declaration(tokens: &mut TokenIter, sc: Option<StorageClass>) -> Result<VarDec, Error> {
+    let typ = type_specifier(tokens)?;
     let name = tokens.consume_identifier()?;
     let init = match tokens.consume_any()? {
         Token::Equals => {
@@ -292,33 +180,12 @@ fn var_declaration(
         Token::Semicolon => Ok(None),
         _ => Err(Error::Catchall("expected initializer or semicolon")),
     }?;
-    Ok(VariableDeclaration {
+    Ok(VarDec {
         name,
         init,
-        r#type,
-        storage_class,
+        typ,
+        sc,
     })
-}
-
-pub type ParamList = Box<[Parameter]>;
-
-pub enum Param {
-    Void,
-    Int(Identifier),
-}
-
-#[derive(Debug)]
-pub struct VariableDeclaration {
-    pub name: Identifier,
-    pub init: Option<Expression>,
-    pub storage_class: Option<StorageClass>,
-    pub r#type: VarType,
-}
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum VarType {
-    Int,
-    Long,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -345,35 +212,12 @@ impl VarType {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FnType {
-    pub ret: Option<VarType>,
-    pub params: Box<[VarType]>,
-}
-
-#[derive(Debug, Copy, Clone)]
-pub enum StorageClass {
-    Static,
-    Extern,
-}
-
 impl PartialEq for StorageClass {
     fn eq(&self, other: &Self) -> bool {
         matches!(
             (self, other),
             (Self::Static, Self::Static) | (Self::Extern, Self::Extern)
         )
-    }
-}
-
-impl From<VariableDeclaration> for Declaration {
-    fn from(dec: VariableDeclaration) -> Self {
-        Self::Var {
-            name: dec.name,
-            init: dec.init,
-            r#type: dec.r#type,
-            storage_class: dec.storage_class,
-        }
     }
 }
 
@@ -389,17 +233,17 @@ impl Display for Function {
     }
 }
 
-fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
+fn statement(tokens: &mut TokenIter) -> Result<Stmnt, Error> {
     Ok(match tokens.peek_any()? {
         Token::Return => {
             tokens.next();
             let expression = expression(tokens, None)?;
             tokens.consume(Token::Semicolon)?;
-            Statement::Ret(expression)
+            Stmnt::Ret(expression)
         }
         Token::Semicolon => {
             tokens.next();
-            Statement::Null
+            Stmnt::Null
         }
         Token::If => {
             tokens.next();
@@ -412,7 +256,7 @@ fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
             } else {
                 None
             };
-            Statement::If {
+            Stmnt::If {
                 condition,
                 then: Box::new(stmnt),
                 r#else,
@@ -421,21 +265,18 @@ fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
         Token::Switch => {
             tokens.next();
             tokens.consume(Token::OpenParen)?;
-            let Expression::Const(c) = expression(tokens, None)? else {
+            let Expr::Const(c) = expression(tokens, None)? else {
                 todo!()
             };
             tokens.consume(Token::CloseParen)?;
             let body = Box::new(statement(tokens)?);
-            Statement::Switch {
-                val: ConstExpr::Literal(c),
-                body,
-            }
+            Stmnt::Switch { val: c, body }
         }
         Token::Goto => {
             tokens.next();
             let identifier = tokens.consume_identifier()?;
             tokens.consume(Token::Semicolon)?;
-            Statement::Goto(identifier)
+            Stmnt::Goto(identifier)
         }
         // LABEL
         Token::Identifier(_) if tokens.peek_peek().is_some_and(|x| x == &Token::Colon) => {
@@ -444,27 +285,27 @@ fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
             tokens.next();
             let body = statement(tokens)?.into();
 
-            Statement::Label { label, body }
+            Stmnt::Label { label, body }
         }
 
         Token::Default => {
             tokens.next();
             tokens.consume(Token::Colon)?;
             let body = statement(tokens)?.into();
-            Statement::Label {
+            Stmnt::Label {
                 label: Label::Default,
                 body,
             }
         }
         Token::OpenBrace => {
             let block = block(tokens)?;
-            Statement::Compound(block)
+            Stmnt::Compound(block)
         }
         Token::Break => {
             tokens.next();
             tokens.consume(Token::Semicolon)?;
 
-            Statement::Break
+            Stmnt::Break
         }
         Token::Case => {
             tokens.next();
@@ -473,14 +314,14 @@ fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
             };
 
             tokens.consume(Token::Colon)?;
-            let label = Label::Case(ConstExpr::Literal(con));
+            let label = Label::Case(con);
             let body = statement(tokens)?.into();
-            Ok(Statement::Label { label, body })?
+            Ok(Stmnt::Label { label, body })?
         }
         Token::Continue => {
             tokens.next();
             tokens.consume(Token::Semicolon)?;
-            Statement::Continue
+            Stmnt::Continue
         }
         Token::While => {
             tokens.next();
@@ -488,7 +329,7 @@ fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
             let condition = expression(tokens, None)?;
 
             tokens.consume(Token::CloseParen)?;
-            Statement::While {
+            Stmnt::While {
                 condition,
                 body: Box::new(statement(tokens)?),
             }
@@ -499,7 +340,7 @@ fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
             tokens.consume_arr([Token::While, Token::OpenParen])?;
             let condition = expression(tokens, None)?;
             tokens.consume_arr([Token::CloseParen, Token::Semicolon])?;
-            Statement::DoWhile { body, condition }
+            Stmnt::DoWhile { body, condition }
         }
         Token::For => {
             tokens.next();
@@ -512,7 +353,7 @@ fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
 
             let body = Box::new(statement(tokens)?);
 
-            Statement::For {
+            Stmnt::For {
                 init,
                 condition,
                 post,
@@ -524,12 +365,12 @@ fn statement(tokens: &mut TokenIter) -> Result<Statement, Error> {
 
             tokens.consume(Token::Semicolon)?;
 
-            Statement::Exp(e)
+            Stmnt::Exp(e)
         }
     })
 }
 
-fn optional_expr(tokens: &mut TokenIter, delim: Token) -> Result<Option<Expression>, Error> {
+fn optional_expr(tokens: &mut TokenIter, delim: Token) -> Result<Option<Expr>, Error> {
     if tokens.consume(delim.clone()).is_ok() {
         Ok(None)
     } else {
@@ -556,109 +397,29 @@ fn for_init(tokens: &mut TokenIter) -> Result<Option<ForInit>, Error> {
     }
 }
 
-#[derive(Debug)]
-pub enum BlockItem {
-    S(Statement),
-    D(Declaration),
-}
-
 #[allow(dead_code)]
 #[derive(Debug)]
-pub struct DebugStatement {
-    statement: Statement,
+pub struct DebugStmnt {
+    statement: Stmnt,
     line: usize,
 }
 
-#[derive(Debug)]
-pub enum Statement {
-    Ret(Expression),
-    Exp(Expression),
-    If {
-        condition: Expression,
-        then: Box<Statement>,
-        r#else: Option<Box<Statement>>,
-    },
-    Break,
-    Continue,
-    While {
-        condition: Expression,
-        body: Box<Self>,
-    },
-    DoWhile {
-        body: Box<Self>,
-        condition: Expression,
-    },
-    For {
-        init: Option<ForInit>,
-        condition: Option<Expression>,
-        post: Option<Expression>,
-        body: Box<Self>,
-    },
-    Compound(Block),
-    Label {
-        label: Label,
-        body: Box<Self>,
-    },
-    Goto(Identifier),
-    Null,
-    Switch {
-        val: ConstExpr,
-        body: Box<Self>,
-    },
-}
-
-#[derive(Debug)]
-pub enum ForInit {
-    D(VariableDeclaration),
-    E(Expression),
-}
-
-#[derive(Debug, Clone)]
-pub enum Label {
-    Named(Identifier),
-    Case(ConstExpr),
-    Default,
-}
-
-#[derive(Debug)]
-pub enum Declaration {
-    Function {
-        name: Identifier,
-        params: ParamList,
-        body: Option<Block>,
-        storage_class: Option<StorageClass>,
-        r#type: FnType,
-    },
-    Var {
-        name: Identifier,
-        init: Option<Expression>,
-        storage_class: Option<StorageClass>,
-        r#type: VarType,
-    },
-}
-/*
-pub struct Declaration {
-    pub name: Rc<Identifier>,
-    pub init: Option<Expression>,
-}
-*/
-
-fn expression(tokens: &mut TokenIter, min_precedence: Option<u8>) -> Result<Expression, Error> {
+fn expression(tokens: &mut TokenIter, min_precedence: Option<u8>) -> Result<Expr, Error> {
     let precedence = min_precedence.unwrap_or(0);
 
-    let mut left = factor(tokens)?.into();
+    let mut left = factor(tokens)?;
 
     while let Some(operator) = binary_operator(tokens, precedence) {
         match operator {
-            BinaryOperator::Equals => {
+            BinOp::Equals => {
                 let right = expression(tokens, Some(operator.precedence()))?;
-                left = Expression::Assignment((left, right).into());
+                left = Expr::Assignment((left, right).into());
             }
-            BinaryOperator::Ternary => {
+            BinOp::Ternary => {
                 let middle = expression(tokens, None)?;
                 tokens.consume(Token::Colon)?;
                 let right = expression(tokens, Some(operator.precedence()))?;
-                left = Expression::Conditional {
+                left = Expr::Conditional {
                     condition: left.into(),
                     r#true: middle.into(),
                     r#false: right.into(),
@@ -666,7 +427,7 @@ fn expression(tokens: &mut TokenIter, min_precedence: Option<u8>) -> Result<Expr
             }
             operator if operator.compound() => {
                 let right = expression(tokens, Some(operator.precedence()))?;
-                left = Expression::Binary(Binary {
+                left = Expr::Bin(Binary {
                     left: Box::new(left),
                     right: Box::new(right),
                     operator,
@@ -674,7 +435,7 @@ fn expression(tokens: &mut TokenIter, min_precedence: Option<u8>) -> Result<Expr
             }
             operator => {
                 let right = expression(tokens, Some(operator.precedence() + 1))?;
-                left = Expression::Binary(Binary {
+                left = Expr::Bin(Binary {
                     left: Box::new(left),
                     right: Box::new(right),
                     operator,
@@ -685,46 +446,46 @@ fn expression(tokens: &mut TokenIter, min_precedence: Option<u8>) -> Result<Expr
     Ok(left)
 }
 
-fn binary_operator(tokens: &mut TokenIter, min_precedence: u8) -> Option<BinaryOperator> {
+fn binary_operator(tokens: &mut TokenIter, min_precedence: u8) -> Option<BinOp> {
     let token = match tokens.peek()? {
-        Token::Plus => Some(BinaryOperator::Add),
-        Token::Minus => Some(BinaryOperator::Subtract),
-        Token::Asterisk => Some(BinaryOperator::Multiply),
-        Token::Slash => Some(BinaryOperator::Divide),
-        Token::Percent => Some(BinaryOperator::Remainder),
+        Token::Plus => Some(BinOp::Add),
+        Token::Minus => Some(BinOp::Subtract),
+        Token::Asterisk => Some(BinOp::Multiply),
+        Token::Slash => Some(BinOp::Divide),
+        Token::Percent => Some(BinOp::Remainder),
 
-        Token::LeftShift => Some(BinaryOperator::LeftShift),
-        Token::RightShift => Some(BinaryOperator::RightShift),
-        Token::Ampersand => Some(BinaryOperator::BitAnd),
-        Token::Bar => Some(BinaryOperator::BitOr),
-        Token::Caret => Some(BinaryOperator::Xor),
+        Token::LeftShift => Some(BinOp::LeftShift),
+        Token::RightShift => Some(BinOp::RightShift),
+        Token::Ampersand => Some(BinOp::BitAnd),
+        Token::Bar => Some(BinOp::BitOr),
+        Token::Caret => Some(BinOp::Xor),
 
-        Token::LogicalAnd => Some(BinaryOperator::LogAnd),
-        Token::LogicalOr => Some(BinaryOperator::LogOr),
+        Token::LogicalAnd => Some(BinOp::LogAnd),
+        Token::LogicalOr => Some(BinOp::LogOr),
 
-        Token::EqualTo => Some(BinaryOperator::EqualTo),
-        Token::NotEqual => Some(BinaryOperator::NotEqual),
-        Token::LessThan => Some(BinaryOperator::LessThan),
-        Token::GreaterThan => Some(BinaryOperator::GreaterThan),
-        Token::Leq => Some(BinaryOperator::Leq),
-        Token::Geq => Some(BinaryOperator::Geq),
+        Token::EqualTo => Some(BinOp::EqualTo),
+        Token::NotEqual => Some(BinOp::NotEqual),
+        Token::LessThan => Some(BinOp::LessThan),
+        Token::GreaterThan => Some(BinOp::GreaterThan),
+        Token::Leq => Some(BinOp::Leq),
+        Token::Geq => Some(BinOp::Geq),
 
-        Token::Equals => Some(BinaryOperator::Equals),
-        Token::PlusEqual => Some(BinaryOperator::PlusEquals),
-        Token::MinusEqual => Some(BinaryOperator::MinusEquals),
-        Token::TimesEqual => Some(BinaryOperator::TimesEqual),
-        Token::DivEqual => Some(BinaryOperator::DivEqual),
-        Token::PercentEqual => Some(BinaryOperator::RemEqual),
+        Token::Equals => Some(BinOp::Equals),
+        Token::PlusEqual => Some(BinOp::PlusEquals),
+        Token::MinusEqual => Some(BinOp::MinusEquals),
+        Token::TimesEqual => Some(BinOp::TimesEqual),
+        Token::DivEqual => Some(BinOp::DivEqual),
+        Token::PercentEqual => Some(BinOp::RemEqual),
 
-        Token::BitAndEqual => Some(BinaryOperator::BitAndEqual),
+        Token::BitAndEqual => Some(BinOp::BitAndEqual),
 
-        Token::BitOrEqual => Some(BinaryOperator::BitOrEqual),
+        Token::BitOrEqual => Some(BinOp::BitOrEqual),
 
-        Token::BitXorEqual => Some(BinaryOperator::BitXorEqual),
-        Token::LeftShiftEqual => Some(BinaryOperator::LeftShiftEqual),
-        Token::RightShiftEqual => Some(BinaryOperator::RightShiftEqual),
+        Token::BitXorEqual => Some(BinOp::BitXorEqual),
+        Token::LeftShiftEqual => Some(BinOp::LeftShiftEqual),
+        Token::RightShiftEqual => Some(BinOp::RightShiftEqual),
 
-        Token::QuestionMark => Some(BinaryOperator::Ternary),
+        Token::QuestionMark => Some(BinOp::Ternary),
 
         _ => None,
     }?;
@@ -736,63 +497,63 @@ fn binary_operator(tokens: &mut TokenIter, min_precedence: u8) -> Option<BinaryO
     }
 }
 use super::lex;
-fn factor(tokens: &mut TokenIter) -> Result<Factor, Error> {
+fn factor(tokens: &mut TokenIter) -> Result<Expr, Error> {
     let factor = match tokens.consume_any()? {
         Token::Increment => {
-            let exp = Box::new(factor(tokens)?.into());
-            Ok(Factor::PrefixIncrement(exp))
+            let exp = Box::new(factor(tokens)?);
+            Ok(Expr::PrefixIncrement(exp))
         }
         Token::Decrement => {
-            let exp = Box::new(factor(tokens)?.into());
-            Ok(Factor::PrefixDecrement(exp))
+            let exp = Box::new(factor(tokens)?);
+            Ok(Expr::PrefixDecrement(exp))
         }
-        Token::Constant(c) => Ok(Factor::Const(c)),
+        Token::Constant(c) => Ok(Expr::Const(c)),
 
         t @ (Token::Minus | Token::Tilde | Token::Not) => {
             let operator = if t == Token::Minus {
-                UnaryOperator::Negate
+                UnOp::Negate
             } else if t == Token::Tilde {
-                UnaryOperator::Complement
+                UnOp::Complement
             } else {
-                UnaryOperator::Not
+                UnOp::Not
             };
-            let exp = Box::new(factor(tokens)?.into());
-            Ok(Factor::Unary(Unary { exp, op: operator }))
+            let exp = Box::new(factor(tokens)?);
+            Ok(Expr::Unary(Unary { exp, op: operator }))
         }
         Token::OpenParen => {
             if let Some(target) = tokens.consume_type() {
                 tokens.consume(Token::CloseParen)?;
                 let exp = factor(tokens)?.into();
-                Ok(Factor::Cast { target, exp })
+                Ok(Expr::Cast { target, exp })
             } else {
                 let exp = Box::new(expression(tokens, None)?);
                 tokens.consume(Token::CloseParen)?;
-                Ok(Factor::Nested(exp))
+                Ok(Expr::Nested(exp))
             }
         }
         Token::Identifier(ident) => {
             if tokens.peek() == Some(&Token::OpenParen) {
                 tokens.next();
                 let args = argument_list(tokens)?;
-                Ok(Factor::FunctionCall { name: ident, args })
+                Ok(Expr::FunctionCall { name: ident, args })
             } else {
-                Ok(Factor::Var(ident))
+                Ok(Expr::Var(ident))
             }
         }
 
         e => {
             eprintln!("errored in {e:?}");
-            Err(Error::ExpectedExpression)
+            Err(Error::ExpectedExpr)
         }
     }?;
     match tokens.next_if(|x| x == &Token::Increment || x == &Token::Decrement) {
-        Some(Token::Increment) => Ok(Factor::PostfixIncrement(Box::new(factor.into()))),
-        Some(Token::Decrement) => Ok(Factor::PostfixDecrement(Box::new(factor.into()))),
+        Some(Token::Increment) => Ok(Expr::PostfixIncrement(Box::new(factor))),
+        Some(Token::Decrement) => Ok(Expr::PostfixDecrement(Box::new(factor))),
         _ => Ok(factor),
     }
 }
 
-fn argument_list(tokens: &mut TokenIter) -> Result<Box<[Expression]>, Error> {
+fn argument_list(tokens: &mut TokenIter) -> Result<Box<[Expr]>, Error> {
     if tokens.consume(Token::CloseParen).is_ok() {
         return Ok(Box::new([]));
     }
@@ -812,323 +573,10 @@ fn argument_list(tokens: &mut TokenIter) -> Result<Box<[Expression]>, Error> {
     Ok(list.into())
 }
 
-#[derive(Debug, Clone)]
-pub enum Expression {
-    Assignment(Box<(Self, Self)>),
-    Binary(Binary),
-    Cast {
-        target: VarType,
-        exp: Box<Self>,
-    },
-
-    //factors
-    PostfixIncrement(Box<Self>),
-    PostfixDecrement(Box<Self>),
-    PrefixIncrement(Box<Self>),
-    PrefixDecrement(Box<Self>),
-
-    Var(Identifier),
-    Const(Constant),
-    Unary(Unary),
-    Nested(Box<Self>),
-
-    Conditional {
-        condition: Box<Self>,
-        r#true: Box<Self>,
-        r#false: Box<Self>,
-    },
-    FunctionCall {
-        name: Identifier,
-        args: Box<[Self]>,
-    },
-}
-
-#[derive(Debug, Copy, Clone)]
-pub enum ConstExpr {
-    Literal(Constant),
-}
-
-impl ConstExpr {
-    pub const fn long(&self) -> i64 {
-        match self {
-            Self::Literal(Constant::Long(l)) => *l,
-            Self::Literal(Constant::Integer(i)) => *i as i64,
-        }
-    }
-
-    pub const fn int(&self) -> i32 {
-        match self {
-            Self::Literal(Constant::Integer(i)) => *i,
-            Self::Literal(Constant::Long(l)) => *l as i32,
-        }
-    }
-}
-
-impl Expression {
-    pub const fn lvalue(&self) -> bool {
-        match self {
-            Self::Var(_) => true,
-            Self::Nested(e) => e.lvalue(),
-            _ => false,
-        }
-    }
-
-    pub const fn number(&self) -> Option<Constant> {
-        match self {
-            Self::Nested(e) => e.number(),
-            Self::Const(c) => Some(*c),
-            _ => None,
-        }
-    }
-
-    pub const fn static_init(&self) -> Option<StaticInit> {
-        match self {
-            Self::Nested(e) => e.static_init(),
-            Self::Const(Constant::Long(c)) => Some(StaticInit::Long(*c)),
-            Self::Const(Constant::Integer(c)) => Some(StaticInit::Int(*c)),
-            _ => None,
-        }
-    }
-}
-
-use crate::semantics::typecheck::StaticInit;
-
-impl TryFrom<Expression> for Factor {
-    type Error = ();
-
-    fn try_from(expression: Expression) -> Result<Factor, ()> {
-        match expression {
-            Expression::Var(v) => Ok(Self::Var(v)),
-            Expression::Const(i) => Ok(Self::Const(i)),
-            Expression::Unary(u) => Ok(Self::Unary(u)),
-            Expression::PrefixIncrement(p) => Ok(Self::PrefixIncrement(p)),
-            Expression::PrefixDecrement(p) => Ok(Self::PrefixDecrement(p)),
-            Expression::PostfixIncrement(p) => Ok(Self::PostfixIncrement(p)),
-            Expression::PostfixDecrement(p) => Ok(Self::PostfixDecrement(p)),
-
-            Expression::Nested(e) => Ok(Self::Nested(e)),
-
-            _ => Err(()),
-        }
-    }
-}
-
-impl From<Factor> for Expression {
-    fn from(factor: Factor) -> Self {
-        match factor {
-            Factor::Cast { target, exp } => {
-                let factor: Factor = *exp;
-                let exp: Expression = factor.into();
-                Self::Cast {
-                    target,
-                    exp: Box::new(exp),
-                }
-            }
-            Factor::Var(v) => Self::Var(v),
-            Factor::Const(c) => Self::Const(c),
-            Factor::Unary(u) => Self::Unary(u),
-            Factor::PrefixIncrement(p) => Self::PrefixIncrement(p),
-            Factor::PrefixDecrement(p) => Self::PrefixDecrement(p),
-            Factor::PostfixIncrement(p) => Self::PostfixIncrement(p),
-            Factor::PostfixDecrement(p) => Self::PostfixDecrement(p),
-
-            Factor::Nested(e) => Self::Nested(e),
-
-            Factor::FunctionCall { name, args } => Self::FunctionCall { name, args },
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum Factor {
-    Cast {
-        target: VarType,
-        exp: Box<Self>,
-    },
-    Var(Identifier),
-    Const(lex::Constant),
-    Unary(Unary),
-    PrefixIncrement(Box<Expression>),
-    PostfixIncrement(Box<Expression>),
-    PrefixDecrement(Box<Expression>),
-    PostfixDecrement(Box<Expression>),
-    Nested(Box<Expression>),
-    FunctionCall {
-        name: Identifier,
-        args: Box<[Expression]>,
-    },
-}
-
-#[derive(Debug, Clone)]
-pub struct Unary {
-    pub exp: Box<Expression>,
-    pub op: UnaryOperator,
-}
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum UnaryOperator {
-    Complement,
-    Negate,
-    Not,
-}
-
-#[derive(Debug, Clone)]
-pub struct Binary {
-    pub operator: BinaryOperator,
-    pub left: Box<Expression>,
-    pub right: Box<Expression>,
-}
-
-#[derive(Debug, Eq, PartialEq, Copy, Clone)]
-pub enum BinaryOperator {
-    Add,
-    Subtract,
-    Multiply,
-    Divide,
-    Remainder,
-    BitAnd,
-    BitOr,
-    Xor,
-    LeftShift,
-    RightShift,
-    LogAnd,
-    LogOr,
-    EqualTo,
-    NotEqual,
-    LessThan,
-    GreaterThan,
-    Leq,
-    Geq,
-
-    Equals,
-
-    PlusEquals,
-    MinusEquals,
-    TimesEqual,
-    DivEqual,
-    RemEqual,
-    BitAndEqual,
-    BitOrEqual,
-    BitXorEqual,
-    LeftShiftEqual,
-    RightShiftEqual,
-
-    Ternary,
-}
-
-impl BinaryOperator {
-    const fn precedence(&self) -> u8 {
-        match self {
-            Self::Equals
-            | Self::PlusEquals
-            | Self::MinusEquals
-            | Self::TimesEqual
-            | Self::DivEqual
-            | Self::RemEqual
-            | Self::BitAndEqual
-            | Self::BitOrEqual
-            | Self::BitXorEqual
-            | Self::LeftShiftEqual
-            | Self::RightShiftEqual => 1,
-            Self::Ternary => 3,
-            Self::LogOr => 5,
-            Self::LogAnd => 10,
-            Self::BitOr => 15,
-            Self::Xor => 20,
-            Self::BitAnd => 25,
-            Self::EqualTo | Self::NotEqual => 30,
-            Self::LessThan | Self::GreaterThan | Self::Leq | Self::Geq => 35,
-            Self::LeftShift | Self::RightShift => 40,
-            Self::Add | Self::Subtract => 45,
-            Self::Multiply | Self::Divide | Self::Remainder => 50,
-        }
-    }
-
-    pub const fn assignment_operator(&self) -> bool {
-        matches!(self, Self::Equals) || self.compound()
-    }
-
-    pub const fn compound(&self) -> bool {
-        matches!(
-            self,
-            Self::PlusEquals
-                | Self::MinusEquals
-                | Self::TimesEqual
-                | Self::DivEqual
-                | Self::RemEqual
-                | Self::BitAndEqual
-                | Self::BitOrEqual
-                | Self::BitXorEqual
-                | Self::LeftShiftEqual
-                | Self::RightShiftEqual
-        )
-    }
-
-    pub const fn relational(&self) -> bool {
-        matches!(
-            self,
-            Self::EqualTo
-                | Self::NotEqual
-                | Self::LessThan
-                | Self::GreaterThan
-                | Self::Leq
-                | Self::Geq
-        )
-    }
-}
-
-impl Display for Program {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "Program(\n{:?}\n)", self.0)
-    }
-}
-
-impl Display for Statement {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        match self {
-            Statement::Ret(ret) => write!(f, "Return(\n{:?}\n)", ret),
-            Statement::Exp(e) => write!(f, "(\n{:?}\n)", e),
-            Statement::Null => write!(f, "(\nnull\n)"),
-
-            Statement::If {
-                condition,
-                then,
-                r#else,
-            } => write!(f, "if(\n{condition:?}\n){then}{else:?}"),
-            Statement::Label { label, body } => write!(f, "LABEL\n{label}:{body}\n"),
-
-            Statement::Goto(name) => write!(f, "goto\n{name}:\n"),
-
-            Statement::Compound(Block(block)) => writeln!(f, "{{{block:?}}}"),
-            _ => todo!(),
-        }
-    }
-}
-
-impl Display for Label {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        match self {
-            Label::Default => write!(f, "default"),
-            Label::Named(name) => write!(f, "{name}"),
-            Label::Case(case) => write!(f, "case {case:?}"),
-        }
-    }
-}
-
-impl From<Unary> for Factor {
-    fn from(u: Unary) -> Self {
-        Self::Unary(u)
-    }
-}
-
 #[derive(Debug)]
 pub struct DebugError {
     pub e: Error,
     pub line: usize,
-}
-
-const fn expected_eof<T>() -> Result<T, Error> {
-    Err(Error::UnexpectedEof)
 }
 
 #[derive(Debug)]
@@ -1137,7 +585,7 @@ pub enum Error {
     Expected(Token),
     ExpectedIdentifier,
     ExpectedConstant,
-    ExpectedExpression,
+    ExpectedExpr,
     ExpectedAnyKeyword,
     Catchall(&'static str),
     ExtraStuff,
@@ -1145,6 +593,6 @@ pub enum Error {
     NoType,
     ConflictingLinkage,
     InvalidSpecifiers,
-    InvalidType(SpeclistFsm),
+    InvalidType(specifier_list::SpeclistFsm),
     NoStorageClass,
 }

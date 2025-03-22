@@ -639,7 +639,7 @@ fn param_typecheck(new: &ParamList, old: &[VarType]) -> Result<(), Error> {
     if new.len() != old.len() {
         return Err(Error::WrongParams);
     }
-    let new_iter = new.iter().map(|param| param.r#type);
+    let new_iter = new.iter().map(|param| param.typ);
     for (new, &old) in new_iter.zip(old) {
         if new != old {
             return Err(Error::WrongParams);
@@ -724,7 +724,7 @@ fn function_declaration(
     };
 
     for param in params.iter() {
-        table.insert(param.name.clone(), Attr::Automatic(param.r#type));
+        table.insert(param.name.clone(), Attr::Automatic(param.typ));
     }
 
     let body = if let Some(body) = body {

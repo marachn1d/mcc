@@ -332,22 +332,22 @@ fn literal(byte: u8, iter: &mut SliceIter<u8>) -> Result<Token, Error> {
     if iter.peek().is_some_and(|byte| !word_character(byte)) {
         Ok(match bytes.as_slice() {
             b"int" => Token::Int,
-            b"return" => Token::Return.into(),
-            b"void" => Token::Void.into(),
-            b"if" => Token::If.into(),
-            b"else" => Token::Else.into(),
-            b"goto" => Token::Goto.into(),
-            b"do" => Token::Do.into(),
-            b"while" => Token::While.into(),
-            b"for" => Token::For.into(),
-            b"break" => Token::Break.into(),
-            b"continue" => Token::Continue.into(),
-            b"switch" => Token::Switch.into(),
-            b"case" => Token::Case.into(),
-            b"default" => Token::Default.into(),
-            b"static" => Token::Static.into(),
-            b"extern" => Token::Extern.into(),
-            b"long" => Token::Long.into(),
+            b"return" => Token::Return,
+            b"void" => Token::Void,
+            b"if" => Token::If,
+            b"else" => Token::Else,
+            b"goto" => Token::Goto,
+            b"do" => Token::Do,
+            b"while" => Token::While,
+            b"for" => Token::For,
+            b"break" => Token::Break,
+            b"continue" => Token::Continue,
+            b"switch" => Token::Switch,
+            b"case" => Token::Case,
+            b"default" => Token::Default,
+            b"static" => Token::Static,
+            b"extern" => Token::Extern,
+            b"long" => Token::Long,
             _ => identifier(bytes.into())?.into(),
         })
     } else {
@@ -401,14 +401,6 @@ enum AsciiDigit {
     Nine = 9,
 }
 
-fn parse_digit(slice: &[AsciiDigit]) -> i32 {
-    let mut cur = 0i32;
-    for (place, digit) in slice.iter().map(|&x| i32::from(x as u8)).rev().enumerate() {
-        cur += 10i32.pow(place as u32) * digit;
-    }
-    cur
-}
-
 fn parse_long(slice: &[AsciiDigit]) -> i64 {
     let mut cur = 0i64;
     for (place, digit) in slice.iter().map(|&x| i64::from(x as u8)).rev().enumerate() {
@@ -422,10 +414,6 @@ impl Token {
     }
     pub const fn constant(&self) -> bool {
         matches!(self, Self::Constant(_))
-    }
-
-    const fn is_type(&self) -> bool {
-        matches!(self, Self::Int | Self::Long | Self::Void)
     }
 }
 

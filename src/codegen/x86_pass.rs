@@ -89,11 +89,10 @@ impl<'a> StackFrame<'a> {
     fn var_type(&self, ident: &Identifier) -> Option<AsmType> {
         self.table
             .get(ident)
-            .map(|input| match input {
+            .and_then(|input| match input {
                 BackendSymbol::Obj { ty, .. } => Some(ty),
                 BackendSymbol::Fn { .. } => None,
             })
-            .flatten()
             .copied()
     }
 
@@ -165,7 +164,7 @@ fn fix_instruction(op: Pseudo, stack_frame: &mut StackFrame, vec: &mut OpVec<X86
             ty: AsmType::Quadword,
         } => {
             let dst = stack_frame.fix_by_name(&dst);
-            let src = Op::Imm(i).into();
+            let src = Op::Imm(i);
             vec.push([
                 X86::mov(src, Op::Register(Register::R10), AsmType::Quadword),
                 X86::mov(Op::Register(Register::R10), dst, AsmType::Quadword),
@@ -178,7 +177,7 @@ fn fix_instruction(op: Pseudo, stack_frame: &mut StackFrame, vec: &mut OpVec<X86
         } => {
             if i > i32::MAX as i64 {
                 let dst = stack_frame.fix_by_name(&dst);
-                let src = Op::Imm((i as i32) as i64).into();
+                let src = Op::Imm((i as i32) as i64);
                 vec.push([
                     X86::mov(src, Op::Register(Register::R10), AsmType::Longword),
                     X86::mov(Op::Register(Register::R10), dst, AsmType::Longword),
