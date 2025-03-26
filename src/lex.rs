@@ -496,7 +496,7 @@ impl From<Constant> for Token {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone, Ord, PartialOrd)]
 pub enum Constant {
     Integer(i32),
     Long(i64),
@@ -514,6 +514,15 @@ impl Constant {
         match self {
             Self::Integer(i) => *i as i64,
             Self::Long(l) => *l,
+        }
+    }
+}
+
+impl fmt::Display for Constant {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self {
+            Self::Integer(i) => i.fmt(f),
+            Self::Long(l) => l.fmt(f),
         }
     }
 }

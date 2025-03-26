@@ -1,37 +1,29 @@
+use super::ast::type_prelude::*;
 use crate::lex::Identifier;
-use crate::semantics::BlockItem;
-
-use crate::semantics::Declaration;
-use crate::semantics::Label;
-use crate::semantics::Program;
-use crate::semantics::Statement;
 use crate::semantics::SymbolTable;
 use std::collections::HashSet;
 
-pub fn check<T>(program: &Program<T>, vars: &SymbolTable) -> Result<(), Error> {
-    for r#fn in &program.0 {
+pub fn check(program: &Program, vars: &SymbolTable) -> Result<(), Error> {
+    for r#fn in program {
         check_dec(r#fn, vars)?
     }
     Ok(())
 }
 
-fn check_dec<T>(dec: &Declaration<T>, vars: &SymbolTable) -> Result<(), Error> {
-    match dec {
-        Declaration::Function {
-            name,
-            body: Some(body),
-            ..
-        } => check_body(body, vars, name),
-
-        Declaration::Var { .. } | Declaration::Function { .. } => Ok(()),
+fn check_dec(dec: &Dec, vars: &SymbolTable) -> Result<(), Error> {
+    if let Dec::Fn(FnDec {
+        name,
+        body: Some(body),
+        ..
+    }) = dec
+    {
+        check_body(body, vars, name)
+    } else {
+        Ok(())
     }
 }
 
-fn check_body<T>(
-    block: &[BlockItem<T>],
-    vars: &SymbolTable,
-    fn_name: &Identifier,
-) -> Result<(), Error> {
+fn check_body(block: &[BlockItem], vars: &SymbolTable, fn_name: &Identifier) -> Result<(), Error> {
     let mut labels = HashSet::new();
     for item in block.iter() {
         if let BlockItem::S(statement) = item {
@@ -57,9 +49,9 @@ fn name_clashes(label: &Identifier, vars: &SymbolTable, fn_name: &Identifier) ->
     }
 }
 
-fn handle_label<T>(
+fn handle_label(
     label: &Label,
-    body: &Statement<T>,
+    body: &Stmnt,
     vars: &SymbolTable,
     labels: &mut HashSet<Identifier>,
     fn_name: &Identifier,
@@ -79,14 +71,14 @@ fn handle_label<T>(
     }
 }
 
-fn check_labels<T>(
-    statement: &Statement<T>,
+fn check_labels(
+    statement: &Stmnt,
     vars: &SymbolTable,
     labels: &mut HashSet<Identifier>,
     fn_name: &Identifier,
 ) -> Result<(), Error> {
     match statement {
-        Statement::Compound(block) => {
+        Stmnt::Compound(block) => {
             for item in block {
                 if let BlockItem::S(s) = item {
                     check_labels(s, vars, labels, fn_name)?;
@@ -94,12 +86,12 @@ fn check_labels<T>(
             }
             Ok(())
         }
-        Statement::While { body, .. }
-        | Statement::DoWhile { body, .. }
-        | Statement::For { body, .. } => check_labels(body, vars, labels, fn_name),
+        Stmnt::While { body, .. } | Stmnt::DoWhile { body, .. } | Stmnt::For { body, .. } => {
+            check_labels(body, vars, labels, fn_name)
+        }
 
-        Statement::Label { name, body } => handle_label(name, body, vars, labels, fn_name),
-        Statement::If {
+        Stmnt::Label { name, body } => handle_label(name, body, vars, labels, fn_name),
+        Stmnt::If {
             condition: _,
             then,
             r#else,
@@ -110,26 +102,26 @@ fn check_labels<T>(
             };
             Ok(())
         }
-        Statement::Switch { body, .. } => check_labels(body, vars, labels, fn_name),
-        Statement::Ret(_)
-        | Statement::Exp(_)
-        | Statement::Null
-        | Statement::Goto(_)
-        | Statement::Continue(_)
-        | Statement::Break(_) => Ok(()),
+        Stmnt::Switch { body, .. } => check_labels(body, vars, labels, fn_name),
+        Stmnt::Ret(_)
+        | Stmnt::Exp(_)
+        | Stmnt::Null
+        | Stmnt::Goto(_)
+        | Stmnt::Continue(_)
+        | Stmnt::Break(_) => Ok(()),
     }
 }
 
-fn check_gotos<T>(statement: &Statement<T>, labels: &HashSet<Identifier>) -> Result<(), Error> {
+fn check_gotos(statement: &Stmnt, labels: &HashSet<Identifier>) -> Result<(), Error> {
     match statement {
-        Statement::Goto(goto) => {
+        Stmnt::Goto(goto) => {
             if labels.contains(goto) {
                 Ok(())
             } else {
                 Err(Error::UndefinedLabel)
             }
         }
-        Statement::If {
+        Stmnt::If {
             condition: _,
             then,
             r#else,
@@ -140,7 +132,7 @@ fn check_gotos<T>(statement: &Statement<T>, labels: &HashSet<Identifier>) -> Res
             };
             Ok(())
         }
-        Statement::Compound(b) => {
+        Stmnt::Compound(b) => {
             for item in b {
                 if let BlockItem::S(statement) = item {
                     check_gotos(statement, labels)?;
@@ -148,17 +140,15 @@ fn check_gotos<T>(statement: &Statement<T>, labels: &HashSet<Identifier>) -> Res
             }
             Ok(())
         }
-        Statement::While { body, .. }
-        | Statement::DoWhile { body, .. }
-        | Statement::Label { body, .. }
-        | Statement::Switch { body, .. }
-        | Statement::For { body, .. } => check_gotos(body, labels),
+        Stmnt::While { body, .. }
+        | Stmnt::DoWhile { body, .. }
+        | Stmnt::Label { body, .. }
+        | Stmnt::Switch { body, .. }
+        | Stmnt::For { body, .. } => check_gotos(body, labels),
 
-        Statement::Ret(_)
-        | Statement::Exp(_)
-        | Statement::Null
-        | Statement::Break(_)
-        | Statement::Continue(_) => Ok(()),
+        Stmnt::Ret(_) | Stmnt::Exp(_) | Stmnt::Null | Stmnt::Break(_) | Stmnt::Continue(_) => {
+            Ok(())
+        }
     }
 }
 

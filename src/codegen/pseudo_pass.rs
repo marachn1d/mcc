@@ -1,9 +1,9 @@
 use super::assembly;
 use crate::lex::Identifier as TackyIdent;
+use crate::parse::UnOp;
 use crate::parse::VarType;
 use crate::semantics::Attr;
 use assembly::tacky::TackyBinary;
-use assembly::tacky::TackyUnary;
 use assembly::tacky::Value;
 use assembly::x86::AsmType;
 use assembly::Binary;
@@ -57,7 +57,7 @@ const fn get_type(ty: &VarType) -> AsmType {
 }
 
 fn var_type(var: &Identifier, table: &SymbolTable) -> AsmType {
-    let Some(Attr::Automatic(typ) | Attr::Static { r#type: typ, .. }) = table.get(var) else {
+    let Some(Attr::Automatic(typ) | Attr::Static { typ, .. }) = table.get(var) else {
         panic!(
             "unexpected symbol result: {:?} (expected automatic)",
             table.get(var)
@@ -118,7 +118,7 @@ fn convert_function(
         instructions.push([Pseudo::Mov {
             src: Op::Stack(start).into(),
             dst: PseudoOp::PseudoRegister(param_n.clone()),
-            ty: var_type(&param_n, table),
+            ty: var_type(param_n, table),
         }]);
         start += 8;
     }
@@ -153,14 +153,7 @@ fn convert_instruction(
             source_2,
             dst,
         } => {
-            convert_binary(
-                operator,
-                source_1,
-                source_2,
-                dst.into(),
-                instructions,
-                table,
-            );
+            convert_binary(operator, source_1, source_2, dst, instructions, table);
         }
         TackyOp::Return(var) => {
             instructions.push([
@@ -279,18 +272,7 @@ fn push_stack_args(
 ) -> usize {
     let mut byte_count = 0;
     for arg in stack_args.iter().rev() {
-        match arg.clone() {
-            Value::Constant(c) => instructions.push_one(Pseudo::Push(Op::Imm(c.long()).into())),
-
-            Value::Var(c) => instructions.push([
-                Pseudo::Mov {
-                    ty: var_type(&c, table),
-                    src: PseudoOp::PseudoRegister(c),
-                    dst: Register::Ax.into(),
-                },
-                Pseudo::Push(Register::Ax.into()),
-            ]),
-        }
+        push_val(arg, instructions, table);
         byte_count += 8;
     }
     byte_count
@@ -327,14 +309,14 @@ fn convert_funcall(
 
 fn convert_unary(
     instructions: &mut OpVec<Pseudo>,
-    op: TackyUnary,
+    op: UnOp,
     src: Value,
     dst: Identifier,
     table: &SymbolTable,
 ) {
     let ty = val_type(&src, table);
     let src = src.into();
-    if op == TackyUnary::Not {
+    if op == UnOp::Not {
         let dst_ty = var_type(&dst, table);
         let dst = PseudoOp::from(dst);
         instructions.push([
@@ -420,8 +402,6 @@ fn convert_binary(
         }
         Binop::Div(result_register) => {
             let dst = PseudoOp::from(dst);
-            let source_1 = PseudoOp::from(source_1);
-            let source_2 = PseudoOp::from(source_2);
 
             instructions.push([
                 Pseudo::mov(source_1, Register::Ax.into(), src_ty),

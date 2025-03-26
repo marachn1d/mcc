@@ -2,7 +2,7 @@ use super::tacky::Value;
 use super::Identifier;
 use super::InstructionSet;
 use super::Register;
-use crate::parse::UnaryOperator;
+use crate::parse::UnOp;
 use std::fmt::{self, Display, Formatter};
 
 pub type Pseudo = BaseX86<PseudoOp>;
@@ -114,15 +114,6 @@ impl BaseX86<Op> {
     pub const fn allocate_stack(n: i64) -> Self {
         Self::Binary {
             operator: Binary::Sub,
-            op: Op::Imm(n),
-            dst_op: Op::Register(Register::Sp),
-            ty: AsmType::Quadword,
-        }
-    }
-
-    pub const fn deallocate_stack(n: i64) -> Self {
-        Self::Binary {
-            operator: Binary::Add,
             op: Op::Imm(n),
             dst_op: Op::Register(Register::Sp),
             ty: AsmType::Quadword,
@@ -328,13 +319,13 @@ impl Display for Binary {
         })
     }
 }
-impl From<UnaryOperator> for Unary {
-    fn from(op: UnaryOperator) -> Self {
+impl From<UnOp> for Unary {
+    fn from(op: UnOp) -> Self {
         match op {
-            UnaryOperator::Negate => Self::Neg,
-            UnaryOperator::Complement => Self::Not,
+            UnOp::Negate => Self::Neg,
+            UnOp::Complement => Self::Not,
             // PROBABLY BAD
-            UnaryOperator::Not => unreachable!(),
+            UnOp::Not => unreachable!(),
         }
     }
 }
@@ -352,7 +343,7 @@ impl Display for Op {
 
 impl Op {
     fn sized_fmt(&self, size: AsmType) -> String {
-        if let (Self::Register(r)) = self {
+        if let Self::Register(r) = self {
             match size {
                 AsmType::Longword => r.extended().into(),
                 AsmType::Quadword => r.eight_byte().into(),

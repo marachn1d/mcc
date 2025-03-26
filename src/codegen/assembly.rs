@@ -35,7 +35,7 @@ impl From<Attr> for BackendSymbol {
     fn from(attr: Attr) -> Self {
         match attr {
             Attr::Fn { defined, .. } => Self::Fn { defined },
-            Attr::Static { r#type: ty, .. } | Attr::Automatic(ty) => {
+            Attr::Static { typ: ty, .. } | Attr::Automatic(ty) => {
                 let is_static = matches!(attr, Attr::Static { .. });
                 Self::Obj {
                     ty: asm_type(ty),
@@ -47,8 +47,14 @@ impl From<Attr> for BackendSymbol {
 }
 
 pub enum BackendSymbol {
-    Obj { ty: AsmType, is_static: bool },
-    Fn { defined: bool },
+    Obj {
+        ty: AsmType,
+        is_static: bool,
+    },
+    #[allow(dead_code)]
+    Fn {
+        defined: bool,
+    },
 }
 
 #[derive(Debug)]

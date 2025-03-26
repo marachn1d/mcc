@@ -74,7 +74,7 @@ fn semantics(program: parse::Program, stage: Option<CompileStage>) -> Result<Box
 
 #[cfg(feature = "codegen")]
 fn codegen(
-    program: semantics::TypedProgram,
+    program: semantics::typed::Program,
     stage: Option<CompileStage>,
     table: semantics::SymbolTable,
 ) -> Box<[u8]> {

@@ -12,25 +12,16 @@ use assembly::OpVec;
 
 use crate::semantics;
 use assembly::tacky::StaticVar;
-use parse::BinaryOperator as AstBinop;
 use parse::VarType;
+use semantics::typed::{
+    self, Block, BlockItem, Dec, Expr, Fix, FnDec, ForInit, IncDec, Label, Stmnt, VarDec,
+};
 use semantics::Attr;
-use semantics::Declaration as AstDeclaration;
-use semantics::Expression as AstExpression;
-use semantics::ForInit;
 
-use semantics::Label as AstLabel;
-use semantics::TypedProgram as AstProgram;
-
-use parse::ParamList;
 use parse::StorageClass;
 use semantics::StatementLabels;
 
-use semantics::Block as AstBlock;
-use semantics::BlockItem as AstBlockItem;
-use semantics::Statement as AstStatement;
 use semantics::SymbolTable;
-use semantics::TypedExp;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 
@@ -38,28 +29,11 @@ static TEMP_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 static LABEL_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-const fn function_is_global(sc: &Option<StorageClass>) -> bool {
-    matches!(sc, Some(StorageClass::Extern) | None)
-}
-
-pub fn emit(program: AstProgram, symbol_table: &mut SymbolTable) -> Program {
-    let mut tlvs = Vec::with_capacity(program.0.len());
-    for dec in program.0 {
-        if let AstDeclaration::Function {
-            name,
-            params,
-            body,
-            storage_class,
-            r#type,
-        } = dec
-        {
-            if let Some(f) = convert_function(
-                name,
-                body,
-                params,
-                function_is_global(&storage_class),
-                symbol_table,
-            ) {
+pub fn emit(program: typed::Program, symbol_table: &mut SymbolTable) -> Program {
+    let mut tlvs = Vec::with_capacity(program.len());
+    for dec in program {
+        if let Dec::Fn(f) = dec {
+            if let Some(f) = convert_function(f, symbol_table) {
                 tlvs.push(TopLevel::Fn(f));
             }
         }
@@ -69,16 +43,16 @@ pub fn emit(program: AstProgram, symbol_table: &mut SymbolTable) -> Program {
 
     for (name, attr) in symbol_table {
         if let Attr::Static {
-            init: Some(crate::semantics::typecheck::InitialVal::Initial(init)),
-            global,
-            r#type,
+            init: Some(crate::semantics::typecheck::InitialVal::Initial(i)),
+            global: g,
+            typ: t,
         } = attr
         {
             tlvs.push(TopLevel::StaticVar(StaticVar {
                 name: name.clone(),
-                global: *global,
-                init: *init,
-                typ: *r#type,
+                global: *g,
+                init: *i,
+                typ: *t,
             }))
         }
     }
@@ -88,10 +62,13 @@ pub fn emit(program: AstProgram, symbol_table: &mut SymbolTable) -> Program {
 }
 
 fn convert_function(
-    name: Identifier,
-    body: Option<Box<[AstBlockItem<TypedExp>]>>,
-    params: ParamList,
-    global: bool,
+    FnDec {
+        name,
+        params,
+        body,
+        typ: _,
+        sc,
+    }: FnDec,
     table: &mut SymbolTable,
 ) -> Option<FunctionDefinition> {
     let mut body_ops = OpVec::new();
@@ -102,34 +79,33 @@ fn convert_function(
         name: name.clone(),
         params: params.into_iter().map(|param| param.name).collect(),
         body: body_ops.into(),
-        global,
+        global: sc.is_none_or(|sc| sc == StorageClass::Extern),
     })
 }
 
 fn convert_block(
-    block: AstBlock<TypedExp>,
+    block: Block,
     instructions: &mut OpVec<Instruction>,
     fn_name: &Identifier,
     table: &mut SymbolTable,
 ) {
     for block in block {
         match block {
-            AstBlockItem::S(statement) => {
-                convert_statement(statement, instructions, fn_name, table)
-            }
-            AstBlockItem::D(declaration) => convert_declaration(declaration, instructions, table),
+            BlockItem::S(statement) => convert_statement(statement, instructions, fn_name, table),
+            BlockItem::D(Dec::Var(v)) => convert_vardec(v, instructions, table),
+            _ => (),
         };
     }
 }
 
 fn convert_statement(
-    statement: AstStatement<TypedExp>,
+    statement: Stmnt,
     instructions: &mut OpVec<Instruction>,
     fn_name: &Identifier,
     table: &mut SymbolTable,
 ) {
     match statement {
-        AstStatement::DoWhile {
+        Stmnt::DoWhile {
             body,
             condition,
             label,
@@ -152,7 +128,7 @@ fn convert_statement(
                 Instruction::Label(r#break),
             ]);
         }
-        AstStatement::While {
+        Stmnt::While {
             body,
             condition,
             label,
@@ -176,7 +152,7 @@ fn convert_statement(
                 Instruction::Label(r#break),
             ]);
         }
-        AstStatement::For {
+        Stmnt::For {
             init,
             condition,
             post,
@@ -190,22 +166,8 @@ fn convert_statement(
                 end: _,
             } = label.labels();
 
-            match init {
-                Some(ForInit::D {
-                    name,
-                    initializer,
-                    r#type,
-                    sc,
-                }) => convert_declaration(
-                    AstDeclaration::Var {
-                        name,
-                        init: initializer,
-                        storage_class: sc,
-                        r#type,
-                    },
-                    instructions,
-                    table,
-                ),
+            match init.map(|x| *x) {
+                Some(ForInit::D(v)) => convert_vardec(v, instructions, table),
                 Some(ForInit::E(exp)) => {
                     convert_expression(exp, instructions, table);
                 }
@@ -230,28 +192,28 @@ fn convert_statement(
                 Instruction::Label(r#break),
             ])
         }
-        AstStatement::Break(label) => {
+        Stmnt::Break(label) => {
             instructions.push_one(Instruction::Jump {
                 target: label.r#break(),
             });
         }
-        AstStatement::Continue(label) => {
+        Stmnt::Continue(label) => {
             instructions.push_one(Instruction::Jump {
                 target: label.r#continue(),
             });
         }
 
-        AstStatement::Compound(block) => convert_block(block, instructions, fn_name, table),
+        Stmnt::Compound(block) => convert_block(block, instructions, fn_name, table),
 
-        AstStatement::Ret(e) => {
+        Stmnt::Ret(e) => {
             let result = convert_expression(e, instructions, table);
             instructions.push_one(Instruction::Return(result));
         }
-        AstStatement::Null => {}
-        AstStatement::Exp(e) => {
+        Stmnt::Null => {}
+        Stmnt::Exp(e) => {
             let _ = convert_expression(e, instructions, table);
         }
-        AstStatement::If {
+        Stmnt::If {
             condition,
             then,
             r#else: None,
@@ -265,7 +227,7 @@ fn convert_statement(
             convert_statement(*then, instructions, fn_name, table);
             instructions.push_one(Instruction::Label(label));
         }
-        AstStatement::If {
+        Stmnt::If {
             condition,
             then,
             r#else: Some(r#else),
@@ -288,28 +250,28 @@ fn convert_statement(
             instructions.push_one(Instruction::Label(end));
         }
 
-        AstStatement::Label {
-            name: AstLabel::Named(name),
+        Stmnt::Label {
+            name: Label::Named(name),
             body,
         } => {
             instructions.push_one(Instruction::Label(named_label(&name, fn_name)));
             convert_statement(*body, instructions, fn_name, table);
         }
-        AstStatement::Label {
-            name: AstLabel::Case { val, id },
+        Stmnt::Label {
+            name: Label::Case { c, id },
             body,
         } => {
-            instructions.push_one(Instruction::Label(id.case(val)));
+            instructions.push_one(Instruction::Label(id.case(c)));
             convert_statement(*body, instructions, fn_name, table);
         }
-        AstStatement::Label {
-            name: AstLabel::Default(id),
+        Stmnt::Label {
+            name: Label::Default(id),
             body,
         } => {
             instructions.push_one(Instruction::Label(id.default()));
             convert_statement(*body, instructions, fn_name, table);
         }
-        AstStatement::Switch {
+        Stmnt::Switch {
             val,
             label,
             cases,
@@ -325,7 +287,7 @@ fn convert_statement(
                     Instruction::Binary {
                         operator: TackyBinary::EqualTo,
                         source_1: switch_val.clone(),
-                        source_2: Value::Constant(Constant::Integer(case)),
+                        source_2: Value::Constant(case),
                         dst: Value::Var(target_var.clone()),
                     },
                     // jump to its label
@@ -345,52 +307,41 @@ fn convert_statement(
             convert_statement(*body, instructions, fn_name, table);
             instructions.push_one(Instruction::Label(end_label));
         }
-        AstStatement::Goto(label) => instructions.push_one(Instruction::Jump {
+        Stmnt::Goto(label) => instructions.push_one(Instruction::Jump {
             target: named_label(&label, fn_name),
         }),
     }
 }
 
-fn convert_declaration(
-    dec: AstDeclaration<TypedExp>,
-    instructions: &mut OpVec<Instruction>,
-    table: &mut SymbolTable,
-) {
-    match dec {
-        AstDeclaration::Function { body: None, .. } => (),
-
-        AstDeclaration::Function { body: Some(_), .. } => unreachable!(),
-
-        AstDeclaration::Var {
-            name,
-            init: Some(init),
-            storage_class: None | Some(StorageClass::Extern),
-            r#type,
-        } => {
-            let result = convert_expression(init, instructions, table);
-            instructions.push_one(Instruction::Copy {
-                src: result,
-                dst: Value::Var(name),
-            })
-        }
-
-        AstDeclaration::Var { .. } => {}
+fn convert_vardec(dec: VarDec, instructions: &mut OpVec<Instruction>, table: &mut SymbolTable) {
+    if let VarDec {
+        name,
+        init: Some(init),
+        sc: None | Some(StorageClass::Extern),
+        typ: _,
+    } = dec
+    {
+        let result = convert_expression(init, instructions, table);
+        instructions.push_one(Instruction::Copy {
+            src: result,
+            dst: Value::Var(name),
+        })
     }
 }
 
 fn convert_expression(
-    TypedExp { r#type: typ, exp }: TypedExp,
+    exp: Expr,
     instructions: &mut OpVec<Instruction>,
     table: &mut SymbolTable,
 ) -> Value {
-    match *exp {
-        AstExpression::Cast { target, exp } if target == typ => {
-            convert_expression(exp, instructions, table)
+    match exp {
+        Expr::Cast { target, exp, ty } if target == ty => {
+            convert_expression(*exp, instructions, table)
         }
 
-        AstExpression::Cast { target, exp } => {
-            let res = convert_expression(exp, instructions, table);
-            let dst = Value::Var(new_var(typ, r#table));
+        Expr::Cast { target, exp, ty } => {
+            let res = convert_expression(*exp, instructions, table);
+            let dst = Value::Var(new_var(ty, r#table));
             // add dst to symbol table
             //
             instructions.push_one(match target {
@@ -407,8 +358,8 @@ fn convert_expression(
 
             dst
         }
-        AstExpression::Const(c) => Value::Constant(c),
-        AstExpression::FunctionCall { name, args } => {
+        Expr::Const { cnst: c, ty: _ } => Value::Constant(c),
+        Expr::FunctionCall { name, args, ty: _ } => {
             let mut args_vec = Vec::new();
             for arg in args {
                 args_vec.push(convert_expression(arg, instructions, table));
@@ -421,33 +372,34 @@ fn convert_expression(
             });
             result
         }
-        AstExpression::Assignment { from: var, to: rhs } => {
-            let AstExpression::Var(var) = *var.exp else {
+        Expr::Assignment { from, to, ty: _ } => {
+            let Expr::Var { name: v, .. } = *from else {
                 unreachable!()
             };
-            let result = convert_expression(rhs, instructions, table);
-            let var = Value::Var(var);
+            let result = convert_expression(*to, instructions, table);
+            let var = Value::Var(v);
             instructions.push_one(Instruction::Copy {
                 src: result,
                 dst: var.clone(),
             });
             var
         }
-        AstExpression::Binary {
+        Expr::Binary {
             operator,
             left,
             right,
+            ty,
         } => match process_binop(operator) {
             ProcessedBinop::LogAnd => {
-                let source_1 = convert_expression(left, instructions, table);
+                let source_1 = convert_expression(*left, instructions, table);
                 let false_label = and_label();
                 let end_label = end_label();
-                let result = Value::Var(new_var(typ, table));
+                let result = Value::Var(new_var(ty, table));
                 instructions.push_one(Instruction::JumpIfZero {
                     condition: source_1,
                     target: false_label.clone(),
                 });
-                let source_2 = convert_expression(right, instructions, table);
+                let source_2 = convert_expression(*right, instructions, table);
                 instructions.push([
                     Instruction::JumpIfZero {
                         condition: source_2,
@@ -470,16 +422,16 @@ fn convert_expression(
                 result
             }
             ProcessedBinop::LogOr => {
-                let source_1 = convert_expression(left, instructions, table);
+                let source_1 = convert_expression(*left, instructions, table);
                 let true_label = or_label();
                 let end_label = end_label();
-                let result = Value::Var(new_var(typ, table));
+                let result = Value::Var(new_var(ty, table));
                 // if source 1 is true we jump to true label
                 instructions.push_one(Instruction::JumpIfNotZero {
                     condition: source_1,
                     target: true_label.clone(),
                 });
-                let source_2 = convert_expression(right, instructions, table);
+                let source_2 = convert_expression(*right, instructions, table);
                 instructions.push([
                     Instruction::JumpIfNotZero {
                         condition: source_2,
@@ -503,9 +455,9 @@ fn convert_expression(
             }
 
             ProcessedBinop::Normal(operator) => {
-                let source_1 = convert_expression(left, instructions, table);
-                let source_2 = convert_expression(right, instructions, table);
-                let dst = Value::Var(new_var(typ, table));
+                let source_1 = convert_expression(*left, instructions, table);
+                let source_2 = convert_expression(*right, instructions, table);
+                let dst = Value::Var(new_var(ty, table));
                 let binary = Instruction::Binary {
                     operator,
                     source_1,
@@ -516,8 +468,8 @@ fn convert_expression(
                 dst
             }
             ProcessedBinop::Compound(op) => {
-                let dst = convert_expression(left, instructions, table);
-                let modifier = convert_expression(right, instructions, table);
+                let dst = convert_expression(*left, instructions, table);
+                let modifier = convert_expression(*right, instructions, table);
                 let binary = Instruction::Binary {
                     operator: op.into(),
                     source_1: dst.clone(),
@@ -529,14 +481,14 @@ fn convert_expression(
             }
         },
 
-        //AstExpression::Nested(e) => {}
-        AstExpression::Conditional {
+        Expr::Conditional {
             condition,
             r#true,
             r#false,
+            ty,
         } => {
-            let c = convert_expression(condition, instructions, table);
-            let result = Value::Var(new_var(typ, table));
+            let c = convert_expression(*condition, instructions, table);
+            let result = Value::Var(new_var(ty, table));
             let false_label = conditional_label();
 
             let end = conditional_label();
@@ -544,7 +496,7 @@ fn convert_expression(
                 condition: c,
                 target: false_label.clone(),
             });
-            let true_res = convert_expression(r#true, instructions, table);
+            let true_res = convert_expression(*r#true, instructions, table);
             instructions.push([
                 Instruction::Copy {
                     src: true_res,
@@ -555,7 +507,7 @@ fn convert_expression(
                 },
                 Instruction::Label(false_label),
             ]);
-            let false_res = convert_expression(r#false, instructions, table);
+            let false_res = convert_expression(*r#false, instructions, table);
             instructions.push([
                 Instruction::Copy {
                     src: false_res,
@@ -565,9 +517,13 @@ fn convert_expression(
             ]);
             result
         }
-        AstExpression::Unary { operator, operand } => {
-            let tmp = new_var(typ, table);
-            let factor_result = convert_expression(operand, instructions, table);
+        Expr::Unary {
+            operator,
+            operand,
+            ty,
+        } => {
+            let tmp = new_var(ty, table);
+            let factor_result = convert_expression(*operand, instructions, table);
             let unary = Instruction::Unary {
                 op: operator,
                 source: factor_result,
@@ -576,64 +532,56 @@ fn convert_expression(
             instructions.push_one(unary);
             Value::Var(tmp)
         }
-        AstExpression::Nested(e) => convert_expression(e, instructions, table),
-        AstExpression::Var(v) => Value::Var(v),
-        AstExpression::PrefixIncrement(exp) => {
+        Expr::Nested { inner: e, .. } => convert_expression(*e, instructions, table),
+        Expr::Var { name: v, .. } => Value::Var(v),
+        Expr::IncDec {
+            fix: Fix::Pre,
+            op,
+            ty: _,
+            exp,
+        } => {
+            let expression_result = convert_expression(*exp, instructions, table);
+            let op = match op {
+                IncDec::Inc => TackyBinary::Add,
+                IncDec::Dec => TackyBinary::Subtract,
+            };
+
             //prefix
-            let expression_result = convert_expression(exp, instructions, table);
-            let unary = Instruction::Binary {
-                operator: TackyBinary::Add,
+            instructions.push_one(Instruction::Binary {
+                operator: op,
                 source_1: expression_result.clone(),
                 source_2: Value::Constant(Constant::Integer(1)),
                 dst: expression_result.clone(),
-            };
-            instructions.push_one(unary);
+            });
             expression_result
         }
-        AstExpression::PrefixDecrement(exp) => {
-            let expression_result = convert_expression(exp, instructions, table);
-            let unary = Instruction::Binary {
-                operator: TackyBinary::Subtract,
-                source_1: expression_result.clone(),
-                source_2: Value::Constant(Constant::Integer(1)),
-                dst: expression_result.clone(),
+        Expr::IncDec {
+            fix: Fix::Post,
+            op,
+            ty,
+            exp,
+        } => {
+            let res = convert_expression(*exp, instructions, table);
+            let op = match op {
+                IncDec::Inc => TackyBinary::Add,
+                IncDec::Dec => TackyBinary::Subtract,
             };
-            instructions.push_one(unary);
-            expression_result
-        }
-        AstExpression::PostfixDecrement(exp) => {
-            let expression_result = convert_expression(exp, instructions, table);
-            let old_value_location = new_var(typ, table);
+
+            let old_val = Value::Var(new_var(ty, table));
+            //prefix
             instructions.push([
                 Instruction::Copy {
-                    src: expression_result.clone(),
-                    dst: Value::Var(old_value_location.clone()),
+                    src: res.clone(),
+                    dst: old_val.clone(),
                 },
                 Instruction::Binary {
-                    operator: TackyBinary::Subtract,
-                    source_1: expression_result.clone(),
+                    operator: op,
+                    source_1: res.clone(),
                     source_2: Value::Constant(Constant::Integer(1)),
-                    dst: expression_result,
+                    dst: res.clone(),
                 },
             ]);
-            Value::Var(old_value_location)
-        }
-        AstExpression::PostfixIncrement(exp) => {
-            let expression_result = convert_expression(exp, instructions, table);
-            let old_value_location = new_var(typ, table);
-            instructions.push([
-                Instruction::Copy {
-                    src: expression_result.clone(),
-                    dst: Value::Var(old_value_location.clone()),
-                },
-                Instruction::Binary {
-                    operator: TackyBinary::Add,
-                    source_1: expression_result.clone(),
-                    source_2: Value::Constant(Constant::Integer(1)),
-                    dst: expression_result,
-                },
-            ]);
-            Value::Var(old_value_location)
+            old_val
         }
     }
 }
@@ -675,8 +623,8 @@ impl From<CompoundOp> for TackyBinary {
     }
 }
 
-const fn process_binop(binop: AstBinop) -> ProcessedBinop {
-    use AstBinop as Pre;
+const fn process_binop(binop: parse::Bop) -> ProcessedBinop {
+    use parse::Bop as Pre;
     use ProcessedBinop as Post;
     match binop {
         Pre::Equals => unreachable!(),

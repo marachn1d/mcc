@@ -2,8 +2,8 @@ mod ast;
 mod specifier_list;
 
 pub use ast::{
-    Arr, BinOp, Binary, Block, BlockItem, Dec, Expr, FnDec, FnType, ForInit, Label, Param,
-    ParamList, Program, Stmnt, StorageClass, UnOp, Unary, VarDec, VarType,
+    Arr, Binary, Block, BlockItem, Bop, Dec, Expr, FnDec, FnType, ForInit, Label, Param, ParamList,
+    Program, Stmnt, StorageClass, UnOp, Unary, VarDec, VarType,
 };
 
 use super::lex::Identifier;
@@ -411,11 +411,14 @@ fn expression(tokens: &mut TokenIter, min_precedence: Option<u8>) -> Result<Expr
 
     while let Some(operator) = binary_operator(tokens, precedence) {
         match operator {
-            BinOp::Equals => {
-                let right = expression(tokens, Some(operator.precedence()))?;
-                left = Expr::Assignment((left, right).into());
+            Bop::Equals => {
+                let right = Box::from(expression(tokens, Some(operator.precedence()))?);
+                left = Expr::Assignment {
+                    from: left.into(),
+                    to: right,
+                }
             }
-            BinOp::Ternary => {
+            Bop::Ternary => {
                 let middle = expression(tokens, None)?;
                 tokens.consume(Token::Colon)?;
                 let right = expression(tokens, Some(operator.precedence()))?;
@@ -446,46 +449,46 @@ fn expression(tokens: &mut TokenIter, min_precedence: Option<u8>) -> Result<Expr
     Ok(left)
 }
 
-fn binary_operator(tokens: &mut TokenIter, min_precedence: u8) -> Option<BinOp> {
+fn binary_operator(tokens: &mut TokenIter, min_precedence: u8) -> Option<Bop> {
     let token = match tokens.peek()? {
-        Token::Plus => Some(BinOp::Add),
-        Token::Minus => Some(BinOp::Subtract),
-        Token::Asterisk => Some(BinOp::Multiply),
-        Token::Slash => Some(BinOp::Divide),
-        Token::Percent => Some(BinOp::Remainder),
+        Token::Plus => Some(Bop::Add),
+        Token::Minus => Some(Bop::Subtract),
+        Token::Asterisk => Some(Bop::Multiply),
+        Token::Slash => Some(Bop::Divide),
+        Token::Percent => Some(Bop::Remainder),
 
-        Token::LeftShift => Some(BinOp::LeftShift),
-        Token::RightShift => Some(BinOp::RightShift),
-        Token::Ampersand => Some(BinOp::BitAnd),
-        Token::Bar => Some(BinOp::BitOr),
-        Token::Caret => Some(BinOp::Xor),
+        Token::LeftShift => Some(Bop::LeftShift),
+        Token::RightShift => Some(Bop::RightShift),
+        Token::Ampersand => Some(Bop::BitAnd),
+        Token::Bar => Some(Bop::BitOr),
+        Token::Caret => Some(Bop::Xor),
 
-        Token::LogicalAnd => Some(BinOp::LogAnd),
-        Token::LogicalOr => Some(BinOp::LogOr),
+        Token::LogicalAnd => Some(Bop::LogAnd),
+        Token::LogicalOr => Some(Bop::LogOr),
 
-        Token::EqualTo => Some(BinOp::EqualTo),
-        Token::NotEqual => Some(BinOp::NotEqual),
-        Token::LessThan => Some(BinOp::LessThan),
-        Token::GreaterThan => Some(BinOp::GreaterThan),
-        Token::Leq => Some(BinOp::Leq),
-        Token::Geq => Some(BinOp::Geq),
+        Token::EqualTo => Some(Bop::EqualTo),
+        Token::NotEqual => Some(Bop::NotEqual),
+        Token::LessThan => Some(Bop::LessThan),
+        Token::GreaterThan => Some(Bop::GreaterThan),
+        Token::Leq => Some(Bop::Leq),
+        Token::Geq => Some(Bop::Geq),
 
-        Token::Equals => Some(BinOp::Equals),
-        Token::PlusEqual => Some(BinOp::PlusEquals),
-        Token::MinusEqual => Some(BinOp::MinusEquals),
-        Token::TimesEqual => Some(BinOp::TimesEqual),
-        Token::DivEqual => Some(BinOp::DivEqual),
-        Token::PercentEqual => Some(BinOp::RemEqual),
+        Token::Equals => Some(Bop::Equals),
+        Token::PlusEqual => Some(Bop::PlusEquals),
+        Token::MinusEqual => Some(Bop::MinusEquals),
+        Token::TimesEqual => Some(Bop::TimesEqual),
+        Token::DivEqual => Some(Bop::DivEqual),
+        Token::PercentEqual => Some(Bop::RemEqual),
 
-        Token::BitAndEqual => Some(BinOp::BitAndEqual),
+        Token::BitAndEqual => Some(Bop::BitAndEqual),
 
-        Token::BitOrEqual => Some(BinOp::BitOrEqual),
+        Token::BitOrEqual => Some(Bop::BitOrEqual),
 
-        Token::BitXorEqual => Some(BinOp::BitXorEqual),
-        Token::LeftShiftEqual => Some(BinOp::LeftShiftEqual),
-        Token::RightShiftEqual => Some(BinOp::RightShiftEqual),
+        Token::BitXorEqual => Some(Bop::BitXorEqual),
+        Token::LeftShiftEqual => Some(Bop::LeftShiftEqual),
+        Token::RightShiftEqual => Some(Bop::RightShiftEqual),
 
-        Token::QuestionMark => Some(BinOp::Ternary),
+        Token::QuestionMark => Some(Bop::Ternary),
 
         _ => None,
     }?;
@@ -496,7 +499,6 @@ fn binary_operator(tokens: &mut TokenIter, min_precedence: u8) -> Option<BinOp> 
         None
     }
 }
-use super::lex;
 fn factor(tokens: &mut TokenIter) -> Result<Expr, Error> {
     let factor = match tokens.consume_any()? {
         Token::Increment => {

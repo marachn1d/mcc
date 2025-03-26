@@ -82,7 +82,10 @@ pub enum BlockItem {
 
 #[derive(Debug, Clone)]
 pub enum Expr {
-    Assignment(Box<(Self, Self)>),
+    Assignment {
+        from: Box<Self>,
+        to: Box<Self>,
+    },
     Bin(Binary),
     Cast {
         target: VarType,
@@ -153,13 +156,13 @@ pub enum UnOp {
 
 #[derive(Debug, Clone)]
 pub struct Binary {
-    pub operator: BinOp,
+    pub operator: Bop,
     pub left: Box<Expr>,
     pub right: Box<Expr>,
 }
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
-pub enum BinOp {
+pub enum Bop {
     Add,
     Subtract,
     Multiply,
@@ -195,7 +198,7 @@ pub enum BinOp {
     Ternary,
 }
 
-impl BinOp {
+impl Bop {
     pub const fn precedence(&self) -> u8 {
         match self {
             Self::Equals

@@ -3,13 +3,12 @@ use super::InstructionSet;
 use crate::lex::Constant;
 use crate::parse;
 use crate::semantics::StaticInit;
-use parse::UnaryOperator;
+use parse::UnOp;
 use parse::VarType;
 
 //pub type Program = super::Program<Instruction>;
 //pub type FunctionDefinition = super::FunctionDefinition<Instruction>;
 
-pub type TackyUnary = UnaryOperator;
 impl InstructionSet for Instruction {}
 
 #[derive(Debug)]
@@ -51,7 +50,7 @@ pub enum Instruction {
     },
     Return(Value),
     Unary {
-        op: TackyUnary,
+        op: UnOp,
         source: Value,
         dst: Identifier,
     },

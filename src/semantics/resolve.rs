@@ -3,19 +3,23 @@ use crate::parse;
 use crate::parse::BlockItem as AstBlockItem;
 
 use crate::parse::Block as AstBlock;
-use crate::parse::Expression as AstExpression;
+use crate::parse::Expr as AstExpression;
 use crate::parse::ForInit as AstForInit;
 use crate::parse::Program as AstProgram;
-use crate::parse::Statement as AstStatement;
+use crate::parse::Stmnt as AstStatement;
+
+use crate::parse::VarDec as AstVDec;
+
+use crate::parse::FnDec as AstFnDec;
 use parse::Binary as AstBinary;
-use parse::Declaration as AstDeclaration;
+use parse::Dec as AstDeclaration;
 use parse::StorageClass;
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
 static COUNTER: AtomicU32 = AtomicU32::new(0);
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 type VarMap = HashMap<Identifier, Var>;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -42,13 +46,12 @@ impl Var {
     }
 }
 
-pub fn resolve(AstProgram(decs): &mut AstProgram) -> Result<HashSet<Identifier>, Error> {
+pub fn resolve(AstProgram(decs): &mut AstProgram) -> Result<(), Error> {
     let mut map: VarMap = VarMap::new();
     for dec in decs {
         resolve_top_level_dec(dec, &mut map)?;
     }
-    let vars: HashSet<Identifier> = map.into_values().map(|x| x.name).collect();
-    Ok(vars)
+    Ok(())
 }
 
 fn insert_fndec(
@@ -111,7 +114,7 @@ fn insert_local_var(
 
 fn resolve_top_level_dec(dec: &mut AstDeclaration, map: &mut VarMap) -> Result<(), Error> {
     match dec {
-        AstDeclaration::Var { name, .. } => {
+        AstDeclaration::Var(AstVDec { name, .. }) => {
             map.insert(
                 name.clone(),
                 Var {
@@ -122,14 +125,14 @@ fn resolve_top_level_dec(dec: &mut AstDeclaration, map: &mut VarMap) -> Result<(
             );
         }
 
-        AstDeclaration::Function {
+        AstDeclaration::Fn(AstFnDec {
             name,
             params,
-            storage_class,
+            sc,
             body,
-            r#type: _,
-        } => {
-            map.insert(name.clone(), Var::new_fn(name, storage_class));
+            typ: _,
+        }) => {
+            map.insert(name.clone(), Var::new_fn(name, sc));
             let mut inner_map = new_scope(map);
             resolve_param(params, &mut inner_map)?;
             if let Some(body) = body {
@@ -174,7 +177,7 @@ fn resolve_param(params: &mut super::ParamList, map: &mut VarMap) -> Result<(), 
 }
 
 fn resolve_block(block: &mut AstBlock, map: &mut VarMap) -> Result<(), Error> {
-    for item in &mut block.0 {
+    for item in block {
         resolve_block_item(item, map)?;
     }
     Ok(())
@@ -203,27 +206,25 @@ fn resolve_var_dec(
 
 fn resolve_declaration(dec: &mut AstDeclaration, map: &mut VarMap) -> Result<(), Error> {
     match dec {
-        AstDeclaration::Var {
+        AstDeclaration::Var(AstVDec {
             name,
             init,
-            storage_class,
-            r#type: _,
-        } => resolve_var_dec(name, init, storage_class, map),
+            sc,
+            typ: _,
+        }) => resolve_var_dec(name, init, sc, map),
 
-        AstDeclaration::Function { body: Some(_), .. } => Err(Error::LocalFnDecBody),
-        AstDeclaration::Function { storage_class, .. }
-            if *storage_class == Some(StorageClass::Static) =>
-        {
+        AstDeclaration::Fn(AstFnDec { body: Some(_), .. }) => Err(Error::LocalFnDecBody),
+        AstDeclaration::Fn(AstFnDec { sc, .. }) if *sc == Some(StorageClass::Static) => {
             Err(Error::StaticBlockScopeFn)
         }
 
-        AstDeclaration::Function {
+        AstDeclaration::Fn(AstFnDec {
             body: None,
             name,
             params,
-            storage_class,
-            r#type: _,
-        } => resolve_fn_dec(name, &mut None, params, storage_class, map),
+            sc,
+            typ: _,
+        }) => resolve_fn_dec(name, &mut None, params, sc, map),
     }
 }
 
@@ -300,25 +301,22 @@ fn new_scope(map: &VarMap) -> VarMap {
 fn resolve_init(init: &mut Option<AstForInit>, map: &mut VarMap) -> Result<(), Error> {
     match init {
         None => Ok(()),
-        Some(AstForInit::D(dec)) => {
-            resolve_var_dec(&mut dec.name, &mut dec.init, &mut dec.storage_class, map)
-        }
+        Some(AstForInit::D(dec)) => resolve_var_dec(&mut dec.name, &mut dec.init, &mut dec.sc, map),
         Some(AstForInit::E(exp)) => resolve_expression(exp, map),
     }
 }
 
 fn resolve_expression(exp: &mut AstExpression, map: &mut VarMap) -> Result<(), Error> {
     match exp {
-        AstExpression::Assignment(a) => {
-            let (left, right): &mut (AstExpression, AstExpression) = &mut (*a);
-            if left.lvalue() {
-                resolve_expression(left, map)?;
-                resolve_expression(right, map)
+        AstExpression::Assignment { from, to } => {
+            if from.lvalue() {
+                resolve_expression(from, map)?;
+                resolve_expression(to, map)
             } else {
                 Err(Error::InvalidLval)
             }
         }
-        AstExpression::Binary(AstBinary {
+        AstExpression::Bin(AstBinary {
             left,
             right,
             operator,
@@ -340,7 +338,7 @@ fn resolve_expression(exp: &mut AstExpression, map: &mut VarMap) -> Result<(), E
             resolve_expression(r#false, map)
         }
 
-        AstExpression::Binary(AstBinary { left, right, .. }) => {
+        AstExpression::Bin(AstBinary { left, right, .. }) => {
             resolve_expression(left, map)?;
             resolve_expression(right, map)
         }
