@@ -107,8 +107,7 @@ fn convert_function(
         .zip(REGISTER_ARGS.map(|x| PseudoOp::Normal(Op::Register(x))))
     {
         instructions.push([Pseudo::Mov {
-            src,
-            dst: PseudoOp::PseudoRegister(dst.clone()),
+            regs: (src, PseudoOp::PseudoRegister(dst.clone())),
             ty: var_type(dst, table),
         }])
     }
@@ -116,8 +115,10 @@ fn convert_function(
     let mut start = 16;
     for param_n in params.iter().skip(6) {
         instructions.push([Pseudo::Mov {
-            src: Op::Stack(start).into(),
-            dst: PseudoOp::PseudoRegister(param_n.clone()),
+            regs: (
+                Op::Stack(start).into(),
+                PseudoOp::PseudoRegister(param_n.clone()),
+            ),
             ty: var_type(param_n, table),
         }]);
         start += 8;
@@ -159,8 +160,7 @@ fn convert_instruction(
             instructions.push([
                 Pseudo::Mov {
                     ty: val_type(&var, table),
-                    src: var.into(),
-                    dst: Op::Register(Register::Ax).pseudo(),
+                    regs: (var.into(), Op::Register(Register::Ax).pseudo()),
                 },
                 Pseudo::Ret,
             ]);
@@ -171,8 +171,7 @@ fn convert_instruction(
         TackyOp::Copy { src, dst } => {
             instructions.push_one(Pseudo::Mov {
                 ty: val_type(&src, table),
-                src: src.into(),
-                dst: dst.into(),
+                regs: (src.into(), dst.into()),
             });
         }
         TackyOp::JumpIfZero { condition, target } => {
@@ -203,8 +202,7 @@ fn convert_instruction(
         }
         TackyOp::Truncate { src, dst } => {
             instructions.push_one(Pseudo::Mov {
-                src: src.into(),
-                dst: dst.into(),
+                regs: (src.into(), dst.into()),
                 ty: AsmType::Longword,
             });
         }
@@ -257,8 +255,7 @@ fn push_val(val: &Value, instructions: &mut OpVec<Pseudo>, table: &SymbolTable) 
         instructions.push([
             Pseudo::Mov {
                 ty: AsmType::Longword,
-                src: convert_val(val),
-                dst: Op::Register(Register::Ax).pseudo(),
+                regs: (convert_val(val), Op::Register(Register::Ax).pseudo()),
             },
             Pseudo::Push(Register::Ax.into()),
         ])
@@ -302,8 +299,7 @@ fn convert_funcall(
 
     instructions.push_one(Pseudo::Mov {
         ty: val_type(&dst, table),
-        src: Register::Ax.into(),
-        dst: dst.into(),
+        regs: (Register::Ax.into(), dst.into()),
     });
 }
 
@@ -322,13 +318,11 @@ fn convert_unary(
         instructions.push([
             Pseudo::Cmp {
                 ty,
-                left: Op::Imm(0).into(),
-                right: src,
+                regs: (Op::Imm(0).into(), src),
             },
             Pseudo::Mov {
                 ty: dst_ty,
-                src: Op::Imm(0).into(),
-                dst: dst.clone(),
+                regs: (Op::Imm(0).into(), dst.clone()),
             },
             Pseudo::SetCC {
                 condition: CondCode::E,
@@ -340,8 +334,7 @@ fn convert_unary(
         instructions.push([
             Pseudo::Mov {
                 ty,
-                src,
-                dst: dst.clone(),
+                regs: (src, dst.clone()),
             },
             Pseudo::Unary {
                 ty,
@@ -361,8 +354,7 @@ fn convert_conditional_jump(
     [
         Pseudo::Cmp {
             ty,
-            left: Op::Imm(0).into(),
-            right: condition.into(),
+            regs: (Op::Imm(0).into(), condition.into()),
         },
         Pseudo::JmpCC {
             condition: code,

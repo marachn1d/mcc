@@ -19,13 +19,11 @@ impl InstructionSet for Pseudo {}
 pub enum BaseX86<T: Operand> {
     Mov {
         ty: AsmType,
-        src: T,
-        dst: T,
+        regs: OpPair<T>,
     },
     Movsx {
         ty: AsmType,
-        src: T,
-        dst: T,
+        regs: OpPair<T>,
     },
     Unary {
         operator: Unary,
@@ -34,8 +32,7 @@ pub enum BaseX86<T: Operand> {
     },
     Binary {
         operator: Binary,
-        op: T,
-        dst_op: T,
+        regs: OpPair<T>,
         ty: AsmType,
     },
     Push(T),
@@ -47,9 +44,8 @@ pub enum BaseX86<T: Operand> {
     },
     Cdq(AsmType),
     Cmp {
-        left: T,
-        right: T,
         ty: AsmType,
+        regs: OpPair<T>,
     },
     Jmp(Identifier),
     JmpCC {
@@ -62,6 +58,8 @@ pub enum BaseX86<T: Operand> {
     },
     Label(Identifier),
 }
+
+pub type OpPair<T: Operand> = (T, T);
 
 #[derive(Clone, Debug)]
 pub enum CondCode {
@@ -92,38 +90,66 @@ impl Display for CondCode {
 
 impl BaseX86<PseudoOp> {
     pub const fn allocate_stack(n: i64) -> Self {
-        Self::Binary {
-            operator: Binary::Sub,
-            op: Op::Imm(n).pseudo(),
-            dst_op: Op::Register(Register::Sp).pseudo(),
-            ty: AsmType::Quadword,
-        }
+        Self::binary(
+            Binary::Sub,
+            Op::Imm(n).pseudo(),
+            Op::Register(Register::Sp).pseudo(),
+            AsmType::Quadword,
+        )
     }
 
     pub const fn deallocate_stack(n: i64) -> Self {
-        Self::Binary {
-            operator: Binary::Add,
-            op: Op::Imm(n).pseudo(),
-            dst_op: Op::Register(Register::Sp).pseudo(),
-            ty: AsmType::Quadword,
-        }
+        Self::binary(
+            Binary::Add,
+            Op::Imm(n).pseudo(),
+            Op::Register(Register::Sp).pseudo(),
+            AsmType::Quadword,
+        )
     }
+}
+
+#[derive(Clone, Debug)]
+enum OpRules {
+    One(OpRule, PseudoOp),
+    Two(PairRule, (Op, Op)),
+}
+
+#[derive(Copy, Clone, Debug)]
+enum OpRule {
+    NeedsReg,
+    NeedsDword,
+}
+
+#[derive(Copy, Clone, Debug)]
+enum PairRule {
+    OneMem,
+    NoMemDst,
+    Rl(OpRule),
+    Rr(OpRule),
+    RBoth((OpRule, OpRule)),
 }
 
 impl BaseX86<Op> {
     pub const fn allocate_stack(n: i64) -> Self {
-        Self::Binary {
-            operator: Binary::Sub,
-            op: Op::Imm(n),
-            dst_op: Op::Register(Register::Sp),
-            ty: AsmType::Quadword,
-        }
+        Self::binary(
+            Binary::Sub,
+            Op::Imm(n),
+            Op::Register(Register::Sp),
+            AsmType::Quadword,
+        )
     }
 }
 
 impl<T: Operand> BaseX86<T> {
     pub const fn mov(src: T, dst: T, ty: AsmType) -> Self {
-        Self::Mov { dst, src, ty }
+        Self::Mov {
+            regs: (src, dst),
+            ty,
+        }
+    }
+
+    pub const fn cmp(s1: T, s2: T, ty: AsmType) -> Self {
+        Self::Mov { regs: (s1, s2), ty }
     }
 
     #[allow(dead_code)]
@@ -135,11 +161,10 @@ impl<T: Operand> BaseX86<T> {
         }
     }
 
-    pub const fn binary(operator: Binary, op: T, dst_op: T, ty: AsmType) -> Self {
+    pub const fn binary(operator: Binary, op: T, dst: T, ty: AsmType) -> Self {
         Self::Binary {
             operator,
-            op,
-            dst_op,
+            regs: (op, dst),
             ty,
         }
     }
@@ -148,15 +173,10 @@ impl<T: Operand> BaseX86<T> {
         Self::Idiv { divisor, ty }
     }
 
-    pub const fn cmp(left: T, right: T, ty: AsmType) -> Self {
-        Self::Cmp { left, right, ty }
-    }
-
     pub const fn movsx(src: T, dst: T) -> Self {
-        Self::Mov {
+        Self::Movsx {
             ty: AsmType::Quadword,
-            src,
-            dst,
+            regs: (src, dst),
         }
     }
 }
@@ -180,7 +200,10 @@ impl Display for X86 {
             Self::Push(Op::Register(r)) => write!(f, "pushq {}", r.eight_byte()),
             Self::Push(op) => write!(f, "pushq {op}"),
 
-            Self::Mov { src, dst, ty } => {
+            Self::Mov {
+                regs: (src, dst),
+                ty,
+            } => {
                 write!(f, "mov{ty}  {}, {}", src.sized_fmt(*ty), dst.sized_fmt(*ty))
             }
             Self::Ret => write!(f, "movq %rbp, %rsp\n\tpopq %rbp\n\tret"),
@@ -191,21 +214,19 @@ impl Display for X86 {
             } => write!(f, "{operator}{ty} {}", operand.sized_fmt(*ty)),
             Self::Binary {
                 operator: operator @ (Binary::ShiftLeft | Binary::ShiftRight),
-                op: Op::Register(r),
-                dst_op,
+                regs: (Op::Register(r), dst),
                 ty,
             } => {
                 write!(
                     f,
                     "{operator}{ty} {reg}, {}",
-                    dst_op.sized_fmt(*ty),
+                    dst.sized_fmt(*ty),
                     reg = r.one_byte(),
                 )
             }
             Self::Binary {
                 operator,
-                op,
-                dst_op,
+                regs: (op, dst_op),
                 ty,
             } => {
                 write!(
@@ -222,9 +243,12 @@ impl Display for X86 {
                 write!(f, "cdq")
             }
             Self::Cdq(AsmType::Quadword) => {
-                write!(f, "cdo")
+                write!(f, "cqo")
             }
-            Self::Cmp { left, right, ty } => {
+            Self::Cmp {
+                regs: (left, right),
+                ty,
+            } => {
                 write!(
                     f,
                     "cmp{ty} {}, {}",
@@ -244,7 +268,10 @@ impl Display for X86 {
             Self::Label(label) => {
                 write!(f, "L{label}:")
             }
-            Self::Movsx { src, dst, ty } => {
+            Self::Movsx {
+                regs: (src, dst),
+                ty,
+            } => {
                 write!(f, "movslq {}, {}", src.sized_fmt(*ty), dst.sized_fmt(*ty))
             }
         }

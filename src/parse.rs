@@ -1,4 +1,4 @@
-mod ast;
+pub mod ast;
 mod specifier_list;
 
 pub use ast::{
@@ -104,8 +104,14 @@ fn specifiers(tokens: &mut TokenIter) -> Result<SpecifierList, Error> {
 }
 
 fn type_specifier(tokens: &mut TokenIter) -> Result<VarType, Error> {
-    let builder = specifier_list::get_specifiers(tokens)?;
-    builder.type_specifier()
+    let (res, num) = match tokens.as_slice() {
+        [Token::Long | Token::Int, Token::Int | Token::Long, ..] => (VarType::Long, 2),
+        [Token::Int, ..] => (VarType::Int, 1),
+        [Token::Long, ..] => (VarType::Long, 1),
+        _ => return Err(Error::InvalidSpecifiers),
+    };
+    let _ = tokens.nth(num - 1);
+    Ok(res)
 }
 
 fn param_list(tokens: &mut TokenIter) -> Result<ParamList, Error> {
@@ -128,23 +134,18 @@ fn param_list(tokens: &mut TokenIter) -> Result<ParamList, Error> {
 }
 
 fn param(tokens: &mut TokenIter) -> Result<(Param, bool), Error> {
-    if let Ok(typ) = type_specifier(tokens) {
-        let name = tokens.consume_identifier()?;
-        let last = match tokens.consume_any()? {
-            Token::Comma => {
-                tokens.next();
-                Ok(false)
-            }
-            Token::CloseParen => {
-                tokens.next();
-                Ok(true)
-            }
-            _ => Err(Error::Catchall("expected ',' or ')'.")),
-        }?;
-        Ok((Param { typ, name }, last))
-    } else {
-        Err(Error::Catchall("expected ',' or ')'."))
-    }
+    let typ = type_specifier(tokens)?;
+
+    let name = tokens.consume_identifier()?;
+    let last = match tokens.consume_any()? {
+        Token::Comma => Ok(false),
+        Token::CloseParen => Ok(true),
+        other => {
+            eprintln!("got {other:?}");
+            Err(Error::Catchall("expected ',' or ')'."))
+        }
+    }?;
+    Ok((Param { typ, name }, last))
 }
 
 fn block(tokens: &mut TokenIter) -> Result<Block, Error> {

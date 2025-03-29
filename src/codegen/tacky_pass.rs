@@ -13,6 +13,7 @@ use assembly::OpVec;
 use crate::semantics;
 use assembly::tacky::StaticVar;
 use parse::VarType;
+use semantics::typecheck::InitialVal;
 use semantics::typed::{
     self, Block, BlockItem, Dec, Expr, Fix, FnDec, ForInit, IncDec, Label, Stmnt, VarDec,
 };
@@ -43,15 +44,16 @@ pub fn emit(program: typed::Program, symbol_table: &mut SymbolTable) -> Program 
 
     for (name, attr) in symbol_table {
         if let Attr::Static {
-            init: Some(crate::semantics::typecheck::InitialVal::Initial(i)),
+            init: Some(init),
             global: g,
             typ: t,
         } = attr
         {
+            let init = init.get_static();
             tlvs.push(TopLevel::StaticVar(StaticVar {
                 name: name.clone(),
                 global: *g,
-                init: *i,
+                init,
                 typ: *t,
             }))
         }

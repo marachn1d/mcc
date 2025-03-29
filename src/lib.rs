@@ -35,50 +35,60 @@ pub fn compile(mut path: PathBuf) -> Result<PathBuf, Error> {
     }
 
     #[cfg(feature = "parse")]
-    let code = parse(tokens, stage)?;
-
-    if matches!(stage, Some(CompileStage::Codegen | CompileStage::Tacky)) {
-        return Ok("".into());
-    }
-    #[cfg(feature = "codegen")]
     {
-        path.set_extension("S");
-        fs::write(&path, &code)?;
+        if !should_parse(&stage) {
+            return Ok("".into());
+        }
+        let ast = parse(tokens)?;
+
+        #[cfg(feature = "semantics")]
+        {
+            if !should_validate(&stage) {
+                return Ok("".into());
+            };
+            let (program, map) = semantics::check(ast)?;
+
+            #[cfg(feature = "codegen")]
+            {
+                if !should_codegen(&stage) {
+                    return Ok("".into());
+                } else {
+                    let code = codegen::generate(program, should_emit(&stage), map);
+                    path.set_extension("S");
+                    fs::write(&path, &code)?;
+                }
+            }
+        }
+
+        Ok(path)
     }
-    Ok(path)
+
+    #[cfg(not(feature = "parse"))]
+    Ok("".into())
 }
 
-fn parse(tokens: Box<[DebugToken]>, stage: Option<CompileStage>) -> Result<Box<[u8]>, Error> {
+const fn should_emit(s: &Option<CompileStage>) -> bool {
+    should_codegen(s)
+}
+const fn should_parse(s: &Option<CompileStage>) -> bool {
+    !matches!(s, Some(CompileStage::Lex))
+}
+
+const fn should_validate(s: &Option<CompileStage>) -> bool {
+    should_parse(s) && !matches!(s, Some(CompileStage::Parse))
+}
+
+const fn should_codegen(s: &Option<CompileStage>) -> bool {
+    if should_validate(s) {
+        !matches!(s, Some(CompileStage::Validate))
+    } else {
+        false
+    }
+}
+
+fn parse(tokens: Box<[DebugToken]>) -> Result<parse::ast::Program, Error> {
     let tokens = tokens.into_iter().map(|x| x.token).collect();
-    let program = parse::parse(tokens)?;
-    #[cfg(feature = "semantics")]
-    {
-        semantics(program, stage)
-    }
-
-    #[cfg(not(feature = "semantics"))]
-    Ok([].into())
-}
-
-#[cfg(feature = "semantics")]
-fn semantics(program: parse::Program, stage: Option<CompileStage>) -> Result<Box<[u8]>, Error> {
-    let (program, symbol_table) = semantics::check(program)?;
-    #[cfg(feature = "codegen")]
-    {
-        Ok(codegen(program, stage, symbol_table))
-    }
-
-    #[cfg(not(feature = "codegen"))]
-    Ok([].into())
-}
-
-#[cfg(feature = "codegen")]
-fn codegen(
-    program: semantics::typed::Program,
-    stage: Option<CompileStage>,
-    table: semantics::SymbolTable,
-) -> Box<[u8]> {
-    codegen::generate(program, stage != Some(CompileStage::Tacky), table)
+    Ok(parse::parse(tokens)?)
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]

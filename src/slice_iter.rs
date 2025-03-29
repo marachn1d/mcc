@@ -60,6 +60,11 @@ use super::parse;
 use parse::VarType;
 
 impl TokenIter {
+    #[allow(dead_code)]
+    pub fn print_next(&self) {
+        eprintln!("next: {:?}", self.peek());
+    }
+
     pub fn consume_type(&mut self) -> Option<VarType> {
         match self.next_if(|x| x == &Token::Int || x == &Token::Long) {
             Some(Token::Int) => Some(VarType::Int),

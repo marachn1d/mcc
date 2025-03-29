@@ -11,6 +11,8 @@ use assembly::Register;
 use assembly::SymbolTable;
 use assembly::TopLevel;
 use assembly::X86;
+
+use assembly::x86::OpPair;
 use std::collections::HashMap;
 pub fn fix_ast(program: Program<Pseudo>, table: &SymbolTable) -> Program<X86> {
     let mut decs = Vec::with_capacity(program.0.len());
@@ -37,7 +39,7 @@ fn convert_function(
     let mut body_vec: OpVec<X86> = body_vec.into();
     body_vec.push_one(X86::allocate_stack(0));
 
-    for op in get_iter(body) {
+    for op in body.into_iter() {
         fix_instruction(op, &mut stack_frame, &mut body_vec);
     }
 
@@ -58,14 +60,18 @@ fn convert_function(
     }
 }
 
-fn get_iter<T>(boxed_slice: Box<[T]>) -> std::vec::IntoIter<T> {
-    <Box<[T]> as IntoIterator>::into_iter(boxed_slice)
-}
 struct StackFrame<'a> {
     map: HashMap<Identifier, isize>,
     size: usize,
     table: &'a SymbolTable,
 }
+
+struct BlockState<'a> {
+    vec: &'a mut OpVec<X86>,
+    sf: StackFrame<'a>,
+}
+
+struct NeedsReg(Op);
 
 const fn align_quadword(size: usize) -> usize {
     let remainder = (size + 8) % 16;
@@ -76,6 +82,8 @@ const fn align_quadword(size: usize) -> usize {
         size + (16 - remainder)
     }
 }
+
+type RuleRes = std::result::Result<Op, Op>;
 
 impl<'a> StackFrame<'a> {
     fn new(table: &'a SymbolTable) -> Self {
@@ -129,6 +137,31 @@ impl<'a> StackFrame<'a> {
         }
     }
 
+    fn check(&mut self, op: PseudoOp, rules: RuleSet) -> RuleRes {
+        match op {
+            op if rules.none() => Ok(self.fix_operand(op)),
+            PseudoOp::PseudoRegister(name) if rules.no_stack() => Err(self.fix_by_name(&name)),
+            PseudoOp::Normal(op @ Op::Imm(i)) if rules.imm_allowed(i) => Err(op),
+            op => Ok(self.fix_operand(op)),
+        }
+    }
+
+    fn check_pair(&mut self, pair: OpPair<PseudoOp>, rules: PairSet) -> (RuleRes, RuleRes) {
+        let left = self.check(pair.0, rules.left());
+        let right = self.check(pair.1.clone(), rules.right());
+        if let (left @ Ok(Op::Stack(_) | Op::Data(_)), Ok(right @ (Op::Stack(_) | Op::Data(_)))) =
+            (left.clone(), right.clone())
+        {
+            (left, Err(right))
+        } else {
+            (left, right)
+        }
+    }
+
+    fn fix_pair(&mut self, (l, r): (PseudoOp, PseudoOp)) -> (RuleRes, RuleRes) {
+        (Ok(self.fix_operand(l)), Ok(self.fix_operand(r)))
+    }
+
     fn fix_operand(&mut self, operand: PseudoOp) -> Op {
         match operand {
             PseudoOp::Normal(o) => o,
@@ -151,176 +184,164 @@ impl<'a> StackFrame<'a> {
     }
 }
 
-fn fix_instruction(op: Pseudo, stack_frame: &mut StackFrame, vec: &mut OpVec<X86>) {
-    match op {
-        Pseudo::Push(val) => {
-            let val = stack_frame.fix_operand(val);
-            vec.push_one(X86::Push(val));
-        }
-        Pseudo::Call(fun) => vec.push_one(X86::Call(fun)),
-        Pseudo::Mov {
-            src: PseudoOp::Normal(Op::Imm(i)),
-            dst: PseudoOp::PseudoRegister(dst),
-            ty: AsmType::Quadword,
-        } => {
-            let dst = stack_frame.fix_by_name(&dst);
-            let src = Op::Imm(i);
-            vec.push([
-                X86::mov(src, Op::Register(Register::R10), AsmType::Quadword),
-                X86::mov(Op::Register(Register::R10), dst, AsmType::Quadword),
-            ]);
-        }
-        Pseudo::Mov {
-            src: PseudoOp::Normal(Op::Imm(i)),
-            dst: PseudoOp::PseudoRegister(dst),
-            ty: AsmType::Longword,
-        } => {
-            if i > i32::MAX as i64 {
-                let dst = stack_frame.fix_by_name(&dst);
-                let src = Op::Imm((i as i32) as i64);
-                vec.push([
-                    X86::mov(src, Op::Register(Register::R10), AsmType::Longword),
-                    X86::mov(Op::Register(Register::R10), dst, AsmType::Longword),
-                ]);
-            }
-        }
-        Pseudo::Mov { src, dst, ty } => {
-            let src = stack_frame.fix_operand(src);
-            let dst = stack_frame.fix_operand(dst);
-            // we can't have the stack in source, so replace it with two instructions
-            if let Op::Stack(_) | Op::Data(_) = src {
-                let temp_register = Op::Register(Register::R10);
-                vec.push([
-                    X86::mov(src, temp_register.clone(), ty),
-                    X86::mov(temp_register, dst, ty),
-                ]);
-            } else {
-                vec.push_one(X86::mov(src, dst, ty));
-            }
-        }
+mod rule;
 
+use rule::{PairSet, RuleSet};
+
+fn mov_to_reg(op: Op, dst: Register, ty: AsmType, vec: &mut OpVec<X86>) {
+    vec.push_one(X86::mov(op, dst.into(), ty))
+}
+
+fn mov_pseudo(op: PseudoOp, dst: Register, ty: AsmType, sf: &mut StackFrame, vec: &mut OpVec<X86>) {
+    mov_to_reg(sf.fix_operand(op), dst, ty, vec);
+}
+
+fn fix_instruction(op: Pseudo, sf: &mut StackFrame, vec: &mut OpVec<X86>) {
+    match op {
+        // push rule: needs dword/NoQuadImm
+        Pseudo::Push(op) => match sf.check(op, rule::PUSH) {
+            Ok(op) => vec.push_one(X86::Push(op)),
+            Err(op) => vec.push([
+                X86::mov(op, Register::R10.into(), AsmType::Quadword),
+                X86::Push(Register::R10.into()),
+            ]),
+        },
+        Pseudo::Call(fun) => vec.push_one(X86::Call(fun)),
+        Pseudo::Mov { ty, regs } => {
+            // mov has no rule for dst so we can unwrap here
+            let (src, dst) = sf.check_pair(regs, rule::MOV);
+
+            let src = match src {
+                Ok(src) => src,
+                Err(src) => {
+                    mov_to_reg(src, Register::R10, AsmType::Quadword, vec);
+                    Op::Register(Register::R10)
+                }
+            };
+
+            vec.push_one(X86::mov(src, dst.unwrap(), ty))
+        }
         Pseudo::Unary {
             operator,
-            operand,
+            operand: o,
             ty,
         } => {
-            let operand = stack_frame.fix_operand(operand);
             vec.push_one(X86::Unary {
                 operator,
-                operand,
+                operand: sf.fix_operand(o),
                 ty,
             });
         }
-        Pseudo::Binary {
-            operator,
-            op,
-            dst_op,
-            ty,
-        } => fix_binary(operator, op, dst_op, stack_frame, vec, ty),
-        Pseudo::Idiv { divisor, ty } => {
-            let divisor = stack_frame.fix_operand(divisor);
-            if let Op::Imm(value) = divisor {
+        // see fix_binary
+        Pseudo::Binary { operator, regs, ty } => {
+            let (src, dst) = sf.check_pair(
+                regs,
+                match operator {
+                    Binary::And
+                    | Binary::Or
+                    | Binary::Add
+                    | Binary::Sub
+                    | Binary::Xor
+                    | Binary::Mult => rule::BIN_ADDSUB,
+                    Binary::ShiftLeft | Binary::ShiftRight => rule::BIN_BITSHIFT,
+                },
+            );
+
+            let src = match src {
+                Ok(src) => src,
+                Err(src) => {
+                    X86::mov(src, Register::R10.into(), ty);
+                    Register::R10.into()
+                }
+            };
+
+            match dst {
+                Ok(dst) => vec.push_one(X86::binary(operator, src, dst, ty)),
+                Err(dst) => vec.push([
+                    X86::mov(dst.clone(), Register::R11.into(), ty),
+                    X86::binary(operator, src, Register::R11.into(), ty),
+                    X86::mov(Register::R11.into(), dst, ty),
+                ]),
+            }
+        }
+
+        // can't be an immediate
+        Pseudo::Idiv { divisor, ty } => match sf.check(divisor, rule::IDIV) {
+            Ok(divisor) => {
+                vec.push_one(X86::Idiv { divisor, ty });
+            }
+            Err(divisor) => {
                 let temp_register = Op::Register(Register::R10);
                 vec.push([
-                    X86::mov(Op::Imm(value), temp_register.clone(), ty),
+                    X86::mov(divisor, temp_register.clone(), ty),
                     X86::Idiv {
                         divisor: temp_register,
                         ty,
                     },
                 ]);
-            } else {
-                vec.push_one(X86::Idiv { divisor, ty });
             }
-        }
+        },
         Pseudo::Ret => vec.push_one(X86::Ret),
         Pseudo::Cdq(ty) => vec.push_one(X86::Cdq(ty)),
-        Pseudo::Cmp {
-            left: PseudoOp::PseudoRegister(left_name),
-            right: PseudoOp::PseudoRegister(right_name),
-            ty,
-        } => {
-            let (left, right) = (
-                stack_frame.fix_by_name(&left_name),
-                stack_frame.fix_by_name(&right_name),
-            );
-            vec.push([
-                X86::mov(left, Register::R10.into(), ty),
-                X86::cmp(Register::R10.into(), right, ty),
-            ]);
-        }
-        Pseudo::Cmp {
-            left,
-            right: PseudoOp::Normal(Op::Imm(right_val)),
-            ty,
-        } => {
-            let left = stack_frame.fix_operand(left);
-            vec.push([
-                X86::mov(Op::Imm(right_val), Register::R11.into(), ty),
-                X86::cmp(left, Register::R11.into(), ty),
-            ]);
-        }
-        Pseudo::Cmp { left, right, ty } => {
-            let (left, right) = (
-                stack_frame.fix_operand(left),
-                stack_frame.fix_operand(right),
-            );
-            vec.push_one(X86::Cmp { left, right, ty })
+        // cmp is no quad, one mem, need some kinda bitfield or smth
+        Pseudo::Cmp { regs, ty } => {
+            let (l, r) = sf.check_pair(regs, rule::CMP);
+            let l = match l {
+                Ok(l) => l,
+                Err(l) => {
+                    X86::mov(l, Register::R10.into(), ty);
+                    Register::R10.into()
+                }
+            };
+            match r {
+                Ok(r) => vec.push_one(X86::cmp(l, r, ty)),
+                Err(r) => vec.push([
+                    X86::mov(r, Register::R11.into(), ty),
+                    X86::cmp(l, Register::R11.into(), ty),
+                ]),
+            }
         }
         Pseudo::Jmp(label) => vec.push_one(X86::Jmp(label)),
         Pseudo::Label(name) => vec.push_one(X86::Label(name)),
         Pseudo::JmpCC { condition, label } => vec.push_one(X86::JmpCC { condition, label }),
-        Pseudo::SetCC { condition, op } => {
-            let op = stack_frame.fix_operand(op);
-            vec.push_one(X86::SetCC { condition, op })
-        }
+        Pseudo::SetCC { condition, op: o } => vec.push_one(X86::SetCC {
+            condition,
+            op: sf.fix_operand(o),
+        }),
+        // no stack dst
+        // no imm src
         Pseudo::Movsx {
             ty,
-            src,
-            dst: PseudoOp::PseudoRegister(p),
+            regs, //src,
+                  //dst: PseudoOp::PseudoRegister(p),
         } => {
-            let src = movsx_src(src, vec, stack_frame);
-            let dst = stack_frame.fix_by_name(&p);
-            vec.push([
-                X86::Movsx {
-                    ty,
-                    src,
-                    dst: Op::Register(Register::R11),
-                },
-                X86::Mov {
-                    ty: AsmType::Quadword,
-                    src: Op::Register(Register::R11),
-                    dst,
-                },
-            ])
-        }
-
-        Pseudo::Movsx { ty, src, dst } => {
-            let src = movsx_src(src, vec, stack_frame);
-            vec.push_one(X86::Movsx {
-                ty,
-                src,
-                dst: stack_frame.fix_operand(dst),
-            })
+            let (src, dst) = sf.check_pair(regs, rule::MOVSX);
+            let src = match src {
+                Ok(src) => src,
+                Err(src) => {
+                    X86::mov(src, Register::R10.into(), ty);
+                    Register::R10.into()
+                }
+            };
+            match dst {
+                Ok(dst) => vec.push_one(X86::movsx(src, dst)),
+                Err(dst) => vec.push([
+                    X86::mov(dst.clone(), Register::R11.into(), ty),
+                    X86::movsx(src, Register::R11.into()),
+                    X86::mov(Register::R11.into(), dst, AsmType::Quadword),
+                ]),
+            }
         }
     }
 }
 
-// returns new source
-fn movsx_src(src: PseudoOp, vec: &mut OpVec<X86>, sf: &mut StackFrame) -> Op {
-    if let PseudoOp::Normal(Op::Imm(i)) = src {
-        vec.push_one(X86::Mov {
-            ty: AsmType::Longword,
-            src: Op::Imm(i),
-            dst: Op::Register(Register::R10),
-        });
-
-        Op::Register(Register::R10)
-    } else {
-        sf.fix_operand(src)
-    }
-}
+// no mem dst
+// no quad immediate
 
 use crate::codegen::assembly::x86::AsmType;
+// no stack dst
+// max 1 addr for add sub ^ |
+// bitshift: no Imm src
 fn fix_binary(
     operator: Binary,
     op: PseudoOp,

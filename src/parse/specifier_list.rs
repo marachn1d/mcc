@@ -16,7 +16,7 @@ impl SpeclistFsm {
         }
     }
 
-    pub fn done(self) -> Result<SpecifierList, Error> {
+    pub const fn done(self) -> Result<SpecifierList, Error> {
         if let Some(typ) = self.typ {
             Ok(SpecifierList { sc: self.sc, typ })
         } else {
@@ -24,7 +24,7 @@ impl SpeclistFsm {
         }
     }
 
-    pub fn type_specifier(self) -> Result<VarType, Error> {
+    pub const fn type_specifier(self) -> Result<VarType, Error> {
         match self {
             Self { sc: Some(_), .. } => Err(Error::NoStorageClass),
             Self {
@@ -40,7 +40,7 @@ impl SpeclistFsm {
         }
     }
 
-    const fn r#extern(&mut self) -> Result<(), Error> {
+    fn r#extern(&mut self) -> Result<(), Error> {
         match self.sc {
             Some(StorageClass::Static) => Err(Error::ConflictingLinkage),
             Some(StorageClass::Extern) => Err(Error::InvalidSpecifiers),
@@ -51,7 +51,7 @@ impl SpeclistFsm {
         }
     }
 
-    const fn r#static(&mut self) -> Result<(), Error> {
+    fn r#static(&mut self) -> Result<(), Error> {
         match self.sc {
             Some(StorageClass::Static) => Err(Error::InvalidSpecifiers),
             Some(StorageClass::Extern) => Err(Error::ConflictingLinkage),
@@ -94,15 +94,21 @@ impl SpeclistFsm {
     }
 }
 
+fn get_specifier(tokens: &mut TokenIter, builder: &mut SpeclistFsm) -> Result<bool, Error> {
+    match tokens.peek() {
+        Some(Token::Int) => builder.int().map(|_| true),
+        Some(Token::Long) => builder.long().map(|_| true),
+        Some(Token::Static) => builder.r#static().map(|_| true),
+        Some(Token::Extern) => builder.r#extern().map(|_| true),
+        _ => Ok(false),
+    }
+}
+
 pub fn get_specifiers(tokens: &mut TokenIter) -> Result<SpeclistFsm, Error> {
     let mut builder = SpeclistFsm::new();
 
-    tokens.take_until(|token| match token {
-        Token::Int => builder.int().map(|_| true),
-        Token::Long => builder.long().map(|_| true),
-        Token::Static => builder.r#static().map(|_| true),
-        Token::Extern => builder.r#extern().map(|_| true),
-        _ => Ok(false),
-    })?;
+    while get_specifier(tokens, &mut builder)? {
+        tokens.next();
+    }
     Ok(builder)
 }

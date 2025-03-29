@@ -9,6 +9,25 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 
+fn main() -> Result<(), MCCError> {
+    let Some(args) = Args::parse() else {
+        return Err(MCCError::Usage);
+    };
+
+    let _ = CONFIG.set(Config {
+        stage: args.stage,
+        version: CVersion::C23,
+    });
+    let output = args.file.with_extension("i");
+    let preprocessed_file = preprocess(&args.file, output).map_err(MCCError::Preprocess)?;
+    let object_file = mcc::compile(preprocessed_file).map_err(MCCError::Compile)?;
+    if CONFIG.get().unwrap().stage.is_none() {
+        assemble(&object_file, &args).map_err(MCCError::Assemble)
+    } else {
+        Ok(())
+    }
+}
+
 struct Args {
     file: PathBuf,
     stage: Option<CompileStage>,
@@ -86,25 +105,6 @@ impl Args {
         } else {
             false
         }
-    }
-}
-
-fn main() -> Result<(), MCCError> {
-    let Some(args) = Args::parse() else {
-        return Err(MCCError::Usage);
-    };
-
-    let _ = CONFIG.set(Config {
-        stage: args.stage,
-        version: CVersion::C23,
-    });
-    let output = args.file.with_extension("i");
-    let preprocessed_file = preprocess(&args.file, output).map_err(MCCError::Preprocess)?;
-    let object_file = mcc::compile(preprocessed_file).map_err(MCCError::Compile)?;
-    if CONFIG.get().unwrap().stage.is_none() {
-        assemble(&object_file, &args).map_err(MCCError::Assemble)
-    } else {
-        Ok(())
     }
 }
 

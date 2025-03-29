@@ -65,8 +65,8 @@ impl std::fmt::Display for StaticInit {
         match self {
             Self::Int(0) => f.write_str(".zero 4"),
             Self::Long(0) => f.write_str(".zero 8"),
-            Self::Int(i) => write!(f, "long {i}"),
-            Self::Long(i) => write!(f, "quad {i}"),
+            Self::Int(i) => write!(f, ".long {i}"),
+            Self::Long(i) => write!(f, ".quad {i}"),
         }
     }
 }
@@ -82,6 +82,13 @@ impl From<Constant> for StaticInit {
 }
 
 impl InitialVal {
+    pub fn get_static(&self) -> StaticInit {
+        match self {
+            InitialVal::Initial(s) => *s,
+            InitialVal::Tentative => StaticInit::Int(0),
+        }
+    }
+
     pub fn as_long(&self) -> i64 {
         match self {
             Self::Initial(StaticInit::Long(i)) => *i,
