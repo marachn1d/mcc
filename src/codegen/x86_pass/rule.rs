@@ -1,8 +1,4 @@
-use super::{Op, OpPair, PseudoOp};
 use std::ops::BitOr;
-
-#[derive(Debug)]
-struct InvalidState {}
 
 #[derive(Copy, Clone, Debug)]
 pub struct PairSet(u8);
@@ -17,86 +13,100 @@ const NO_MEM: RuleSet = RuleSet(OpRule::NoMem as u8);
 
 const NORULE: RuleSet = RuleSet(0);
 
-pub const MOV: PairSet = pair_set(false, MAX_DWORD.or(NO_MEM), NORULE);
-pub const CMP: PairSet = pair_set(false, MAX_DWORD, MAX_DWORD.or(NO_MEM));
-pub const BIN_ADDSUB: PairSet = pair_set(true, MAX_DWORD, NO_MEM);
-pub const MOVSX: PairSet = pair_set(false, NO_IMM, NO_MEM);
-pub const BIN_BITSHIFT: PairSet = pair_set(false, NO_IMM, NO_MEM);
-pub const PUSH: RuleSet = MAX_DWORD;
-pub const IDIV: RuleSet = NO_IMM;
+pub struct RuleTable {
+    pub mov: PairSet,
+    pub movsx: PairSet,
+    pub add: PairSet,
+    pub unop: RuleSet,
+    pub sub: PairSet,
+    pub shift: PairSet,
+    pub bitwise: PairSet,
+    pub div: RuleSet,
+    pub push: RuleSet,
+    pub cmp: PairSet,
+    pub mul: PairSet,
+}
 
-const fn pair_set(max_one: bool, l: RuleSet, r: RuleSet) -> PairSet {
+impl RuleTable {
+    const ADD_SUB_CMP: PairSet = pair_set(MemRule::One, MAX_DWORD, NO_IMM);
+}
+
+pub const RULES: RuleTable = RuleTable {
+    mov: pair_set(MemRule::One, NO_MEM, NO_IMM),
+    movsx: pair_set(MemRule::Two, NO_IMM, NO_IMM.or(NO_MEM)),
+    add: RuleTable::ADD_SUB_CMP,
+    sub: RuleTable::ADD_SUB_CMP,
+    mul: pair_set(MemRule::One, MAX_DWORD, NO_MEM),
+    cmp: RuleTable::ADD_SUB_CMP,
+    bitwise: pair_set(MemRule::One, NORULE, NO_IMM),
+    unop: NO_IMM,
+    div: NO_IMM,
+    shift: pair_set(MemRule::One, NO_MEM, NO_IMM),
+    push: MAX_DWORD,
+};
+
+// ideally we'd have some nice elegant matching stuff but it's pretty involved
+#[derive(PartialEq, Eq)]
+enum MemRule {
+    One,
+    Two,
+}
+
+const fn pair_set(mem: MemRule, l: RuleSet, r: RuleSet) -> PairSet {
     let set = (r.0 << 4) | l.0;
-    if max_one {
-        PairSet(set | PairRule::Max1Stack as u8)
-    } else {
-        PairSet(set & !(PairRule::Max1Stack as u8))
+    match mem {
+        MemRule::One => PairSet(set | MAX1STACK),
+        MemRule::Two => PairSet(set & !(MAX1STACK)),
     }
 }
 
 impl PairSet {
     pub const fn max_1_stack(&self) -> bool {
-        self.0 & PairRule::Max1Stack as u8 == 0b1000
+        self.0 & MAX1STACK == MAX1STACK
     }
 
     pub const fn left(&self) -> RuleSet {
-        RuleSet(self.0 & 0b1111)
+        RuleSet(self.0 & 0b0111)
     }
 
     pub const fn right(&self) -> RuleSet {
-        RuleSet((self.0 >> 4) & 0b1111)
+        RuleSet((self.0 >> 4) & 0b0111)
     }
+}
+use std::fmt::{self, Display, Formatter};
+#[derive(Copy, Clone, Debug)]
+pub struct RuleSet(u8);
+impl Display for RuleSet {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        let mut first = false;
+        if self.max_dword() {
+            first = true;
+            write!(f, "MAX_DWORD")?;
+        };
+        if self.no_mem() {
+            if !first {
+                write!(f, " | ")?;
+            }
+            write!(f, "NO_MEM")?;
+            first = true;
+        };
 
-    pub const fn new(max_one: bool, l: RuleSet, r: RuleSet) -> Self {
-        let set = (r.0 << 4) | l.0;
-        if max_one {
-            Self(set | PairRule::Max1Stack as u8)
-        } else {
-            Self(set & !(PairRule::Max1Stack as u8))
+        if self.no_imm() {
+            if !first {
+                write!(f, " | ")?;
+            }
+
+            write!(f, "NO_IMM")?;
         }
+
+        Ok(())
     }
 }
 
-#[derive(Copy, Clone, Debug)]
-pub struct RuleSet(u8);
-
 impl RuleSet {
-    pub const fn imm_allowed(&self, val: i64) -> bool {
-        !(self.no_imm() || (self.max_dword() && val > i32::MAX as i64))
+    pub const fn imm_not_allowed(&self, val: i64) -> bool {
+        self.no_imm() || (self.max_dword() && val > i32::MAX as i64)
     }
-    pub const fn nostack_and(r: ImmRule) -> Self {
-        match r {
-            ImmRule::MaxDword => Self(Self::NOSTACK & Self::MAXDWORD),
-            ImmRule::NoImm => Self(Self::NOSTACK & Self::NOIMM),
-        }
-    }
-
-    pub const fn new_max_dword() -> Self {
-        Self(Self::MAXDWORD)
-    }
-
-    pub const fn imm_rule(&self) -> Option<ImmRule> {
-        if self.no_imm() {
-            Some(ImmRule::NoImm)
-        } else if self.max_dword() {
-            Some(ImmRule::MaxDword)
-        } else {
-            None
-        }
-    }
-
-    pub const fn imm(r: ImmRule) -> Self {
-        match r {
-            ImmRule::MaxDword => Self(Self::MAXDWORD),
-            ImmRule::NoImm => Self(Self::NOIMM),
-        }
-    }
-
-    pub const NONE: u8 = OpRule::None as u8;
-    pub const NOSTACK: u8 = OpRule::NoMem as u8;
-    pub const MAXDWORD: u8 = OpRule::MaxDword as u8;
-
-    pub const NOIMM: u8 = OpRule::NoImm as u8;
 
     pub const fn validate(self) -> RuleSet {
         if self.invalid_state() {
@@ -109,16 +119,16 @@ impl RuleSet {
         self.0 == 0
     }
 
-    pub const fn no_stack(&self) -> bool {
+    pub const fn no_mem(&self) -> bool {
         self.0 & 0b1 == 1
     }
 
     pub const fn max_dword(&self) -> bool {
-        self.0 & 0b10 == 1
+        self.0 & 0b10 == 0b10
     }
 
     pub const fn no_imm(&self) -> bool {
-        self.0 & 0b100 == 1
+        self.0 & 0b100 == 0b100
     }
 
     pub const fn invalid_state(&self) -> bool {
@@ -161,15 +171,9 @@ impl BitOr<OpRule> for OpRule {
 #[repr(u8)]
 #[derive(Copy, Clone, Debug)]
 pub enum OpRule {
-    None = 0b000,
     NoMem = 0b001,
     MaxDword = 0b010,
     NoImm = 0b100,
-}
-
-pub enum ImmRule {
-    MaxDword,
-    NoImm,
 }
 
 impl OpRule {
@@ -182,10 +186,31 @@ impl OpRule {
         }
     }
 }
+const MAX1STACK: u8 = 0b1000;
 
-#[repr(u8)]
-#[derive(Copy, Clone, Debug)]
-enum PairRule {
-    None = 0b0000,
-    Max1Stack = 0b1000,
+#[cfg(test)]
+mod test {
+    #[test]
+    fn test_none() {
+        let rule = super::NORULE;
+        assert!(rule.none());
+        assert!(!rule.no_mem());
+        assert!(!rule.max_dword());
+        assert!(!rule.no_imm());
+    }
+
+    #[test]
+    fn test_pair() {
+        let rule = super::RULES.mov;
+        assert!(!rule.max_1_stack());
+        assert!(!rule.left().none());
+        assert!(rule.left().max_dword());
+        assert!(rule.left().no_mem());
+        assert!(!rule.left().no_imm());
+
+        assert!(rule.right().none());
+        assert!(!rule.right().no_mem());
+        assert!(!rule.right().max_dword());
+        assert!(!rule.right().no_imm());
+    }
 }

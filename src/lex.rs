@@ -309,16 +309,15 @@ fn constant_number(start: AsciiDigit, iter: &mut SliceIter<u8>) -> Result<Consta
     }
 
     match iter.peek() {
-        Some(x) if !word_character(x) => {
-            let long = parse_long(&bytes);
-            Ok(match i32::try_from(long) {
-                Ok(int) => Constant::Integer(int),
-                Err(_) => Constant::Long(long),
-            })
-        }
         Some(b'l') => {
             iter.next();
-            Ok(Constant::Long(parse_long(&bytes)))
+            Ok(Constant::from(parse_long(&bytes)))
+        }
+        Some(x) if !word_character(x) => {
+            let long = parse_long(&bytes);
+            i32::try_from(long)
+                .map(Constant::Int)
+                .or(Ok(Constant::Long(long)))
         }
         _ => Err(Error::InvalidConstant),
     }
@@ -498,30 +497,42 @@ impl From<Constant> for Token {
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone, Ord, PartialOrd)]
 pub enum Constant {
-    Integer(i32),
+    Int(i32),
     Long(i64),
 }
 
 impl Constant {
     pub fn int(&self) -> i32 {
         match self {
-            Self::Integer(i) => *i,
+            Self::Int(i) => *i,
             Self::Long(l) => *l as i32,
         }
     }
 
     pub fn long(&self) -> i64 {
         match self {
-            Self::Integer(i) => *i as i64,
+            Self::Int(i) => *i as i64,
             Self::Long(l) => *l,
         }
+    }
+}
+
+impl From<i32> for Constant {
+    fn from(i: i32) -> Self {
+        Self::Int(i)
+    }
+}
+
+impl From<i64> for Constant {
+    fn from(i: i64) -> Self {
+        Self::Long(i)
     }
 }
 
 impl fmt::Display for Constant {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
-            Self::Integer(i) => i.fmt(f),
+            Self::Int(i) => i.fmt(f),
             Self::Long(l) => l.fmt(f),
         }
     }

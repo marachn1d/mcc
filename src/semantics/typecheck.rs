@@ -1,5 +1,6 @@
 use super::ast::label_prelude as ast;
 use super::ast::type_prelude::*;
+use crate::parse::Bop;
 use crate::semantics::StorageClass;
 
 use crate::parse::{FnType, VarType};
@@ -74,7 +75,7 @@ impl std::fmt::Display for StaticInit {
 impl From<Constant> for StaticInit {
     fn from(c: Constant) -> Self {
         match c {
-            Constant::Integer(i) => Self::Int(i),
+            Constant::Int(i) => Self::Int(i),
 
             Constant::Long(i) => Self::Long(i),
         }
@@ -256,16 +257,6 @@ fn variable_declaration(
     }: ast::VarDec,
     table: &mut SymbolTable,
 ) -> Result<VarDec, Error> {
-    vardec_inner(name, init, typ, sc, table)
-}
-
-fn vardec_inner(
-    name: Identifier,
-    init: Option<ast::Expr>,
-    typ: VarType,
-    sc: Option<StorageClass>,
-    table: &mut SymbolTable,
-) -> Result<VarDec, Error> {
     let init = match (sc, &init) {
         (Some(StorageClass::Extern), Some(_)) => return Err(Error::DeclaredExtern),
         (Some(StorageClass::Extern), None) => {
@@ -326,7 +317,9 @@ fn vardec_inner(
         (None, _) => {
             table.insert(name.clone(), Attr::Automatic(typ));
             if let Some(init) = init {
-                Some(typecheck_expression(init, table)?)
+                let mut exp = typecheck_expression(init, table)?;
+                convert_to(&mut exp, &typ);
+                Some(exp)
             } else {
                 None
             }
@@ -348,13 +341,28 @@ fn typecheck_expression(expression: ast::Expr, table: &mut SymbolTable) -> Resul
     match expression {
         ast::Expr::FunctionCall { name, args } => typecheck_fn_call(name, args, table),
         ast::Expr::Var(name) => typecheck_var(name, table),
-        ast::Expr::Assignment { from, to } => {
-            let from = check_boxed_expr(*from, table)?;
-            let mut to = check_boxed_expr(*to, table)?;
+        ast::Expr::Assignment { dst, src } => {
+            let dst = check_boxed_expr(*dst, table)?;
+            let mut src = check_boxed_expr(*src, table)?;
 
-            let ty = from.ty();
-            convert_to(&mut to, &from.ty());
-            Ok(Expr::Assignment { from, to, ty })
+            let ty = dst.ty();
+            convert_to(&mut src, &dst.ty());
+            Ok(Expr::Assignment { dst, src, ty })
+        }
+        ast::Expr::Binary {
+            left,
+            right,
+            operator: op @ (Bop::LeftShift | Bop::RightShift),
+        } => {
+            let left = typecheck_expression(*left, table).map(Box::from)?;
+            let mut right = typecheck_expression(*right, table).map(Box::from)?;
+            convert_to(&mut right, &VarType::Int);
+            Ok(Expr::Binary {
+                left,
+                operator: op,
+                right,
+                ty: VarType::Int,
+            })
         }
         ast::Expr::Binary {
             left,
@@ -396,25 +404,21 @@ fn typecheck_expression(expression: ast::Expr, table: &mut SymbolTable) -> Resul
         | AstExpression::PrefixDecrement(exp)
         */
         ast::Expr::Nested(exp) => typecheck_expression(*exp, table),
-        ast::Expr::Const(cnst @ Constant::Integer(_)) => Ok(Expr::Const {
+        ast::Expr::Const(cnst @ Constant::Int(_)) => Ok(Expr::Const {
             cnst,
             ty: VarType::Int,
         }),
 
         ast::Expr::Const(cnst @ Constant::Long(_)) => Ok(Expr::Const {
             cnst,
-            ty: VarType::Int,
+            ty: VarType::Long,
         }),
 
-        ast::Expr::Cast { target, exp } => {
-            typecheck_expression(*exp, table)
-                .map(Box::new)
-                .map(|exp| Expr::Cast {
-                    ty: target,
-                    target,
-                    exp,
-                })
-        }
+        ast::Expr::Cast { target, exp } => typecheck_expression(*exp, table).map(|e| Expr::Cast {
+            ty: target,
+            target,
+            exp: Box::new(e),
+        }),
 
         ast::Expr::Unary { operator, operand } => {
             use crate::parse::UnOp;
@@ -455,11 +459,10 @@ fn typecheck_expression(expression: ast::Expr, table: &mut SymbolTable) -> Resul
                 r#false,
             })
         }
-        ast::Expr::IncDec { fix, op, exp } => {
+        ast::Expr::IncDec { op, exp } => {
             //Expression::PostfixIncrement(
             let exp = check_boxed_expr(*exp, table)?;
             Ok(Expr::IncDec {
-                fix,
                 op,
                 ty: exp.ty(),
                 exp,
@@ -500,11 +503,7 @@ fn typecheck_fn_call(
             new_args.push(typed_param);
         }
 
-        let ty = if let Some(param) = ret {
-            param
-        } else {
-            VarType::Int
-        };
+        let ty = if let Some(ty) = ret { ty } else { VarType::Int };
 
         Ok(Expr::FunctionCall {
             ty,
@@ -515,14 +514,11 @@ fn typecheck_fn_call(
 }
 
 fn typecheck_var(name: Identifier, table: &mut SymbolTable) -> Result<Expr, Error> {
-    let symbol_type = table
+    let ty = *table
         .get(&name)
-        .ok_or(Error::UndefinedVar)
-        .map(Attr::var_type)??;
-    Ok(Expr::Var {
-        ty: *symbol_type,
-        name,
-    })
+        .map(Attr::var_type)
+        .ok_or(Error::UndefinedVar)??;
+    Ok(Expr::Var { ty, name })
 }
 
 fn check_entry(
@@ -778,15 +774,19 @@ fn typecheck_statement(
             }
         }
         ast::Stmnt::Switch {
-            val,
-            body,
-            label: _,
-            cases: _,
-            default: _,
-        } => {
-            typecheck_expression(val, table)?;
-            typecheck_statement(*body, return_type, table)
-        }
+            val: v,
+            body: b,
+            label,
+            cases,
+            default,
+        } => Ok(Stmnt::Switch {
+            val: typecheck_expression(v, table)?,
+            body: Box::new(typecheck_statement(*b, return_type, table)?),
+            label,
+            cases,
+            default,
+        }),
+
         ast::Stmnt::Null => Ok(Stmnt::Null),
         ast::Stmnt::Goto(g) => Ok(Stmnt::Goto(g)),
         ast::Stmnt::Break(l) => Ok(Stmnt::Break(l)),

@@ -265,7 +265,7 @@ fn label_statement(statement: parse::Stmnt, cur: &mut Scope) -> Result<Stmnt, Er
             // make sure the cases are unique, hmm.
             //
             Ok(Stmnt::Switch {
-                val: Expr::Const(val),
+                val: val.into(),
                 body,
                 cases: switch_info.cases.into(),
                 default: switch_info.default,

@@ -281,8 +281,8 @@ fn resolve_statement(statement: &mut AstStatement, map: &mut VarMap) -> Result<(
             resolve_statement(body, &mut new_map)
         }
 
-        AstStatement::Switch { val: _, body } => {
-            //resolve_expression(val, map)?;
+        AstStatement::Switch { val, body } => {
+            resolve_expression(val, map)?;
             resolve_statement(body, map)
         }
 
@@ -308,10 +308,10 @@ fn resolve_init(init: &mut Option<AstForInit>, map: &mut VarMap) -> Result<(), E
 
 fn resolve_expression(exp: &mut AstExpression, map: &mut VarMap) -> Result<(), Error> {
     match exp {
-        AstExpression::Assignment { from, to } => {
-            if from.lvalue() {
-                resolve_expression(from, map)?;
-                resolve_expression(to, map)
+        AstExpression::Assignment { dst, src } => {
+            if dst.lvalue() {
+                resolve_expression(dst, map)?;
+                resolve_expression(src, map)
             } else {
                 Err(Error::InvalidLval)
             }
@@ -342,12 +342,9 @@ fn resolve_expression(exp: &mut AstExpression, map: &mut VarMap) -> Result<(), E
             resolve_expression(left, map)?;
             resolve_expression(right, map)
         }
-        AstExpression::PrefixIncrement(inner)
-        | AstExpression::PrefixDecrement(inner)
-        | AstExpression::PostfixIncrement(inner)
-        | AstExpression::PostfixDecrement(inner) => {
-            resolve_expression(inner, map)?;
-            if inner.lvalue() {
+        AstExpression::IncDec { op: _, exp } => {
+            resolve_expression(exp, map)?;
+            if exp.lvalue() {
                 Ok(())
             } else {
                 Err(Error::InvalidLval)

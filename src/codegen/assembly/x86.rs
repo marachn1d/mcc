@@ -59,7 +59,7 @@ pub enum BaseX86<T: Operand> {
     Label(Identifier),
 }
 
-pub type OpPair<T: Operand> = (T, T);
+pub type OpPair<T> = (T, T);
 
 #[derive(Clone, Debug)]
 pub enum CondCode {
@@ -108,27 +108,6 @@ impl BaseX86<PseudoOp> {
     }
 }
 
-#[derive(Clone, Debug)]
-enum OpRules {
-    One(OpRule, PseudoOp),
-    Two(PairRule, (Op, Op)),
-}
-
-#[derive(Copy, Clone, Debug)]
-enum OpRule {
-    NeedsReg,
-    NeedsDword,
-}
-
-#[derive(Copy, Clone, Debug)]
-enum PairRule {
-    OneMem,
-    NoMemDst,
-    Rl(OpRule),
-    Rr(OpRule),
-    RBoth((OpRule, OpRule)),
-}
-
 impl BaseX86<Op> {
     pub const fn allocate_stack(n: i64) -> Self {
         Self::binary(
@@ -149,7 +128,7 @@ impl<T: Operand> BaseX86<T> {
     }
 
     pub const fn cmp(s1: T, s2: T, ty: AsmType) -> Self {
-        Self::Mov { regs: (s1, s2), ty }
+        Self::Cmp { regs: (s1, s2), ty }
     }
 
     #[allow(dead_code)]
@@ -214,15 +193,10 @@ impl Display for X86 {
             } => write!(f, "{operator}{ty} {}", operand.sized_fmt(*ty)),
             Self::Binary {
                 operator: operator @ (Binary::ShiftLeft | Binary::ShiftRight),
-                regs: (Op::Register(r), dst),
+                regs: (Op::Register(r), by),
                 ty,
             } => {
-                write!(
-                    f,
-                    "{operator}{ty} {reg}, {}",
-                    dst.sized_fmt(*ty),
-                    reg = r.one_byte(),
-                )
+                write!(f, "{operator}{ty} {}, {}", r.one_byte(), by.sized_fmt(*ty),)
             }
             Self::Binary {
                 operator,
@@ -272,7 +246,12 @@ impl Display for X86 {
                 regs: (src, dst),
                 ty,
             } => {
-                write!(f, "movslq {}, {}", src.sized_fmt(*ty), dst.sized_fmt(*ty))
+                write!(
+                    f,
+                    "movslq {}, {}",
+                    src.sized_fmt(AsmType::Longword),
+                    dst.sized_fmt(*ty)
+                )
             }
         }
     }
@@ -282,6 +261,21 @@ impl Op {
     pub const fn pseudo(self) -> PseudoOp {
         PseudoOp::Normal(self)
     }
+}
+
+pub mod op_regs {
+    use super::Op;
+    use super::Register;
+    pub const AX: Op = Op::Register(Register::Ax);
+    pub const CX: Op = Op::Register(Register::Cx);
+    pub const DX: Op = Op::Register(Register::Dx);
+    pub const DI: Op = Op::Register(Register::Di);
+    pub const SI: Op = Op::Register(Register::Si);
+    pub const R8: Op = Op::Register(Register::R8);
+    pub const R9: Op = Op::Register(Register::R9);
+    pub const R10: Op = Op::Register(Register::R10);
+    pub const R11: Op = Op::Register(Register::R11);
+    pub const SP: Op = Op::Register(Register::Sp);
 }
 
 #[derive(Clone, Debug)]
@@ -414,8 +408,24 @@ impl<T: Into<Op>> From<T> for PseudoOp {
     }
 }
 
-impl Op {
-    pub const REGISTER_TABLE: [Register; 6] = [
+#[allow(dead_code)]
+pub mod pseudo_regs {
+    use super::op_regs as regs;
+    use super::PseudoOp as Psu;
+    pub const AX: Psu = Psu::Normal(regs::AX);
+    pub const CX: Psu = Psu::Normal(regs::CX);
+    pub const DX: Psu = Psu::Normal(regs::DX);
+    pub const DI: Psu = Psu::Normal(regs::DI);
+    pub const SI: Psu = Psu::Normal(regs::SI);
+    pub const R8: Psu = Psu::Normal(regs::R8);
+    pub const R9: Psu = Psu::Normal(regs::R9);
+    pub const R10: Psu = Psu::Normal(regs::R10);
+    pub const R11: Psu = Psu::Normal(regs::R11);
+    pub const SP: Psu = Psu::Normal(regs::SP);
+}
+
+impl PseudoOp {
+    pub const SYSV_ARG_REGS: [Register; 6] = [
         Register::Di,
         Register::Si,
         Register::Dx,
@@ -423,9 +433,7 @@ impl Op {
         Register::R8,
         Register::R9,
     ];
-}
 
-impl PseudoOp {
     pub const fn imm(value: i64) -> Self {
         Self::Normal(Op::Imm(value))
     }

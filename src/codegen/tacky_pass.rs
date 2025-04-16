@@ -12,10 +12,10 @@ use assembly::OpVec;
 
 use crate::semantics;
 use assembly::tacky::StaticVar;
+use parse::inc_dec::*;
 use parse::VarType;
-use semantics::typecheck::InitialVal;
 use semantics::typed::{
-    self, Block, BlockItem, Dec, Expr, Fix, FnDec, ForInit, IncDec, Label, Stmnt, VarDec,
+    self, Block, BlockItem, Dec, Expr, Fix, FnDec, ForInit, Label, Stmnt, VarDec,
 };
 use semantics::Attr;
 
@@ -315,6 +315,38 @@ fn convert_statement(
     }
 }
 
+fn convert_cast_op(
+    ty: VarType,
+    src: Value,
+    d: Value,
+    instructions: &mut OpVec<Instruction>,
+) -> Value {
+    let dst = d.clone();
+    let op = match ty {
+        VarType::Int => Instruction::Truncate { src, dst },
+        VarType::Long => Instruction::SignExtend { src, dst },
+    };
+    instructions.push_one(op);
+    d
+}
+
+fn convert_cast(
+    (target, exp, ty): (VarType, Expr, VarType),
+    instructions: &mut OpVec<Instruction>,
+    table: &mut SymbolTable,
+) -> Value {
+    match (target, exp, ty) {
+        (target, exp, _) if target == exp.ty() => convert_expression(exp, instructions, table),
+        (_, exp, ty) => {
+            let src = convert_expression(exp, instructions, table);
+            let dst = Value::Var(new_var(ty, r#table));
+            // add dst to symbol table
+            //
+            convert_cast_op(ty, src, dst, instructions)
+        }
+    }
+}
+
 fn convert_vardec(dec: VarDec, instructions: &mut OpVec<Instruction>, table: &mut SymbolTable) {
     if let VarDec {
         name,
@@ -337,36 +369,15 @@ fn convert_expression(
     table: &mut SymbolTable,
 ) -> Value {
     match exp {
-        Expr::Cast { target, exp, ty } if target == ty => {
-            convert_expression(*exp, instructions, table)
-        }
+        Expr::Cast { target, exp, ty } => convert_cast((target, *exp, ty), instructions, table),
 
-        Expr::Cast { target, exp, ty } => {
-            let res = convert_expression(*exp, instructions, table);
-            let dst = Value::Var(new_var(ty, r#table));
-            // add dst to symbol table
-            //
-            instructions.push_one(match target {
-                // long to int
-                VarType::Int => Instruction::Truncate {
-                    src: res,
-                    dst: dst.clone(),
-                },
-                VarType::Long => Instruction::SignExtend {
-                    src: res,
-                    dst: dst.clone(),
-                },
-            });
-
-            dst
-        }
         Expr::Const { cnst: c, ty: _ } => Value::Constant(c),
-        Expr::FunctionCall { name, args, ty: _ } => {
+        Expr::FunctionCall { name, args, ty } => {
             let mut args_vec = Vec::new();
             for arg in args {
                 args_vec.push(convert_expression(arg, instructions, table));
             }
-            let result = Value::Var(new_var(VarType::Int, table));
+            let result = Value::Var(new_var(ty, table));
             instructions.push_one(Instruction::FunCall {
                 name,
                 args: args_vec.into(),
@@ -374,11 +385,11 @@ fn convert_expression(
             });
             result
         }
-        Expr::Assignment { from, to, ty: _ } => {
-            let Expr::Var { name: v, .. } = *from else {
+        Expr::Assignment { dst, src, ty: _ } => {
+            let Expr::Var { name: v, .. } = *dst else {
                 unreachable!()
             };
-            let result = convert_expression(*to, instructions, table);
+            let result = convert_expression(*src, instructions, table);
             let var = Value::Var(v);
             instructions.push_one(Instruction::Copy {
                 src: result,
@@ -408,7 +419,7 @@ fn convert_expression(
                         target: false_label.clone(),
                     },
                     Instruction::Copy {
-                        src: Value::Constant(Constant::Integer(1)),
+                        src: Value::Constant(Constant::Int(1)),
                         dst: result.clone(),
                     },
                     Instruction::Jump {
@@ -416,7 +427,7 @@ fn convert_expression(
                     },
                     Instruction::Label(false_label),
                     Instruction::Copy {
-                        src: Value::Constant(Constant::Integer(0)),
+                        src: Value::Constant(Constant::Int(0)),
                         dst: result.clone(),
                     },
                     Instruction::Label(end_label.clone()),
@@ -440,7 +451,7 @@ fn convert_expression(
                         target: true_label.clone(),
                     },
                     Instruction::Copy {
-                        src: Value::Constant(Constant::Integer(0)),
+                        src: Value::Constant(Constant::Int(0)),
                         dst: result.clone(),
                     },
                     Instruction::Jump {
@@ -448,7 +459,7 @@ fn convert_expression(
                     },
                     Instruction::Label(true_label),
                     Instruction::Copy {
-                        src: Value::Constant(Constant::Integer(1)),
+                        src: Value::Constant(Constant::Int(1)),
                         dst: result.clone(),
                     },
                     Instruction::Label(end_label),
@@ -537,36 +548,37 @@ fn convert_expression(
         Expr::Nested { inner: e, .. } => convert_expression(*e, instructions, table),
         Expr::Var { name: v, .. } => Value::Var(v),
         Expr::IncDec {
-            fix: Fix::Pre,
-            op,
+            op: IncDec { inc, fix: Fix::Pre },
             ty: _,
             exp,
         } => {
             let expression_result = convert_expression(*exp, instructions, table);
-            let op = match op {
-                IncDec::Inc => TackyBinary::Add,
-                IncDec::Dec => TackyBinary::Subtract,
+            let op = match inc {
+                IncOp::Inc => TackyBinary::Add,
+                IncOp::Dec => TackyBinary::Subtract,
             };
 
             //prefix
             instructions.push_one(Instruction::Binary {
                 operator: op,
                 source_1: expression_result.clone(),
-                source_2: Value::Constant(Constant::Integer(1)),
+                source_2: Value::Constant(Constant::Int(1)),
                 dst: expression_result.clone(),
             });
             expression_result
         }
         Expr::IncDec {
-            fix: Fix::Post,
-            op,
+            op: IncDec {
+                inc,
+                fix: Fix::Post,
+            },
             ty,
             exp,
         } => {
             let res = convert_expression(*exp, instructions, table);
-            let op = match op {
-                IncDec::Inc => TackyBinary::Add,
-                IncDec::Dec => TackyBinary::Subtract,
+            let op = match inc {
+                IncOp::Inc => TackyBinary::Add,
+                IncOp::Dec => TackyBinary::Subtract,
             };
 
             let old_val = Value::Var(new_var(ty, table));
@@ -579,7 +591,7 @@ fn convert_expression(
                 Instruction::Binary {
                     operator: op,
                     source_1: res.clone(),
-                    source_2: Value::Constant(Constant::Integer(1)),
+                    source_2: Value::Constant(Constant::Int(1)),
                     dst: res.clone(),
                 },
             ]);

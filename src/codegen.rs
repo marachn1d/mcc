@@ -11,6 +11,7 @@ use assembly::Program;
 
 pub fn generate(program: typed::Program, emit_asm: bool, mut table: SymbolTable) -> Box<[u8]> {
     let tacky = tacky_pass::emit(program, &mut table);
+
     if emit_asm {
         let (pseudo, table) = pseudo_pass::emit(tacky, table);
 

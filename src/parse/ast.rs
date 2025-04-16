@@ -1,7 +1,7 @@
 use crate::lex::Constant;
 use crate::lex::Identifier;
+pub use inc_dec::*;
 use std::fmt::{self, Display, Formatter};
-
 pub type Arr<T> = Box<[T]>;
 
 #[derive(Debug)]
@@ -83,8 +83,8 @@ pub enum BlockItem {
 #[derive(Debug, Clone)]
 pub enum Expr {
     Assignment {
-        from: Box<Self>,
-        to: Box<Self>,
+        dst: Box<Self>,
+        src: Box<Self>,
     },
     Bin(Binary),
     Cast {
@@ -93,10 +93,10 @@ pub enum Expr {
     },
 
     //factors
-    PostfixIncrement(Box<Self>),
-    PostfixDecrement(Box<Self>),
-    PrefixIncrement(Box<Self>),
-    PrefixDecrement(Box<Self>),
+    IncDec {
+        op: inc_dec::IncDec,
+        exp: Box<Self>,
+    },
 
     Var(Identifier),
     Const(Constant),
@@ -115,6 +115,34 @@ pub enum Expr {
 }
 
 impl Expr {
+    pub fn pre_inc(e: Self) -> Self {
+        Self::IncDec {
+            op: PRE_INC,
+            exp: Box::new(e),
+        }
+    }
+
+    pub fn pre_dec(e: Self) -> Self {
+        Self::IncDec {
+            op: PRE_DEC,
+            exp: Box::new(e),
+        }
+    }
+
+    pub fn post_inc(e: Self) -> Self {
+        Self::IncDec {
+            op: POST_INC,
+            exp: Box::new(e),
+        }
+    }
+
+    pub fn post_dec(e: Self) -> Self {
+        Self::IncDec {
+            op: POST_DEC,
+            exp: Box::new(e),
+        }
+    }
+
     pub const fn lvalue(&self) -> bool {
         match self {
             Self::Var(_) => true,
@@ -135,7 +163,7 @@ impl Expr {
         match self {
             Self::Nested(e) => e.static_init(),
             Self::Const(Constant::Long(c)) => Some(StaticInit::Long(*c)),
-            Self::Const(Constant::Integer(c)) => Some(StaticInit::Int(*c)),
+            Self::Const(Constant::Int(c)) => Some(StaticInit::Int(*c)),
             _ => None,
         }
     }
@@ -292,7 +320,7 @@ pub enum Stmnt {
     Goto(Identifier),
     Null,
     Switch {
-        val: Constant,
+        val: Expr,
         body: Box<Self>,
     },
 }
@@ -346,4 +374,65 @@ impl Display for Label {
             Label::Case(case) => write!(f, "case {case:?}"),
         }
     }
+}
+
+pub mod inc_dec {
+
+    #[derive(Copy, Clone, Eq, PartialEq)]
+    pub struct IncDec {
+        pub inc: IncOp,
+        pub fix: Fix,
+    }
+
+    impl std::fmt::Display for IncDec {
+        fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str(match *self {
+                PRE_INC => "PrefixInc",
+                PRE_DEC => "PrefixDec",
+                POST_INC => "PostfixInc",
+                POST_DEC => "PostfixDec",
+            })
+        }
+    }
+
+    impl std::fmt::Debug for IncDec {
+        fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str(match *self {
+                PRE_INC => "PrefixInc",
+                PRE_DEC => "PrefixDec",
+                POST_INC => "PostfixInc",
+                POST_DEC => "PostfixDec",
+            })
+        }
+    }
+
+    #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+    pub enum IncOp {
+        Inc,
+        Dec,
+    }
+    #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+    pub enum Fix {
+        Pre,
+        Post,
+    }
+    pub const PRE_INC: IncDec = IncDec {
+        inc: IncOp::Inc,
+        fix: Fix::Pre,
+    };
+
+    pub const PRE_DEC: IncDec = IncDec {
+        inc: IncOp::Dec,
+        fix: Fix::Pre,
+    };
+
+    pub const POST_INC: IncDec = IncDec {
+        inc: IncOp::Inc,
+        fix: Fix::Post,
+    };
+
+    pub const POST_DEC: IncDec = IncDec {
+        inc: IncOp::Dec,
+        fix: Fix::Post,
+    };
 }

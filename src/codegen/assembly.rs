@@ -161,7 +161,7 @@ pub fn emit(program: &Program<X86>) -> Box<[u8]> {
     bytes.into()
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct OpVec<T: InstructionSet>(pub Vec<T>);
 
 impl<T: InstructionSet> OpVec<T> {

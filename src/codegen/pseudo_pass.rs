@@ -20,6 +20,7 @@ use assembly::tacky::StaticVar as TackySV;
 use assembly::CondCode;
 use assembly::Pseudo;
 
+use assembly::x86::pseudo_regs as pseudop;
 use assembly::PseudoOp;
 use assembly::StaticVar;
 use assembly::TackyInstruction;
@@ -76,7 +77,7 @@ fn convert_val(val: &Value) -> PseudoOp {
 use crate::lex::Constant;
 fn val_type(val: &Value, table: &SymbolTable) -> AsmType {
     match val {
-        Value::Constant(Constant::Integer(_)) => AsmType::Longword,
+        Value::Constant(Constant::Int(_)) => AsmType::Longword,
         Value::Constant(Constant::Long(_)) => AsmType::Quadword,
         Value::Var(v) => var_type(v, table),
     }
@@ -91,20 +92,11 @@ fn convert_function(
     }: TackyFD,
     table: &SymbolTable,
 ) -> FunctionDefinition<Pseudo> {
-    const REGISTER_ARGS: [Register; 6] = [
-        Register::Di,
-        Register::Si,
-        Register::Dx,
-        Register::Cx,
-        Register::R8,
-        Register::R9,
-    ];
-
     let mut instructions = OpVec::new();
 
     for (dst, src) in params
         .iter()
-        .zip(REGISTER_ARGS.map(|x| PseudoOp::Normal(Op::Register(x))))
+        .zip(PseudoOp::SYSV_ARG_REGS.map(PseudoOp::register))
     {
         instructions.push([Pseudo::Mov {
             regs: (src, PseudoOp::PseudoRegister(dst.clone())),
@@ -160,7 +152,7 @@ fn convert_instruction(
             instructions.push([
                 Pseudo::Mov {
                     ty: val_type(&var, table),
-                    regs: (var.into(), Op::Register(Register::Ax).pseudo()),
+                    regs: (var.into(), pseudop::AX),
                 },
                 Pseudo::Ret,
             ]);
@@ -227,12 +219,12 @@ fn push_args(
     instructions: &mut OpVec<Pseudo>,
     table: &SymbolTable,
 ) -> Option<usize> {
-    const TABLE: [Register; 6] = Op::REGISTER_TABLE;
+    const TABLE: [Register; 6] = PseudoOp::SYSV_ARG_REGS;
 
     for (i, arg) in args.iter().take(6).enumerate() {
         instructions.push_one(Pseudo::mov(
             arg.clone().into(),
-            TABLE[i].into(),
+            PseudoOp::register(TABLE[i]),
             val_type(arg, table),
         ))
     }
@@ -255,7 +247,7 @@ fn push_val(val: &Value, instructions: &mut OpVec<Pseudo>, table: &SymbolTable) 
         instructions.push([
             Pseudo::Mov {
                 ty: AsmType::Longword,
-                regs: (convert_val(val), Op::Register(Register::Ax).pseudo()),
+                regs: (convert_val(val), pseudop::AX),
             },
             Pseudo::Push(Register::Ax.into()),
         ])
@@ -379,6 +371,7 @@ fn convert_binary(
         Binop::Relational(condition) => {
             let dst_ty = val_type(&dst, table);
             let dst = PseudoOp::from(dst);
+
             instructions.push([
                 Pseudo::cmp(source_2, source_1, src_ty),
                 Pseudo::mov(Op::Imm(0).into(), dst.clone(), dst_ty),

@@ -6,6 +6,8 @@ pub use ast::{
     Program, Stmnt, StorageClass, UnOp, Unary, VarDec, VarType,
 };
 
+pub use ast::inc_dec::{self, *};
+
 use super::lex::Identifier;
 use super::slice_iter::TokenIter;
 
@@ -266,12 +268,10 @@ fn statement(tokens: &mut TokenIter) -> Result<Stmnt, Error> {
         Token::Switch => {
             tokens.next();
             tokens.consume(Token::OpenParen)?;
-            let Expr::Const(c) = expression(tokens, None)? else {
-                todo!()
-            };
+            let expr = expression(tokens, None)?;
             tokens.consume(Token::CloseParen)?;
             let body = Box::new(statement(tokens)?);
-            Stmnt::Switch { val: c, body }
+            Stmnt::Switch { val: expr, body }
         }
         Token::Goto => {
             tokens.next();
@@ -415,8 +415,8 @@ fn expression(tokens: &mut TokenIter, min_precedence: Option<u8>) -> Result<Expr
             Bop::Equals => {
                 let right = Box::from(expression(tokens, Some(operator.precedence()))?);
                 left = Expr::Assignment {
-                    from: left.into(),
-                    to: right,
+                    dst: left.into(),
+                    src: right,
                 }
             }
             Bop::Ternary => {
@@ -501,15 +501,9 @@ fn binary_operator(tokens: &mut TokenIter, min_precedence: u8) -> Option<Bop> {
     }
 }
 fn factor(tokens: &mut TokenIter) -> Result<Expr, Error> {
-    let factor = match tokens.consume_any()? {
-        Token::Increment => {
-            let exp = Box::new(factor(tokens)?);
-            Ok(Expr::PrefixIncrement(exp))
-        }
-        Token::Decrement => {
-            let exp = Box::new(factor(tokens)?);
-            Ok(Expr::PrefixDecrement(exp))
-        }
+    match tokens.consume_any()? {
+        Token::Increment => factor(tokens).map(Expr::pre_inc),
+        Token::Decrement => factor(tokens).map(Expr::pre_dec),
         Token::Constant(c) => Ok(Expr::Const(c)),
 
         t @ (Token::Minus | Token::Tilde | Token::Not) => {
@@ -544,16 +538,18 @@ fn factor(tokens: &mut TokenIter) -> Result<Expr, Error> {
             }
         }
 
-        e => {
-            eprintln!("errored in {e:?}");
+        t => {
+            eprintln!("errored in {t:?}");
             Err(Error::ExpectedExpr)
         }
-    }?;
-    match tokens.next_if(|x| x == &Token::Increment || x == &Token::Decrement) {
-        Some(Token::Increment) => Ok(Expr::PostfixIncrement(Box::new(factor))),
-        Some(Token::Decrement) => Ok(Expr::PostfixDecrement(Box::new(factor))),
-        _ => Ok(factor),
     }
+    .map(
+        |factor| match tokens.next_if(|x| x == &Token::Increment || x == &Token::Decrement) {
+            Some(Token::Increment) => Expr::post_inc(factor),
+            Some(Token::Decrement) => Expr::post_dec(factor),
+            _ => factor,
+        },
+    )
 }
 
 fn argument_list(tokens: &mut TokenIter) -> Result<Box<[Expr]>, Error> {
