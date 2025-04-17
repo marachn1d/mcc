@@ -49,7 +49,7 @@ pub fn emit(program: typed::Program, symbol_table: &mut SymbolTable) -> Program 
             typ: t,
         } = attr
         {
-            let init = init.get_static();
+            let init = init.get_static(*t);
             tlvs.push(TopLevel::StaticVar(StaticVar {
                 name: name.clone(),
                 global: *g,

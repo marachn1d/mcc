@@ -16,7 +16,6 @@ pub fn generate(program: typed::Program, emit_asm: bool, mut table: SymbolTable)
         let (pseudo, table) = pseudo_pass::emit(tacky, table);
 
         let asm = x86_pass::fix_ast(pseudo, &table);
-
         assembly::emit(&asm)
     } else {
         Box::new([])

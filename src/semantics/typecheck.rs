@@ -83,10 +83,11 @@ impl From<Constant> for StaticInit {
 }
 
 impl InitialVal {
-    pub fn get_static(&self) -> StaticInit {
-        match self {
-            InitialVal::Initial(s) => *s,
-            InitialVal::Tentative => StaticInit::Int(0),
+    pub const fn get_static(&self, ty: VarType) -> StaticInit {
+        match (self, ty) {
+            (InitialVal::Initial(s), _) => *s,
+            (InitialVal::Tentative, VarType::Int) => StaticInit::Int(0),
+            (InitialVal::Tentative, VarType::Long) => StaticInit::Long(0),
         }
     }
 
@@ -352,57 +353,28 @@ fn typecheck_expression(expression: ast::Expr, table: &mut SymbolTable) -> Resul
         ast::Expr::Binary {
             left,
             right,
-            operator: op @ (Bop::LeftShift | Bop::RightShift),
-        } => {
-            let left = typecheck_expression(*left, table).map(Box::from)?;
-            let mut right = typecheck_expression(*right, table).map(Box::from)?;
-            convert_to(&mut right, &VarType::Int);
-            Ok(Expr::Binary {
-                left,
-                operator: op,
-                right,
-                ty: VarType::Int,
-            })
-        }
-        ast::Expr::Binary {
-            left,
-            right,
             operator,
         } => {
-            use crate::parse::Bop;
+            // if it's relational or logical and or logical or then it's gonna be int
             let mut left = typecheck_expression(*left, table).map(Box::from)?;
             let mut right = typecheck_expression(*right, table).map(Box::from)?;
-            if matches!(operator, Bop::LogAnd | Bop::LogOr) {
-                Ok(Expr::Binary {
-                    left,
-                    operator,
-                    right,
-                    ty: VarType::Int,
-                })
-            } else if let Some(common) = left.ty().common_type(&right.ty()) {
-                convert_to(&mut left, &common);
-                convert_to(&mut right, &common);
-                let ty = if operator.relational() {
+            // result of this expression is an int
+            let Some(ty) = left.ty().common_type(&right.ty()) else {
+                return Err(Error::InvalidCast);
+            };
+            convert_to(&mut left, &ty);
+            convert_to(&mut right, &ty);
+            Ok(Expr::Binary {
+                left,
+                operator,
+                right,
+                ty: if operator.relational() || matches!(operator, Bop::LogAnd | Bop::LogOr) {
                     VarType::Int
                 } else {
-                    common
-                };
-                Ok(Expr::Binary {
-                    operator,
-                    left,
-                    right,
-                    ty,
-                })
-            } else {
-                Err(Error::InvalidCast)
-            }
+                    ty
+                },
+            })
         }
-        /*
-        AstExpression::PostfixIncrement(exp)
-        | AstExpression::PostfixDecrement(exp)
-        | AstExpression::PrefixIncrement(exp)
-        | AstExpression::PrefixDecrement(exp)
-        */
         ast::Expr::Nested(exp) => typecheck_expression(*exp, table),
         ast::Expr::Const(cnst @ Constant::Int(_)) => Ok(Expr::Const {
             cnst,
@@ -449,7 +421,6 @@ fn typecheck_expression(expression: ast::Expr, table: &mut SymbolTable) -> Resul
             };
 
             convert_to(&mut r#true, &common);
-
             convert_to(&mut r#false, &common);
 
             Ok(Expr::Conditional {
