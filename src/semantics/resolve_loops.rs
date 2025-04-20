@@ -1,4 +1,4 @@
-use crate::lex::Constant;
+use crate::parse::Constant;
 use std::sync::atomic::{AtomicUsize, Ordering};
 static LOOPS: AtomicUsize = AtomicUsize::new(0);
 use super::labeled::*;

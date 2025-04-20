@@ -16,7 +16,7 @@ pub use parse::inc_dec::*;
 pub use parse::{Arr, ParamList};
 
 use super::LabelId;
-use crate::lex::Constant;
+use crate::parse::Constant;
 #[derive(Clone, Debug)]
 pub enum Label {
     Named(Identifier),
@@ -39,8 +39,8 @@ pub mod type_prelude {
 pub mod labeled {
 
     use super::{Arr, Identifier, IncDec, Label};
-    use crate::lex::Constant;
     use crate::parse;
+    use crate::parse::Constant;
     use parse::{Bop, FnType, ParamList, StorageClass, UnOp, VarType};
 
     use crate::semantics::LabelId;
@@ -151,7 +151,7 @@ pub mod labeled {
         },
 
         Var(Identifier),
-        Const(crate::lex::Constant),
+        Const(crate::parse::Constant),
         Unary {
             operator: UnOp,
             operand: Box<Self>,
@@ -226,10 +226,9 @@ pub mod labeled {
 
     use super::StaticInit;
     impl Expr {
-        pub const fn static_init(&self) -> Option<StaticInit> {
+        pub fn static_init(&self) -> Option<StaticInit> {
             match self {
-                Expr::Const(Constant::Long(l)) => Some(StaticInit::Long(*l)),
-                Expr::Const(Constant::Int(i)) => Some(StaticInit::Int(*i)),
+                Expr::Const(c) => Some(StaticInit::from(*c)),
                 Expr::Nested(e) => e.static_init(),
                 _ => None,
             }
@@ -239,8 +238,8 @@ pub mod labeled {
 
 pub mod typechecked {
     use super::{Arr, Identifier, IncDec, Label};
-    use crate::lex::Constant;
     use crate::parse;
+    use crate::parse::Constant;
     use crate::semantics::LabelId;
     use parse::{Bop, FnType, ParamList, StorageClass, UnOp, VarType};
 
@@ -361,7 +360,7 @@ pub mod typechecked {
             ty: VarType,
         },
         Const {
-            cnst: crate::lex::Constant,
+            cnst: crate::parse::Constant,
             ty: VarType,
         },
         Unary {

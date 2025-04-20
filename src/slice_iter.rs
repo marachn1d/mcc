@@ -1,5 +1,5 @@
+use crate::lex::Identifier;
 use crate::lex::Token;
-use crate::lex::{Constant, Identifier};
 use std::iter::Iterator;
 use std::slice::Iter;
 pub struct SliceIter<'a, T: Copy>(Iter<'a, T>);
@@ -63,14 +63,6 @@ impl TokenIter {
     #[allow(dead_code)]
     pub fn print_next(&self) {
         eprintln!("next: {:?}", self.peek());
-    }
-
-    pub fn consume_type(&mut self) -> Option<VarType> {
-        match self.next_if(|x| x == &Token::Int || x == &Token::Long) {
-            Some(Token::Int) => Some(VarType::Int),
-            Some(Token::Long) => Some(VarType::Long),
-            _ => None,
-        }
     }
 
     pub fn new(tokens: Box<[Token]>) -> Self {
@@ -138,9 +130,11 @@ impl TokenIter {
         }
     }
 
-    pub fn consume_constant(&mut self) -> Result<Constant, parse::Error> {
+    pub fn consume_constant(
+        &mut self,
+    ) -> Result<(Box<[crate::lex::AsciiDigit]>, crate::lex::ConstLiteral), parse::Error> {
         match self.next_if(Token::constant) {
-            Some(Token::Constant(c)) => Ok(c),
+            Some(Token::Constant { bytes, lit }) => Ok((bytes, lit)),
             None => Err(parse::Error::UnexpectedEof),
             _ => Err(parse::Error::ExpectedConstant),
         }

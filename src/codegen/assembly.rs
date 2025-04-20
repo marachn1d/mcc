@@ -26,8 +26,8 @@ pub fn update_table(mut table: crate::semantics::SymbolTable) -> SymbolTable {
 
 const fn asm_type(ty: VarType) -> AsmType {
     match ty {
-        VarType::Int => AsmType::Longword,
-        VarType::Long => AsmType::Quadword,
+        VarType::Int | VarType::UInt => AsmType::Longword,
+        VarType::Long | VarType::ULong => AsmType::Quadword,
     }
 }
 

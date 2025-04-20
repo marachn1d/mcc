@@ -2,8 +2,8 @@ pub mod ast;
 mod specifier_list;
 
 pub use ast::{
-    Arr, Binary, Block, BlockItem, Bop, Dec, Expr, FnDec, FnType, ForInit, Label, Param, ParamList,
-    Program, Stmnt, StorageClass, UnOp, Unary, VarDec, VarType,
+    Arr, Binary, Block, BlockItem, Bop, Constant, Dec, Expr, FnDec, FnType, ForInit, Label, Param,
+    ParamList, Program, Stmnt, StorageClass, UnOp, Unary, VarDec, VarType,
 };
 
 pub use ast::inc_dec::{self, *};
@@ -93,8 +93,7 @@ fn top_level_vardec(
     })
 }
 
-// type specifier
-
+#[derive(Debug)]
 pub struct SpecifierList {
     sc: Option<StorageClass>,
     typ: VarType,
@@ -103,17 +102,6 @@ pub struct SpecifierList {
 fn specifiers(tokens: &mut TokenIter) -> Result<SpecifierList, Error> {
     let builder = specifier_list::get_specifiers(tokens)?;
     builder.done()
-}
-
-fn type_specifier(tokens: &mut TokenIter) -> Result<VarType, Error> {
-    let (res, num) = match tokens.as_slice() {
-        [Token::Long | Token::Int, Token::Int | Token::Long, ..] => (VarType::Long, 2),
-        [Token::Int, ..] => (VarType::Int, 1),
-        [Token::Long, ..] => (VarType::Long, 1),
-        _ => return Err(Error::InvalidSpecifiers),
-    };
-    let _ = tokens.nth(num - 1);
-    Ok(res)
 }
 
 fn param_list(tokens: &mut TokenIter) -> Result<ParamList, Error> {
@@ -136,7 +124,7 @@ fn param_list(tokens: &mut TokenIter) -> Result<ParamList, Error> {
 }
 
 fn param(tokens: &mut TokenIter) -> Result<(Param, bool), Error> {
-    let typ = type_specifier(tokens)?;
+    let typ = specifier_list::type_specifier(tokens)?;
 
     let name = tokens.consume_identifier()?;
     let last = match tokens.consume_any()? {
@@ -162,16 +150,14 @@ fn block(tokens: &mut TokenIter) -> Result<Block, Error> {
 
 fn block_item(tokens: &mut TokenIter) -> Result<Option<BlockItem>, Error> {
     match tokens.peek_any()? {
-        Token::Int | Token::Static | Token::Extern | Token::Long => {
-            Ok(Some(BlockItem::D(declaration(tokens)?)))
-        }
+        t if t.specifier() => Ok(Some(BlockItem::D(declaration(tokens)?))),
         Token::CloseBrace => Ok(None),
         _ => Ok(Some(BlockItem::S(statement(tokens)?))),
     }
 }
 
 fn var_declaration(tokens: &mut TokenIter, sc: Option<StorageClass>) -> Result<VarDec, Error> {
-    let typ = type_specifier(tokens)?;
+    let typ = specifier_list::type_specifier(tokens)?;
     let name = tokens.consume_identifier()?;
     let init = match tokens.consume_any()? {
         Token::Equals => {
@@ -191,26 +177,18 @@ fn var_declaration(tokens: &mut TokenIter, sc: Option<StorageClass>) -> Result<V
     })
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum Type {
     Var(VarType),
     Fn(FnType),
 }
 
 impl VarType {
-    pub const fn common_type(&self, other: &Self) -> Option<Self> {
-        match (self, other) {
-            (Self::Long, Self::Long) | (Self::Long, Self::Int) | (Self::Int, Self::Long) => {
-                Some(Self::Long)
-            }
-            (Self::Int, Self::Int) => Some(Self::Int),
-        }
-    }
-
     pub const fn alignment(&self) -> u32 {
+        use VarType::{Int, Long, UInt, ULong};
         match self {
-            Self::Int => 4,
-            Self::Long => 8,
+            Int | UInt => 4,
+            Long | ULong => 8,
         }
     }
 }
@@ -310,9 +288,10 @@ fn statement(tokens: &mut TokenIter) -> Result<Stmnt, Error> {
         }
         Token::Case => {
             tokens.next();
-            let Token::Constant(con) = tokens.consume_any()? else {
+            let Token::Constant { bytes, lit } = tokens.consume_any()? else {
                 return Err(Error::Catchall("expected constant"));
             };
+            let con = constant(&bytes, lit);
 
             tokens.consume(Token::Colon)?;
             let label = Label::Case(con);
@@ -504,8 +483,7 @@ fn factor(tokens: &mut TokenIter) -> Result<Expr, Error> {
     match tokens.consume_any()? {
         Token::Increment => factor(tokens).map(Expr::pre_inc),
         Token::Decrement => factor(tokens).map(Expr::pre_dec),
-        Token::Constant(c) => Ok(Expr::Const(c)),
-
+        Token::Constant { bytes, lit } => Ok(Expr::Const(constant(&bytes, lit))),
         t @ (Token::Minus | Token::Tilde | Token::Not) => {
             let operator = if t == Token::Minus {
                 UnOp::Negate
@@ -518,7 +496,8 @@ fn factor(tokens: &mut TokenIter) -> Result<Expr, Error> {
             Ok(Expr::Unary(Unary { exp, op: operator }))
         }
         Token::OpenParen => {
-            if let Some(target) = tokens.consume_type() {
+            if tokens.peek_any()?.type_specifier() {
+                let target = specifier_list::type_specifier(tokens)?;
                 tokens.consume(Token::CloseParen)?;
                 let exp = factor(tokens)?.into();
                 Ok(Expr::Cast { target, exp })
@@ -552,6 +531,53 @@ fn factor(tokens: &mut TokenIter) -> Result<Expr, Error> {
     )
 }
 
+pub use crate::lex::{AsciiDigit, ConstLiteral};
+fn constant(bytes: &[AsciiDigit], kind: ConstLiteral) -> Constant {
+    // here's the way it works, if it's a literal then we convert, otherwise we do biggest possible
+    match kind {
+        ConstLiteral::Int => match parse_ulong(bytes) {
+            x if x <= i64::MAX as u64 => Constant::Long(x as i64),
+            x if x <= u32::MAX as u64 => Constant::UInt(x as u32),
+            x if x <= i32::MAX as u64 => Constant::Int(x as i32),
+            x => Constant::ULong(x),
+        },
+        ConstLiteral::UInt => {
+            let mut num: u32 = 0;
+            for (place, digit) in bytes.iter().enumerate() {
+                let tmp: u32 = (*digit as u32).saturating_mul(10u32.saturating_pow(place as u32));
+                num = num.saturating_add(tmp);
+            }
+            Constant::UInt(num)
+        }
+        ConstLiteral::Long => {
+            let mut num: i64 = 0;
+            for (place, digit) in bytes.iter().enumerate() {
+                let tmp: i64 = (*digit as i64).saturating_mul(10i64.saturating_pow(place as u32));
+                num = num.saturating_add(tmp);
+            }
+            Constant::Long(num)
+        }
+        ConstLiteral::ULong => Constant::ULong(parse_ulong(bytes)),
+    }
+}
+
+fn parse_ulong(bytes: &[AsciiDigit]) -> u64 {
+    let mut num: u64 = 0;
+    for (place, digit) in bytes.iter().rev().enumerate() {
+        let tmp: u64 = (*digit as u64).saturating_mul(10u64.saturating_pow(place as u32));
+        num = num.saturating_add(tmp);
+    }
+    num
+}
+/*
+fn parse_ulong(slice: &[AsciiDigit]) -> u64 {
+    let mut cur = 0u64;
+    for (place, digit) in slice.iter().map(|&x| u64::from(x as u8)).rev().enumerate() {
+        cur += 10u64.pow(place as u32) * digit;
+    }
+    cur
+}*/
+
 fn argument_list(tokens: &mut TokenIter) -> Result<Box<[Expr]>, Error> {
     if tokens.consume(Token::CloseParen).is_ok() {
         return Ok(Box::new([]));
@@ -565,7 +591,12 @@ fn argument_list(tokens: &mut TokenIter) -> Result<Box<[Expr]>, Error> {
             Token::CloseParen => {
                 break;
             }
-            _ => return Err(Error::Catchall("idk")),
+            t => {
+                return Err(Error::ExpectedGot {
+                    expected: &[Token::Comma, Token::CloseParen],
+                    got: t,
+                })
+            }
         }
     }
 
@@ -581,6 +612,10 @@ pub struct DebugError {
 #[derive(Debug)]
 pub enum Error {
     UnexpectedEof,
+    ExpectedGot {
+        expected: &'static [Token],
+        got: Token,
+    },
     Expected(Token),
     ExpectedIdentifier,
     ExpectedConstant,

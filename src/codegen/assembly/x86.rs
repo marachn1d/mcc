@@ -25,6 +25,7 @@ pub enum BaseX86<T: Operand> {
         ty: AsmType,
         regs: OpPair<T>,
     },
+
     Unary {
         operator: Unary,
         operand: T,
@@ -42,7 +43,15 @@ pub enum BaseX86<T: Operand> {
         divisor: T,
         ty: AsmType,
     },
+    Div {
+        divisor: T,
+        ty: AsmType,
+    },
     Cdq(AsmType),
+    Movzx {
+        ty: AsmType,
+        regs: OpPair<T>,
+    },
     Cmp {
         ty: AsmType,
         regs: OpPair<T>,
@@ -65,10 +74,17 @@ pub type OpPair<T> = (T, T);
 pub enum CondCode {
     E,
     NE,
+    //signed comparisons
     G,
     GE,
     L,
     LE,
+
+    //unsigned comparisons
+    A, // A > B
+    AE,
+    B, // A < B
+    BE,
 }
 
 impl Display for CondCode {
@@ -83,6 +99,10 @@ impl Display for CondCode {
                 Self::GE => "ge",
                 Self::L => "l",
                 Self::LE => "le",
+                Self::A => "a",
+                Self::AE => "ae",
+                Self::B => "b",
+                Self::BE => "be",
             }
         )
     }
@@ -152,10 +172,21 @@ impl<T: Operand> BaseX86<T> {
         Self::Idiv { divisor, ty }
     }
 
+    pub const fn div(divisor: T, ty: AsmType) -> Self {
+        Self::Div { divisor, ty }
+    }
+
     pub const fn movsx(src: T, dst: T) -> Self {
         Self::Movsx {
             ty: AsmType::Quadword,
             regs: (src, dst),
+        }
+    }
+
+    pub const fn movzx(src: T, dst: T) -> Self {
+        Self::Movzx {
+            regs: (src, dst),
+            ty: AsmType::Quadword,
         }
     }
 }
@@ -213,6 +244,9 @@ impl Display for X86 {
             Self::Idiv { divisor, ty } => {
                 write!(f, "idiv{ty} {}", divisor.sized_fmt(*ty))
             }
+            Self::Div { divisor, ty } => {
+                write!(f, "div{ty} {}", divisor.sized_fmt(*ty))
+            }
             Self::Cdq(AsmType::Longword) => {
                 write!(f, "cdq")
             }
@@ -249,6 +283,17 @@ impl Display for X86 {
                 write!(
                     f,
                     "movslq {}, {}",
+                    src.sized_fmt(AsmType::Longword),
+                    dst.sized_fmt(*ty)
+                )
+            }
+            Self::Movzx {
+                regs: (src, dst),
+                ty,
+            } => {
+                write!(
+                    f,
+                    "movzlq {}, {}",
                     src.sized_fmt(AsmType::Longword),
                     dst.sized_fmt(*ty)
                 )
@@ -433,10 +478,12 @@ impl PseudoOp {
         Register::R8,
         Register::R9,
     ];
+    pub const ZERO: Self = Self::Normal(Op::Imm(0));
 
     pub const fn imm(value: i64) -> Self {
         Self::Normal(Op::Imm(value))
     }
+
     pub const fn register(reg: Register) -> Self {
         Self::Normal(Op::Register(reg))
     }

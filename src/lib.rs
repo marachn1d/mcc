@@ -40,6 +40,7 @@ pub fn compile(mut path: PathBuf) -> Result<PathBuf, Error> {
             return Ok("".into());
         }
         let ast = parse(tokens)?;
+        eprintln!("{ast:?}");
         #[cfg(feature = "semantics")]
         {
             if !should_validate(&stage) {

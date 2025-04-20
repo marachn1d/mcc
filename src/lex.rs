@@ -3,54 +3,18 @@ use super::slice_iter::SliceIter;
 use std::fmt::{self, Display, Formatter};
 use std::rc::Rc;
 
-#[derive(Debug, Clone)]
-pub struct DebugToken {
-    pub token: Token,
-    pub line: usize,
-}
+pub fn tokenize(bytes: &[u8]) -> Result<Box<[DebugToken]>, Error> {
+    let mut iter = SliceIter::new(bytes);
 
-impl DebugToken {
-    pub fn into_inner(self) -> (Token, usize) {
-        (self.token, self.line)
+    let mut tokens = Vec::new();
+    let mut cur_line = 0;
+    while let Some(token) = lex_slice(&mut iter, &mut cur_line)? {
+        tokens.push(DebugToken {
+            token,
+            line: cur_line,
+        });
     }
-
-    pub const fn line(&self) -> usize {
-        self.line
-    }
-}
-
-impl std::ops::Deref for DebugToken {
-    type Target = Token;
-
-    fn deref(&self) -> &Self::Target {
-        &self.token
-    }
-}
-use std::ops::Deref;
-
-use std::ops::DerefMut;
-impl AsRef<Token> for DebugToken {
-    fn as_ref(&self) -> &Token {
-        self.deref()
-    }
-}
-
-impl AsMut<Token> for DebugToken {
-    fn as_mut(&mut self) -> &mut Token {
-        self.deref_mut()
-    }
-}
-
-impl std::ops::DerefMut for DebugToken {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.token
-    }
-}
-
-impl From<DebugToken> for Token {
-    fn from(debug: DebugToken) -> Token {
-        debug.token
-    }
+    Ok(tokens.into())
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
@@ -73,8 +37,13 @@ pub enum Token {
     Static,
     Extern,
     Long,
+    Signed,
+    Unsigned,
 
-    Constant(Constant),
+    Constant {
+        bytes: Box<[AsciiDigit]>,
+        lit: ConstLiteral,
+    },
     Identifier(Identifier),
     OpenParen,
     CloseParen,
@@ -122,18 +91,12 @@ pub enum Token {
     Colon,
 }
 
-pub fn tokenize(bytes: &[u8]) -> Result<Box<[DebugToken]>, Error> {
-    let mut iter = SliceIter::new(bytes);
-
-    let mut tokens = Vec::new();
-    let mut cur_line = 0;
-    while let Some(token) = lex_slice(&mut iter, &mut cur_line)? {
-        tokens.push(DebugToken {
-            token,
-            line: cur_line,
-        });
-    }
-    Ok(tokens.into())
+#[derive(PartialEq, Eq, Debug, Clone)]
+pub enum ConstLiteral {
+    Long,
+    ULong,
+    Int,
+    UInt,
 }
 
 fn lex_slice(iter: &mut SliceIter<u8>, cur_line: &mut usize) -> Result<Option<Token>, Error> {
@@ -260,7 +223,7 @@ fn lex_slice(iter: &mut SliceIter<u8>, cur_line: &mut usize) -> Result<Option<To
                 b'~' => Token::Tilde,
                 b'0'..=b'9' => {
                     let byte = AsciiDigit::from_int(*a).unwrap();
-                    Token::Constant(constant_number(byte, iter)?)
+                    constant_number(byte, iter)?
                 }
                 b'-' => Token::Minus,
                 b'+' => Token::Plus,
@@ -302,25 +265,49 @@ impl AsciiDigit {
     }
 }
 
-fn constant_number(start: AsciiDigit, iter: &mut SliceIter<u8>) -> Result<Constant, Error> {
-    let mut bytes = vec![start];
+fn constant_number(start: AsciiDigit, iter: &mut SliceIter<u8>) -> Result<Token, Error> {
+    let mut b = vec![start];
     while let Some(constant) = next_if_number(iter) {
-        bytes.push(constant);
+        b.push(constant);
     }
+    literal_type(iter).map(|lit| Token::Constant {
+        bytes: b.into_boxed_slice(),
+        lit,
+    })
+}
 
-    match iter.peek() {
-        Some(b'l') => {
+fn literal_type(iter: &mut SliceIter<u8>) -> Result<ConstLiteral, Error> {
+    match iter.as_slice() {
+        [b'l' | b'L', b'u' | b'U', ..] | [b'u' | b'U', b'l' | b'L', ..] => {
             iter.next();
-            Ok(Constant::from(parse_long(&bytes)))
+            iter.next();
+            Ok(ConstLiteral::ULong)
         }
-        Some(x) if !word_character(x) => {
-            let long = parse_long(&bytes);
-            i32::try_from(long)
-                .map(Constant::Int)
-                .or(Ok(Constant::Long(long)))
+
+        [b'l' | b'L', ..] => {
+            iter.next();
+            Ok(ConstLiteral::Long)
         }
+        [b'u' | b'U', ..] => {
+            iter.next();
+            Ok(ConstLiteral::UInt)
+        }
+        [x, ..] if !word_character(*x) => Ok(ConstLiteral::Int),
         _ => Err(Error::InvalidConstant),
     }
+}
+
+#[derive(Copy, Clone, Debug)]
+enum Literal {
+    Int(i32),
+    Long(i64),
+    UInt(u32),
+    ULong(u64),
+}
+
+enum LiteralType {
+    Int { signed: bool },
+    Long { signed: bool },
 }
 
 fn literal(byte: u8, iter: &mut SliceIter<u8>) -> Result<Token, Error> {
@@ -347,6 +334,9 @@ fn literal(byte: u8, iter: &mut SliceIter<u8>) -> Result<Token, Error> {
             b"static" => Token::Static,
             b"extern" => Token::Extern,
             b"long" => Token::Long,
+            b"unsigned" => Token::Unsigned,
+            b"signed" => Token::Signed,
+
             _ => identifier(bytes.into())?.into(),
         })
     } else {
@@ -386,8 +376,8 @@ fn next_if_number(iter: &mut SliceIter<u8>) -> Option<AsciiDigit> {
     iter.next_if_map(AsciiDigit::from_int)
 }
 
-#[derive(Clone, Copy)]
-enum AsciiDigit {
+#[derive(Clone, Copy, Eq, PartialEq, Debug)]
+pub enum AsciiDigit {
     Zero = 0,
     One = 1,
     Two = 2,
@@ -398,6 +388,22 @@ enum AsciiDigit {
     Seven = 7,
     Eight = 8,
     Nine = 9,
+}
+
+fn parse_ulong(slice: &[AsciiDigit]) -> u64 {
+    let mut cur = 0u64;
+    for (place, digit) in slice.iter().map(|&x| u64::from(x as u8)).rev().enumerate() {
+        cur += 10u64.pow(place as u32) * digit;
+    }
+    cur
+}
+
+fn parse_uint(slice: &[AsciiDigit]) -> u32 {
+    let mut cur = 0u32;
+    for (place, digit) in slice.iter().map(|&x| u32::from(x as u8)).rev().enumerate() {
+        cur += 10u32.pow(place as u32) * digit;
+    }
+    cur
 }
 
 fn parse_long(slice: &[AsciiDigit]) -> i64 {
@@ -412,22 +418,24 @@ impl Token {
         matches!(self, Self::Identifier(_))
     }
     pub const fn constant(&self) -> bool {
-        matches!(self, Self::Constant(_))
+        matches!(self, Self::Constant { .. })
+    }
+
+    pub const fn specifier(&self) -> bool {
+        self.type_specifier() || self.storage_class_specifier()
+    }
+
+    pub const fn storage_class_specifier(&self) -> bool {
+        matches!(self, Self::Static | Self::Extern)
+    }
+
+    pub const fn type_specifier(&self) -> bool {
+        matches!(self, Self::Int | Self::Long | Self::Signed | Self::Unsigned)
     }
 }
 
 fn next_if_word(iter: &mut SliceIter<u8>) -> Option<u8> {
     iter.next_if(word_character)
-}
-
-impl PartialEq<Token> for Constant {
-    fn eq(&self, other: &Token) -> bool {
-        if let Token::Constant(c) = other {
-            c == self
-        } else {
-            false
-        }
-    }
 }
 
 impl PartialEq<Token> for Identifier {
@@ -489,52 +497,53 @@ impl From<Identifier> for Token {
     }
 }
 
-impl From<Constant> for Token {
-    fn from(c: Constant) -> Self {
-        Self::Constant(c)
+#[derive(Debug, Clone)]
+pub struct DebugToken {
+    pub token: Token,
+    pub line: usize,
+}
+
+impl DebugToken {
+    pub fn into_inner(self) -> (Token, usize) {
+        (self.token, self.line)
+    }
+
+    pub const fn line(&self) -> usize {
+        self.line
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Copy, Clone, Ord, PartialOrd)]
-pub enum Constant {
-    Int(i32),
-    Long(i64),
-}
+impl std::ops::Deref for DebugToken {
+    type Target = Token;
 
-impl Constant {
-    pub fn int(&self) -> i32 {
-        match self {
-            Self::Int(i) => *i,
-            Self::Long(l) => *l as i32,
-        }
+    fn deref(&self) -> &Self::Target {
+        &self.token
     }
+}
+use std::ops::Deref;
 
-    pub fn long(&self) -> i64 {
-        match self {
-            Self::Int(i) => *i as i64,
-            Self::Long(l) => *l,
-        }
+use std::ops::DerefMut;
+impl AsRef<Token> for DebugToken {
+    fn as_ref(&self) -> &Token {
+        self.deref()
     }
 }
 
-impl From<i32> for Constant {
-    fn from(i: i32) -> Self {
-        Self::Int(i)
+impl AsMut<Token> for DebugToken {
+    fn as_mut(&mut self) -> &mut Token {
+        self.deref_mut()
     }
 }
 
-impl From<i64> for Constant {
-    fn from(i: i64) -> Self {
-        Self::Long(i)
+impl std::ops::DerefMut for DebugToken {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.token
     }
 }
 
-impl fmt::Display for Constant {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        match self {
-            Self::Int(i) => i.fmt(f),
-            Self::Long(l) => l.fmt(f),
-        }
+impl From<DebugToken> for Token {
+    fn from(debug: DebugToken) -> Token {
+        debug.token
     }
 }
 

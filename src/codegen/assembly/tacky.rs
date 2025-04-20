@@ -1,7 +1,7 @@
 use super::Identifier;
 use super::InstructionSet;
-use crate::lex::Constant;
 use crate::parse;
+use crate::parse::Constant;
 use crate::semantics::StaticInit;
 use parse::UnOp;
 use parse::VarType;
@@ -40,6 +40,11 @@ pub struct FunctionDefinition {
 #[derive(Debug)]
 pub enum Instruction {
     SignExtend {
+        src: Value,
+        dst: Value,
+    },
+
+    ZeroExtend {
         src: Value,
         dst: Value,
     },

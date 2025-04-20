@@ -1,4 +1,3 @@
-use crate::lex::Constant;
 use crate::lex::Identifier;
 pub use inc_dec::*;
 use std::fmt::{self, Display, Formatter};
@@ -36,8 +35,22 @@ impl From<VarDec> for Dec {
 #[derive(Debug, Copy, Clone)]
 pub enum StaticInit {
     Int(i32),
+    UInt(u32),
     Long(i64),
+    ULong(u64),
 }
+
+impl From<Constant> for StaticInit {
+    fn from(c: Constant) -> Self {
+        match c {
+            Constant::Int(i) => Self::Int(i),
+            Constant::UInt(i) => Self::UInt(i),
+            Constant::ULong(i) => Self::ULong(i),
+            Constant::Long(i) => Self::Long(i),
+        }
+    }
+}
+
 pub type Block = Arr<BlockItem>;
 
 pub type ParamList = Arr<Param>;
@@ -62,16 +75,90 @@ pub enum StorageClass {
     Extern,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct FnType {
     pub ret: Option<VarType>,
     pub params: Box<[VarType]>,
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum VarType {
     Int,
     Long,
+    UInt,
+    ULong,
+}
+
+impl VarType {
+    pub fn common_ty(&self, other: &Self) -> Option<Self> {
+        Some(match self.cmp(other) {
+            Ordering::Greater | Ordering::Equal => *self,
+            Ordering::Less => *other,
+        })
+    }
+
+    pub const fn sign(&self) -> Sign {
+        match self {
+            Self::Int | Self::Long => Sign::Signed,
+            Self::UInt | Self::ULong => Sign::Unsigned,
+        }
+    }
+
+    pub const fn size(&self) -> TySize {
+        match self {
+            Self::Int | Self::UInt => TySize::Int,
+            Self::Long | Self::ULong => TySize::Long,
+        }
+    }
+
+    pub fn signed(&self) -> bool {
+        self.sign() == Sign::Signed
+    }
+
+    pub fn unsigned(&self) -> bool {
+        self.sign() == Sign::Unsigned
+    }
+}
+
+use std::cmp::{Eq, Ordering, PartialEq};
+impl Ord for VarType {
+    // C Arithmetic Conversion Rules: (Section 6.3.1.8 Paragraph 1 of Cstd)
+    // 1. if both have same type no conversion is needed
+    // 2. if both are signed or unsigned, compare by rank
+    // 3. If Unsigned can represent signed, convert to unsigned
+    // 4. If Signed can represent Unsigned, convert to signed
+    // 5. otherwise, (if they're the same size) convert to unsigned greater ranked type
+
+    // In other words, if they're the same size, then convert to unsigned, if they're
+    // different, convert to the bigger one
+
+    fn cmp(&self, other: &Self) -> Ordering {
+        let size = self.size().cmp(&other.size());
+        let sign = self.sign().cmp(&other.sign());
+        if size == Ordering::Equal {
+            sign
+        } else {
+            size
+        }
+    }
+}
+
+impl PartialOrd for VarType {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub enum Sign {
+    Unsigned = 2,
+    Signed = 1,
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub enum TySize {
+    Long = 2,
+    Int = 1,
 }
 
 #[derive(Debug)]
@@ -164,6 +251,8 @@ impl Expr {
             Self::Nested(e) => e.static_init(),
             Self::Const(Constant::Long(c)) => Some(StaticInit::Long(*c)),
             Self::Const(Constant::Int(c)) => Some(StaticInit::Int(*c)),
+            Self::Const(Constant::UInt(c)) => Some(StaticInit::UInt(*c)),
+            Self::Const(Constant::ULong(c)) => Some(StaticInit::ULong(*c)),
             _ => None,
         }
     }
@@ -435,4 +524,107 @@ pub mod inc_dec {
         inc: IncOp::Dec,
         fix: Fix::Post,
     };
+}
+
+#[derive(Debug, PartialEq, Eq, Copy, Clone, Ord, PartialOrd)]
+pub enum Constant {
+    Int(i32),
+    UInt(u32),
+    Long(i64),
+    ULong(u64),
+}
+
+impl Constant {
+    pub const fn ty(&self) -> VarType {
+        match self {
+            Self::Int(_) => VarType::Int,
+            Self::UInt(_) => VarType::UInt,
+            Self::Long(_) => VarType::Long,
+            Self::ULong(_) => VarType::ULong,
+        }
+    }
+
+    pub fn int(&self) -> i32 {
+        match self {
+            Self::Int(i) => *i,
+            Self::Long(l) => *l as i32,
+            Self::ULong(ul) => *ul as i32,
+            Self::UInt(ui) => *ui as i32,
+        }
+    }
+
+    pub fn long(&self) -> i64 {
+        match self {
+            Self::Int(i) => *i as i64,
+            Self::Long(l) => *l,
+            Self::ULong(ul) => *ul as i64,
+            Self::UInt(ui) => *ui as i64,
+        }
+    }
+}
+
+impl From<i32> for Constant {
+    fn from(i: i32) -> Self {
+        Self::Int(i)
+    }
+}
+
+impl From<i64> for Constant {
+    fn from(i: i64) -> Self {
+        Self::Long(i)
+    }
+}
+
+impl fmt::Display for Constant {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self {
+            Self::Int(i) => i.fmt(f),
+            Self::Long(l) => l.fmt(f),
+            Self::UInt(i) => i.fmt(f),
+            Self::ULong(l) => l.fmt(f),
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::Sign::{self, Signed, Unsigned};
+    use super::TySize;
+    use super::VarType::{self, Int, Long, UInt, ULong};
+    const SIGNS: [Sign; 2] = [Signed, Unsigned];
+    const SIZES: [TySize; 2] = [TySize::Int, TySize::Long];
+    const TYPES: [VarType; 4] = [Int, Long, UInt, ULong];
+
+    #[test]
+    fn type_conv() {
+        for ty in TYPES {
+            assert_eq!(ty, ty)
+        }
+        for sz in SIZES {
+            assert_eq!(sz, sz)
+        }
+        for sn in SIGNS {
+            assert_eq!(sn, sn)
+        }
+        assert!(Signed < Unsigned);
+        assert!(Unsigned > Signed);
+        assert!(TySize::Int < TySize::Long);
+        assert!(TySize::Long > TySize::Int);
+
+        assert!(UInt > Int);
+        assert!(Long > Int);
+        assert!(Long > UInt);
+        assert!(ULong > Long);
+        assert!(ULong > UInt);
+        assert!(ULong > Int);
+
+        assert!(Int < UInt);
+        assert!(Int < Long);
+        assert!(Int < ULong);
+
+        assert!(UInt < Long);
+        assert!(UInt < ULong);
+
+        assert!(Long < ULong);
+    }
 }

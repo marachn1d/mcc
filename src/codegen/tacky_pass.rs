@@ -1,7 +1,7 @@
 use super::assembly;
 use super::Identifier;
-use crate::lex::Constant;
 use crate::parse;
+use crate::parse::Constant;
 use assembly::tacky::FunctionDefinition;
 use assembly::tacky::Instruction;
 use assembly::tacky::Program;
@@ -324,6 +324,8 @@ fn convert_cast_op(
     let dst = d.clone();
     let op = match ty {
         VarType::Int => Instruction::Truncate { src, dst },
+        VarType::UInt => Instruction::ZeroExtend { src, dst },
+        VarType::ULong => Instruction::ZeroExtend { src, dst },
         VarType::Long => Instruction::SignExtend { src, dst },
     };
     instructions.push_one(op);
@@ -340,8 +342,7 @@ fn convert_cast(
         (_, exp, ty) => {
             let src = convert_expression(exp, instructions, table);
             let dst = Value::Var(new_var(ty, r#table));
-            // add dst to symbol table
-            //
+
             convert_cast_op(ty, src, dst, instructions)
         }
     }
@@ -369,7 +370,28 @@ fn convert_expression(
     table: &mut SymbolTable,
 ) -> Value {
     match exp {
-        Expr::Cast { target, exp, ty } => convert_cast((target, *exp, ty), instructions, table),
+        Expr::Cast { target, exp, ty } => {
+            let src = convert_expression(*exp, instructions, table);
+            if target == ty {
+                return src;
+            }
+            let dst = Value::Var(new_var(target, table));
+            let ret = dst.clone();
+            let size_diff = target.size().cmp(&ty.size());
+
+            use std::cmp::Ordering::{Equal, Less};
+            instructions.push_one(if size_diff == Equal {
+                Instruction::Copy { src, dst }
+            } else if size_diff == Less {
+                Instruction::Truncate { src, dst }
+            } else if ty.signed() {
+                Instruction::SignExtend { src, dst }
+            } else {
+                Instruction::ZeroExtend { src, dst }
+            });
+
+            ret
+        }
 
         Expr::Const { cnst: c, ty: _ } => Value::Constant(c),
         Expr::FunctionCall { name, args, ty } => {

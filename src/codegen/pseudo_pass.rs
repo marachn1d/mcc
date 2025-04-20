@@ -52,19 +52,27 @@ pub fn emit(program: TackyProgram, table: SymbolTable) -> (Program<Pseudo>, Back
 
 const fn get_type(ty: &VarType) -> AsmType {
     match ty {
-        VarType::Int => AsmType::Longword,
-        VarType::Long => AsmType::Quadword,
+        VarType::Int | VarType::UInt => AsmType::Longword,
+        VarType::Long | VarType::ULong => AsmType::Quadword,
     }
 }
 
-fn var_type(var: &Identifier, table: &SymbolTable) -> AsmType {
+fn get_var_type(var: &Identifier, table: &SymbolTable) -> VarType {
     let Some(Attr::Automatic(typ) | Attr::Static { typ, .. }) = table.get(var) else {
         panic!(
             "unexpected symbol result: {:?} (expected automatic)",
             table.get(var)
         )
     };
-    get_type(typ)
+    *typ
+}
+
+fn tacky_type(var: &Identifier, table: &SymbolTable) -> VarType {
+    get_var_type(&var, table)
+}
+
+fn var_type(var: &Identifier, table: &SymbolTable) -> AsmType {
+    get_type(&get_var_type(var, table))
 }
 
 fn convert_val(val: &Value) -> PseudoOp {
@@ -73,13 +81,16 @@ fn convert_val(val: &Value) -> PseudoOp {
         Value::Var(v) => PseudoOp::PseudoRegister(v.clone()),
     }
 }
-
-use crate::lex::Constant;
-fn val_type(val: &Value, table: &SymbolTable) -> AsmType {
+fn val_asm(val: &Value, table: &SymbolTable) -> AsmType {
+    get_type(&match val {
+        Value::Constant(c) => c.ty(),
+        Value::Var(v) => get_var_type(v, table),
+    })
+}
+fn val_type(val: &Value, table: &SymbolTable) -> VarType {
     match val {
-        Value::Constant(Constant::Int(_)) => AsmType::Longword,
-        Value::Constant(Constant::Long(_)) => AsmType::Quadword,
-        Value::Var(v) => var_type(v, table),
+        Value::Constant(c) => c.ty(),
+        Value::Var(v) => get_var_type(v, table),
     }
 }
 
@@ -151,7 +162,7 @@ fn convert_instruction(
         TackyOp::Return(var) => {
             instructions.push([
                 Pseudo::Mov {
-                    ty: val_type(&var, table),
+                    ty: val_asm(&var, table),
                     regs: (var.into(), pseudop::AX),
                 },
                 Pseudo::Ret,
@@ -162,14 +173,14 @@ fn convert_instruction(
         }
         TackyOp::Copy { src, dst } => {
             instructions.push_one(Pseudo::Mov {
-                ty: val_type(&src, table),
+                ty: val_asm(&src, table),
                 regs: (src.into(), dst.into()),
             });
         }
         TackyOp::JumpIfZero { condition, target } => {
             let condition_code = CondCode::E;
 
-            let ty = val_type(&condition, table);
+            let ty = val_asm(&condition, table);
             instructions.push(convert_conditional_jump(
                 condition,
                 target,
@@ -179,7 +190,7 @@ fn convert_instruction(
         }
         TackyOp::JumpIfNotZero { condition, target } => {
             let condition_code = CondCode::NE;
-            let ty = val_type(&condition, table);
+            let ty = val_asm(&condition, table);
             instructions.push(convert_conditional_jump(
                 condition,
                 target,
@@ -191,6 +202,9 @@ fn convert_instruction(
         TackyOp::Label(label) => instructions.push_one(Pseudo::Label(label)),
         TackyOp::SignExtend { src, dst } => {
             instructions.push_one(Pseudo::movsx(src.into(), dst.into()))
+        }
+        TackyOp::ZeroExtend { src, dst } => {
+            instructions.push_one(Pseudo::movzx(src.into(), dst.into()))
         }
         TackyOp::Truncate { src, dst } => {
             instructions.push_one(Pseudo::Mov {
@@ -225,7 +239,7 @@ fn push_args(
         instructions.push_one(Pseudo::mov(
             arg.clone().into(),
             PseudoOp::register(TABLE[i]),
-            val_type(arg, table),
+            val_asm(arg, table),
         ))
     }
 
@@ -237,7 +251,7 @@ fn push_args(
 }
 
 fn push_val(val: &Value, instructions: &mut OpVec<Pseudo>, table: &SymbolTable) {
-    if val_type(val, table) == AsmType::Quadword {
+    if val_asm(val, table) == AsmType::Quadword {
         let val = match val {
             Value::Constant(c) => Op::Imm(c.long()).pseudo(),
             Value::Var(v) => PseudoOp::PseudoRegister(v.clone()),
@@ -290,7 +304,7 @@ fn convert_funcall(
     }
 
     instructions.push_one(Pseudo::Mov {
-        ty: val_type(&dst, table),
+        ty: val_asm(&dst, table),
         regs: (Register::Ax.into(), dst.into()),
     });
 }
@@ -302,7 +316,7 @@ fn convert_unary(
     dst: Identifier,
     table: &SymbolTable,
 ) {
-    let ty = val_type(&src, table);
+    let ty = val_asm(&src, table);
     let src = src.into();
     if op == UnOp::Not {
         let dst_ty = var_type(&dst, table);
@@ -363,13 +377,14 @@ fn convert_binary(
     instructions: &mut OpVec<Pseudo>,
     table: &SymbolTable,
 ) {
-    let src_ty = val_type(&source_1, table);
+    let src_var_ty = val_type(&source_1, table);
+    let src_ty = val_asm(&source_1, table);
     let source_1 = PseudoOp::from(source_1);
     let source_2 = PseudoOp::from(source_2);
 
-    match process_binop(op) {
+    match process_binop(op, src_var_ty) {
         Binop::Relational(condition) => {
-            let dst_ty = val_type(&dst, table);
+            let dst_ty = val_asm(&dst, table);
             let dst = PseudoOp::from(dst);
 
             instructions.push([
@@ -385,7 +400,7 @@ fn convert_binary(
                 Pseudo::binary(operator, source_2, dst, src_ty),
             ]);
         }
-        Binop::Div(result_register) => {
+        Binop::IDiv(result_register) => {
             let dst = PseudoOp::from(dst);
 
             instructions.push([
@@ -395,10 +410,22 @@ fn convert_binary(
                 Pseudo::mov(result_register.into(), dst, src_ty),
             ]);
         }
+        Binop::Div(result_register) => {
+            let dst = PseudoOp::from(dst);
+
+            instructions.push([
+                Pseudo::mov(source_1, Register::Ax.into(), src_ty),
+                Pseudo::mov(PseudoOp::ZERO, DX, AsmType::Quadword),
+                Pseudo::div(source_2, src_ty),
+                Pseudo::mov(result_register.into(), dst, src_ty),
+            ]);
+        }
     };
 }
 
-const fn process_binop(op: TackyBinary) -> Binop {
+use super::assembly::x86::pseudo_regs::*;
+
+fn process_binop(op: TackyBinary, ty: VarType) -> Binop {
     match op {
         TackyBinary::Add => Binop::Normal(Binary::Add),
         TackyBinary::Subtract => Binop::Normal(Binary::Sub),
@@ -410,11 +437,19 @@ const fn process_binop(op: TackyBinary) -> Binop {
         TackyBinary::RightShift => Binop::Normal(Binary::ShiftRight),
         TackyBinary::EqualTo => Binop::Relational(CondCode::E),
         TackyBinary::NotEqual => Binop::Relational(CondCode::NE),
-        TackyBinary::LessThan => Binop::Relational(CondCode::L),
-        TackyBinary::GreaterThan => Binop::Relational(CondCode::G),
-        TackyBinary::Leq => Binop::Relational(CondCode::LE),
-        TackyBinary::Geq => Binop::Relational(CondCode::GE),
 
+        TackyBinary::LessThan if ty.signed() => Binop::Relational(CondCode::L),
+        TackyBinary::LessThan => Binop::Relational(CondCode::B),
+
+        TackyBinary::GreaterThan if ty.signed() => Binop::Relational(CondCode::G),
+        TackyBinary::GreaterThan => Binop::Relational(CondCode::A),
+        TackyBinary::Leq if ty.signed() => Binop::Relational(CondCode::LE),
+        TackyBinary::Leq => Binop::Relational(CondCode::BE),
+        TackyBinary::Geq if ty.signed() => Binop::Relational(CondCode::GE),
+        TackyBinary::Geq => Binop::Relational(CondCode::AE),
+
+        TackyBinary::Divide if ty.signed() => Binop::IDiv(Register::Ax),
+        TackyBinary::Remainder if ty.signed() => Binop::IDiv(Register::Dx),
         TackyBinary::Divide => Binop::Div(Register::Ax),
         TackyBinary::Remainder => Binop::Div(Register::Dx),
     }
@@ -423,5 +458,6 @@ const fn process_binop(op: TackyBinary) -> Binop {
 enum Binop {
     Relational(CondCode),
     Normal(Binary),
+    IDiv(Register),
     Div(Register),
 }

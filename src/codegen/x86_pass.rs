@@ -292,6 +292,21 @@ fn fix_instruction(op: Pseudo, sf: &mut StackFrame, vec: &mut OpVec<X86>) {
                 ]);
             }
         },
+        Pseudo::Div { divisor, ty } => match sf.check(divisor, RULES.div) {
+            Ok(divisor) => {
+                vec.push_one(X86::Div { divisor, ty });
+            }
+            Err(divisor) => {
+                let temp_register = Op::Register(Register::R10);
+                vec.push([
+                    X86::mov(divisor, temp_register.clone(), ty),
+                    X86::Div {
+                        divisor: temp_register,
+                        ty,
+                    },
+                ]);
+            }
+        },
         Pseudo::Ret => vec.push_one(X86::Ret),
         Pseudo::Cdq(ty) => vec.push_one(X86::Cdq(ty)),
         // cmp is no quad, one mem, need some kinda bitfield or smth
@@ -343,8 +358,38 @@ fn fix_instruction(op: Pseudo, sf: &mut StackFrame, vec: &mut OpVec<X86>) {
                 ]),
             }
         }
+        Pseudo::Movzx {
+            ty,
+            regs: (src, PseudoOp::Normal(op @ Op::Register(_))),
+        } => {
+            let src = match sf.check(src, RULES.div) {
+                Ok(src) => src,
+                Err(src) => {
+                    vec.push_one(X86::mov(src, Register::R10.into(), ty));
+                    Register::R10.into()
+                }
+            };
+            vec.push_one(X86::mov(src, op, AsmType::Longword))
+        }
+        Pseudo::Movzx { ty, regs } => {
+            let (src, dst) = sf.check_pair(regs, RULES.movsx);
+
+            let src = match src {
+                Ok(src) => src,
+                Err(src) => {
+                    vec.push_one(X86::mov(src, Register::R10.into(), ty));
+                    Register::R10.into()
+                }
+            };
+            let (Ok(dst) | Err(dst)) = dst;
+            vec.push([
+                X86::mov(src, R11, AsmType::Longword),
+                X86::mov(R11, dst, AsmType::Quadword),
+            ])
+        }
     }
 }
+use assembly::x86::op_regs::*;
 
 // no mem dst
 // no quad immediate

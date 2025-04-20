@@ -44,7 +44,7 @@ pub struct StatementLabels {
     pub end: Identifier,
 }
 
-use crate::lex::Constant;
+use crate::parse::Constant;
 
 impl LabelId {
     pub fn labels(&self) -> StatementLabels {

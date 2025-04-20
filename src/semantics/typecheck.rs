@@ -47,7 +47,7 @@ impl Attr {
     }
 }
 
-use crate::lex::Constant;
+use crate::parse::Constant;
 
 #[derive(Debug, Copy, Clone)]
 pub enum InitialVal {
@@ -59,15 +59,19 @@ pub enum InitialVal {
 pub enum StaticInit {
     Int(i32),
     Long(i64),
+    UInt(u32),
+    ULong(u64),
 }
 
 impl std::fmt::Display for StaticInit {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Self::Int(0) => f.write_str(".zero 4"),
-            Self::Long(0) => f.write_str(".zero 8"),
+            Self::Int(0) | Self::UInt(0) => f.write_str(".zero 4"),
+            Self::Long(0) | Self::ULong(0) => f.write_str(".zero 8"),
             Self::Int(i) => write!(f, ".long {i}"),
+            Self::UInt(i) => write!(f, ".long {i}"),
             Self::Long(i) => write!(f, ".quad {i}"),
+            Self::ULong(i) => write!(f, ".quad {i}"),
         }
     }
 }
@@ -76,7 +80,8 @@ impl From<Constant> for StaticInit {
     fn from(c: Constant) -> Self {
         match c {
             Constant::Int(i) => Self::Int(i),
-
+            Constant::UInt(i) => Self::UInt(i),
+            Constant::ULong(i) => Self::ULong(i),
             Constant::Long(i) => Self::Long(i),
         }
     }
@@ -88,6 +93,8 @@ impl InitialVal {
             (InitialVal::Initial(s), _) => *s,
             (InitialVal::Tentative, VarType::Int) => StaticInit::Int(0),
             (InitialVal::Tentative, VarType::Long) => StaticInit::Long(0),
+            (InitialVal::Tentative, VarType::UInt) => StaticInit::UInt(0),
+            (InitialVal::Tentative, VarType::ULong) => StaticInit::ULong(0),
         }
     }
 
@@ -95,6 +102,8 @@ impl InitialVal {
         match self {
             Self::Initial(StaticInit::Long(i)) => *i,
             Self::Initial(StaticInit::Int(i)) => (*i).into(),
+            Self::Initial(StaticInit::UInt(i)) => (*i).into(),
+            Self::Initial(StaticInit::ULong(i)) => (*i) as i64,
             Self::Tentative => 0,
         }
     }
@@ -103,6 +112,8 @@ impl InitialVal {
         match self {
             Self::Initial(StaticInit::Int(i)) => *i,
             Self::Initial(StaticInit::Long(i)) => *i as i32,
+            Self::Initial(StaticInit::UInt(i)) => *i as i32,
+            Self::Initial(StaticInit::ULong(i)) => *i as i32,
             Self::Tentative => 0,
         }
     }
@@ -359,7 +370,7 @@ fn typecheck_expression(expression: ast::Expr, table: &mut SymbolTable) -> Resul
             let mut left = typecheck_expression(*left, table).map(Box::from)?;
             let mut right = typecheck_expression(*right, table).map(Box::from)?;
             // result of this expression is an int
-            let Some(ty) = left.ty().common_type(&right.ty()) else {
+            let Some(ty) = left.ty().common_ty(&right.ty()) else {
                 return Err(Error::InvalidCast);
             };
             convert_to(&mut left, &ty);
@@ -376,14 +387,9 @@ fn typecheck_expression(expression: ast::Expr, table: &mut SymbolTable) -> Resul
             })
         }
         ast::Expr::Nested(exp) => typecheck_expression(*exp, table),
-        ast::Expr::Const(cnst @ Constant::Int(_)) => Ok(Expr::Const {
-            cnst,
-            ty: VarType::Int,
-        }),
-
-        ast::Expr::Const(cnst @ Constant::Long(_)) => Ok(Expr::Const {
-            cnst,
-            ty: VarType::Long,
+        ast::Expr::Const(c) => Ok(Expr::Const {
+            cnst: c,
+            ty: c.ty(),
         }),
 
         ast::Expr::Cast { target, exp } => typecheck_expression(*exp, table).map(|e| Expr::Cast {
@@ -416,7 +422,7 @@ fn typecheck_expression(expression: ast::Expr, table: &mut SymbolTable) -> Resul
             let mut r#true = check_boxed_expr(*r#true, table)?;
             let mut r#false = check_boxed_expr(*r#false, table)?;
 
-            let Some(common) = r#true.ty().common_type(&r#false.r#ty()) else {
+            let Some(common) = r#true.ty().common_ty(&r#false.r#ty()) else {
                 return Err(Error::InvalidCast);
             };
 
