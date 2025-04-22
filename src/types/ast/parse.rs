@@ -1,35 +1,43 @@
-use crate::lex::Constant;
-use crate::lex::Identifier;
+use super::Constant;
 pub use inc_dec::*;
 use std::fmt::{self, Display, Formatter};
-pub type Arr<T> = Box<[T]>;
 
-#[derive(Debug)]
-pub struct Program(pub Box<[Dec]>);
-
-#[derive(Debug)]
-pub enum Dec {
-    Fn(FnDec),
-    Var(VarDec),
+use super::Key;
+pub mod prelude {
+    pub use super::inc_dec::*;
+    use super::Key;
+    pub use super::{
+        Binary, Block, BlockItem, Bop, Dec, Expr, FnDec, FnType, ForInit, Label, Param, ParamList,
+        Program, StaticInit, Stmnt, StorageClass, UnOp, Unary, VarDec, VarType,
+    };
 }
 
 #[derive(Debug)]
-pub struct FnDec {
-    pub name: Identifier,
-    pub params: ParamList,
-    pub body: Option<Block>,
+pub struct Program<'a>(pub Box<[Dec<'a>]>);
+
+#[derive(Debug)]
+pub enum Dec<'a> {
+    Fn(FnDec<'a>),
+    Var(VarDec<'a>),
+}
+
+#[derive(Debug)]
+pub struct FnDec<'a> {
+    pub name: Key<'a>,
+    pub params: ParamList<'a>,
+    pub body: Option<Block<'a>>,
     pub sc: Option<StorageClass>,
     pub typ: FnType,
 }
 
-impl From<FnDec> for Dec {
-    fn from(dec: FnDec) -> Self {
+impl<'a> From<FnDec<'a>> for Dec<'a> {
+    fn from(dec: FnDec<'a>) -> Self {
         Dec::Fn(dec)
     }
 }
 
-impl From<VarDec> for Dec {
-    fn from(dec: VarDec) -> Self {
+impl<'a> From<VarDec<'a>> for Dec<'a> {
+    fn from(dec: VarDec<'a>) -> Self {
         Dec::Var(dec)
     }
 }
@@ -38,20 +46,22 @@ pub enum StaticInit {
     Int(i32),
     Long(i64),
 }
-pub type Block = Arr<BlockItem>;
 
-pub type ParamList = Arr<Param>;
+// in my ideal version BlockItems and Params would be like slab allocated
+pub type Block<'a> = Box<[BlockItem<'a>]>;
+
+pub type ParamList<'a> = Box<[Param<'a>]>;
 
 #[derive(Debug, Clone)]
-pub struct Param {
+pub struct Param<'a> {
     pub typ: VarType,
-    pub name: Identifier,
+    pub name: Key<'a>,
 }
 
 #[derive(Debug)]
-pub struct VarDec {
-    pub name: Identifier,
-    pub init: Option<Expr>,
+pub struct VarDec<'a> {
+    pub name: Key<'a>,
+    pub init: Option<Expr<'a>>,
     pub sc: Option<StorageClass>,
     pub typ: VarType,
 }
@@ -75,18 +85,18 @@ pub enum VarType {
 }
 
 #[derive(Debug)]
-pub enum BlockItem {
-    S(Stmnt),
-    D(Dec),
+pub enum BlockItem<'a> {
+    S(Stmnt<'a>),
+    D(Dec<'a>),
 }
 
 #[derive(Debug, Clone)]
-pub enum Expr {
+pub enum Expr<'a> {
     Assignment {
         dst: Box<Self>,
         src: Box<Self>,
     },
-    Bin(Binary),
+    Bin(Binary<'a>),
     Cast {
         target: VarType,
         exp: Box<Self>,
@@ -98,9 +108,9 @@ pub enum Expr {
         exp: Box<Self>,
     },
 
-    Var(Identifier),
+    Var(Key<'a>),
     Const(Constant),
-    Unary(Unary),
+    Unary(Unary<'a>),
     Nested(Box<Self>),
 
     Conditional {
@@ -109,12 +119,12 @@ pub enum Expr {
         r#false: Box<Self>,
     },
     FunctionCall {
-        name: Identifier,
+        name: Key<'a>,
         args: Box<[Self]>,
     },
 }
 
-impl Expr {
+impl Expr<'_> {
     pub fn pre_inc(e: Self) -> Self {
         Self::IncDec {
             op: PRE_INC,
@@ -170,8 +180,8 @@ impl Expr {
 }
 
 #[derive(Debug, Clone)]
-pub struct Unary {
-    pub exp: Box<Expr>,
+pub struct Unary<'a> {
+    pub exp: Box<Expr<'a>>,
     pub op: UnOp,
 }
 
@@ -183,10 +193,10 @@ pub enum UnOp {
 }
 
 #[derive(Debug, Clone)]
-pub struct Binary {
+pub struct Binary<'a> {
     pub operator: Bop,
-    pub left: Box<Expr>,
-    pub right: Box<Expr>,
+    pub left: Box<Expr<'a>>,
+    pub right: Box<Expr<'a>>,
 }
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
@@ -288,63 +298,63 @@ impl Bop {
 }
 
 #[derive(Debug)]
-pub enum Stmnt {
-    Ret(Expr),
-    Exp(Expr),
+pub enum Stmnt<'a> {
+    Ret(Expr<'a>),
+    Exp(Expr<'a>),
     If {
-        condition: Expr,
+        condition: Expr<'a>,
         then: Box<Self>,
         r#else: Option<Box<Self>>,
     },
     Break,
     Continue,
     While {
-        condition: Expr,
+        condition: Expr<'a>,
         body: Box<Self>,
     },
     DoWhile {
         body: Box<Self>,
-        condition: Expr,
+        condition: Expr<'a>,
     },
     For {
-        init: Option<ForInit>,
-        condition: Option<Expr>,
-        post: Option<Expr>,
+        init: Option<ForInit<'a>>,
+        condition: Option<Expr<'a>>,
+        post: Option<Expr<'a>>,
         body: Box<Self>,
     },
-    Compound(Block),
+    Compound(Block<'a>),
     Label {
-        label: Label,
+        label: Label<'a>,
         body: Box<Self>,
     },
-    Goto(Identifier),
+    Goto(Key<'a>),
     Null,
     Switch {
-        val: Expr,
+        val: Expr<'a>,
         body: Box<Self>,
     },
 }
 
 #[derive(Debug)]
-pub enum ForInit {
-    D(VarDec),
-    E(Expr),
+pub enum ForInit<'a> {
+    D(VarDec<'a>),
+    E(Expr<'a>),
 }
 
 #[derive(Debug, Clone)]
-pub enum Label {
-    Named(Identifier),
+pub enum Label<'a> {
+    Named(Key<'a>),
     Case(Constant),
     Default,
 }
 
-impl Display for Program {
+impl Display for Program<'_> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "Program(\n{:?}\n)", self.0)
     }
 }
 
-impl Display for Stmnt {
+impl Display for Stmnt<'_> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
             Stmnt::Ret(ret) => write!(f, "Return(\n{:?}\n)", ret),
@@ -366,7 +376,7 @@ impl Display for Stmnt {
     }
 }
 
-impl Display for Label {
+impl Display for Label<'_> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
             Label::Default => write!(f, "default"),

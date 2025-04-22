@@ -1,20 +1,12 @@
-pub mod ast;
 mod specifier_list;
-
-pub use ast::{
-    Arr, Binary, Block, BlockItem, Bop, Dec, Expr, FnDec, FnType, ForInit, Label, Param, ParamList,
-    Program, Stmnt, StorageClass, UnOp, Unary, VarDec, VarType,
-};
-
-pub use ast::inc_dec::{self, *};
-
-use super::lex::Identifier;
 use super::slice_iter::TokenIter;
+pub use crate::ast::parse_prelude::*;
+use ascii::AsciiStr;
 
-use super::Token;
 use std::fmt::{self, Display, Formatter};
+type Result<T> = std::result::Result<T, Error>;
 
-pub fn parse(tokens: Box<[Token]>) -> Result<Program, Error> {
+pub fn parse<'a: 'b, 'b>(tokens: &'a [Token<'a>]) -> Result<Program<'a>> {
     let mut tokens = TokenIter::new(tokens);
     let program = program(&mut tokens)?;
     if tokens.is_empty() {
@@ -24,7 +16,7 @@ pub fn parse(tokens: Box<[Token]>) -> Result<Program, Error> {
     }
 }
 
-fn program(tokens: &mut TokenIter) -> Result<Program, Error> {
+fn program<'a>(tokens: &mut TokenIter<'a>) -> Result<Program<'a>> {
     let mut functions = Vec::new();
     while !tokens.is_empty() {
         functions.push(declaration(tokens)?);
@@ -32,7 +24,7 @@ fn program(tokens: &mut TokenIter) -> Result<Program, Error> {
     Ok(Program(functions.into()))
 }
 
-fn declaration(tokens: &mut TokenIter) -> Result<Dec, Error> {
+fn declaration<'a>(tokens: &mut TokenIter<'a>) -> Result<Dec<'a>> {
     let spec_list @ SpecifierList { sc, typ } = specifiers(tokens)?;
 
     let name = tokens.consume_identifier()?;
@@ -51,11 +43,11 @@ fn declaration(tokens: &mut TokenIter) -> Result<Dec, Error> {
     }
 }
 
-fn top_level_fndec(
-    tokens: &mut TokenIter,
+fn top_level_fndec<'a>(
+    tokens: &mut TokenIter<'a>,
     SpecifierList { sc, typ }: SpecifierList,
-    name: Identifier,
-) -> Result<FnDec, Error> {
+    name: Key<'a>,
+) -> Result<FnDec<'a>> {
     let params = param_list(tokens)?;
 
     let fn_type = FnType {
@@ -78,11 +70,11 @@ fn top_level_fndec(
     })
 }
 
-fn top_level_vardec(
-    iter: &mut TokenIter,
+fn top_level_vardec<'a>(
+    iter: &mut TokenIter<'a>,
     SpecifierList { sc, typ }: SpecifierList,
-    name: Identifier,
-) -> Result<VarDec, Error> {
+    name: Key<'a>,
+) -> Result<VarDec<'a>> {
     let exp = expression(iter, None)?;
     iter.consume(Token::Semicolon)?;
     Ok(VarDec {
@@ -100,12 +92,12 @@ pub struct SpecifierList {
     typ: VarType,
 }
 
-fn specifiers(tokens: &mut TokenIter) -> Result<SpecifierList, Error> {
+fn specifiers(tokens: &mut TokenIter) -> Result<SpecifierList> {
     let builder = specifier_list::get_specifiers(tokens)?;
     builder.done()
 }
 
-fn type_specifier(tokens: &mut TokenIter) -> Result<VarType, Error> {
+fn type_specifier(tokens: &mut TokenIter) -> Result<VarType> {
     let (res, num) = match tokens.as_slice() {
         [Token::Long | Token::Int, Token::Int | Token::Long, ..] => (VarType::Long, 2),
         [Token::Int, ..] => (VarType::Int, 1),
@@ -116,10 +108,10 @@ fn type_specifier(tokens: &mut TokenIter) -> Result<VarType, Error> {
     Ok(res)
 }
 
-fn param_list(tokens: &mut TokenIter) -> Result<ParamList, Error> {
+fn param_list<'a>(tokens: &mut TokenIter<'a>) -> Result<ParamList<'a>> {
     if tokens.consume(Token::Void).is_ok() {
         tokens.consume(Token::CloseParen)?;
-        return Ok(Box::new([]));
+        return Ok([].into());
     }
 
     let mut params = Vec::new();
@@ -135,7 +127,7 @@ fn param_list(tokens: &mut TokenIter) -> Result<ParamList, Error> {
     Ok(params.into())
 }
 
-fn param(tokens: &mut TokenIter) -> Result<(Param, bool), Error> {
+fn param<'a>(tokens: &mut TokenIter<'a>) -> Result<(Param<'a>, bool)> {
     let typ = type_specifier(tokens)?;
 
     let name = tokens.consume_identifier()?;
@@ -150,7 +142,7 @@ fn param(tokens: &mut TokenIter) -> Result<(Param, bool), Error> {
     Ok((Param { typ, name }, last))
 }
 
-fn block(tokens: &mut TokenIter) -> Result<Block, Error> {
+fn block<'a>(tokens: &mut TokenIter<'a>) -> Result<Block<'a>> {
     tokens.consume(Token::OpenBrace)?;
     let mut body = Vec::new();
     while let Some(item) = block_item(tokens)? {
@@ -160,7 +152,7 @@ fn block(tokens: &mut TokenIter) -> Result<Block, Error> {
     Ok(body.into())
 }
 
-fn block_item(tokens: &mut TokenIter) -> Result<Option<BlockItem>, Error> {
+fn block_item<'a>(tokens: &mut TokenIter<'a>) -> Result<Option<BlockItem<'a>>> {
     match tokens.peek_any()? {
         Token::Int | Token::Static | Token::Extern | Token::Long => {
             Ok(Some(BlockItem::D(declaration(tokens)?)))
@@ -170,7 +162,7 @@ fn block_item(tokens: &mut TokenIter) -> Result<Option<BlockItem>, Error> {
     }
 }
 
-fn var_declaration(tokens: &mut TokenIter, sc: Option<StorageClass>) -> Result<VarDec, Error> {
+fn var_declaration<'a>(tokens: &mut TokenIter<'a>, sc: Option<StorageClass>) -> Result<VarDec<'a>> {
     let typ = type_specifier(tokens)?;
     let name = tokens.consume_identifier()?;
     let init = match tokens.consume_any()? {
@@ -225,18 +217,18 @@ impl PartialEq for StorageClass {
 }
 
 #[derive(Debug)]
-pub struct Function {
-    pub name: Identifier,
-    pub body: Block,
+pub struct Function<'a> {
+    pub name: &'a AsciiStr,
+    pub body: Block<'a>,
 }
 
-impl Display for Function {
+impl Display for Function<'_> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "Function(\nname={},\nbody={:?}\n)", self.name, self.body)
     }
 }
 
-fn statement(tokens: &mut TokenIter) -> Result<Stmnt, Error> {
+fn statement<'a>(tokens: &mut TokenIter<'a>) -> Result<Stmnt<'a>> {
     Ok(match tokens.peek_any()? {
         Token::Return => {
             tokens.next();
@@ -280,9 +272,9 @@ fn statement(tokens: &mut TokenIter) -> Result<Stmnt, Error> {
             Stmnt::Goto(identifier)
         }
         // LABEL
-        Token::Identifier(_) if tokens.peek_peek().is_some_and(|x| x == &Token::Colon) => {
+        Token::Ident(_) if tokens.peek_peek().is_some_and(|x| x == &Token::Colon) => {
             let name = tokens.consume_identifier()?;
-            let label = Label::Named(name.clone());
+            let label = Label::Named(name);
             tokens.next();
             let body = statement(tokens)?.into();
 
@@ -310,7 +302,7 @@ fn statement(tokens: &mut TokenIter) -> Result<Stmnt, Error> {
         }
         Token::Case => {
             tokens.next();
-            let Token::Constant(con) = tokens.consume_any()? else {
+            let Token::Const(con) = tokens.consume_any()? else {
                 return Err(Error::Catchall("expected constant"));
             };
 
@@ -371,8 +363,11 @@ fn statement(tokens: &mut TokenIter) -> Result<Stmnt, Error> {
     })
 }
 
-fn optional_expr(tokens: &mut TokenIter, delim: Token) -> Result<Option<Expr>, Error> {
-    if tokens.consume(delim.clone()).is_ok() {
+fn optional_expr<'a>(
+    tokens: &mut TokenIter<'a>,
+    delim: Token<'static>,
+) -> Result<Option<Expr<'a>>> {
+    if tokens.consume(delim).is_ok() {
         Ok(None)
     } else {
         let expression = expression(tokens, None)?;
@@ -389,7 +384,7 @@ fn print_return<T: fmt::Debug>(mut f: impl FnMut() -> T) -> T {
     val
 }
 
-fn for_init(tokens: &mut TokenIter) -> Result<Option<ForInit>, Error> {
+fn for_init<'a>(tokens: &mut TokenIter<'a>) -> Result<Option<ForInit<'a>>> {
     if let Ok(declaration) = var_declaration(tokens, None) {
         Ok(Some(ForInit::D(declaration)))
     } else {
@@ -400,12 +395,12 @@ fn for_init(tokens: &mut TokenIter) -> Result<Option<ForInit>, Error> {
 
 #[allow(dead_code)]
 #[derive(Debug)]
-pub struct DebugStmnt {
-    statement: Stmnt,
+pub struct DebugStmnt<'a> {
+    statement: Stmnt<'a>,
     line: usize,
 }
 
-fn expression(tokens: &mut TokenIter, min_precedence: Option<u8>) -> Result<Expr, Error> {
+fn expression<'a>(tokens: &mut TokenIter<'a>, min_precedence: Option<u8>) -> Result<Expr<'a>> {
     let precedence = min_precedence.unwrap_or(0);
 
     let mut left = factor(tokens)?;
@@ -500,11 +495,11 @@ fn binary_operator(tokens: &mut TokenIter, min_precedence: u8) -> Option<Bop> {
         None
     }
 }
-fn factor(tokens: &mut TokenIter) -> Result<Expr, Error> {
+fn factor<'a>(tokens: &mut TokenIter<'a>) -> Result<Expr<'a>> {
     match tokens.consume_any()? {
         Token::Increment => factor(tokens).map(Expr::pre_inc),
         Token::Decrement => factor(tokens).map(Expr::pre_dec),
-        Token::Constant(c) => Ok(Expr::Const(c)),
+        Token::Const(c) => Ok(Expr::Const(c)),
 
         t @ (Token::Minus | Token::Tilde | Token::Not) => {
             let operator = if t == Token::Minus {
@@ -528,11 +523,11 @@ fn factor(tokens: &mut TokenIter) -> Result<Expr, Error> {
                 Ok(Expr::Nested(exp))
             }
         }
-        Token::Identifier(ident) => {
+        Token::Ident(key) => {
             if tokens.peek() == Some(&Token::OpenParen) {
                 tokens.next();
                 let args = argument_list(tokens)?;
-                Ok(Expr::FunctionCall { name: ident, args })
+                Ok(Expr::FunctionCall { name: key, args })
             } else {
                 Ok(Expr::Var(ident))
             }
@@ -552,7 +547,7 @@ fn factor(tokens: &mut TokenIter) -> Result<Expr, Error> {
     )
 }
 
-fn argument_list(tokens: &mut TokenIter) -> Result<Box<[Expr]>, Error> {
+fn argument_list<'a>(tokens: &mut TokenIter<'a>) -> Result<Box<[Expr<'a>]>> {
     if tokens.consume(Token::CloseParen).is_ok() {
         return Ok(Box::new([]));
     }
@@ -578,20 +573,34 @@ pub struct DebugError {
     pub line: usize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("Unexpected Eof")]
     UnexpectedEof,
-    Expected(Token),
+    #[error("Expected {0:?}")]
+    Expected(Token<'static>),
+    #[error("Expected Identifier")]
     ExpectedIdentifier,
+    #[error("Expected Constant")]
     ExpectedConstant,
+    #[error("Expected Expression")]
     ExpectedExpr,
+    #[error("Expected Keyword")]
     ExpectedAnyKeyword,
+    #[error("{0}")]
     Catchall(&'static str),
+    #[error("Extra Content after parsing:")]
     ExtraStuff,
+    #[error("Redefined Function:")]
     DoubleDef,
+    #[error("Expected Type:")]
     NoType,
+    #[error("Conflicting Linkage")]
     ConflictingLinkage,
+    #[error("Invalid Specifiers")]
     InvalidSpecifiers,
+    #[error("Invalid Type")]
     InvalidType(specifier_list::SpeclistFsm),
+    #[error("Expected Storage Class")]
     NoStorageClass,
 }

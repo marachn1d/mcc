@@ -1,12 +1,14 @@
 //pub mod ast;
-
+use ascii::AsciiStr;
 use std::fs;
 use std::io;
-use std::path::PathBuf;
-
+use std::path::{Path, PathBuf};
+use thiserror::Error;
 pub mod lex;
-pub use lex::DebugToken;
-pub use lex::Token;
+pub mod types;
+pub use ast::DebugToken;
+pub use ast::Token;
+pub use types::ast;
 pub mod slice_iter;
 
 #[cfg(feature = "codegen")]
@@ -18,54 +20,68 @@ pub mod semantics;
 
 use std::sync::OnceLock;
 pub static CONFIG: OnceLock<Config> = OnceLock::new();
-// todo: make config some sorta static thats initialized on startup etc
+#[derive(Copy, Clone, Debug)]
 pub struct Config {
     pub stage: Option<CompileStage>,
     pub version: CVersion,
 }
 
-pub fn compile(mut path: PathBuf) -> Result<PathBuf, Error> {
-    let bytes = fs::read(&path).map_err(|_| Error::InvalidInput)?;
-    let _ = fs::remove_file(&path);
+use types::symbol_table::{StringTable, ValueStore};
+pub fn compile(path: &Path) -> Result<Option<PathBuf>, Error> {
+    let bytes = fs::read(path)?;
     let stage = CONFIG.get().unwrap().stage;
+    let strs = ValueStore::new();
+    let str_tab = StringTable::new(&strs);
 
-    let tokens = lex::tokenize(&bytes)?;
+    let tokens = lex::tokenize(AsciiStr::from_ascii(&bytes)?, &str_tab)?;
+    let tokens: Box<[Token]> = tokens.into_iter().map(|x| x.token).collect();
     if stage == Some(CompileStage::Lex) {
-        return Ok("".into());
+        return Ok(None);
     }
 
     #[cfg(feature = "parse")]
-    {
-        if !should_parse(&stage) {
-            return Ok("".into());
-        }
-        let ast = parse(tokens)?;
-        #[cfg(feature = "semantics")]
-        {
-            if !should_validate(&stage) {
-                return Ok("".into());
-            };
-            let (program, map) = semantics::check(ast)?;
+    let ast = match parse(&tokens) {
+        None => return Ok(None),
+        Some(Err(e)) => return Err(e),
+        Some(Ok(ast)) => ast,
+    };
 
-            #[cfg(feature = "codegen")]
-            {
-                if !should_codegen(&stage) {
-                    return Ok("".into());
-                } else {
-                    let code = codegen::generate(program, should_emit(&stage), map);
-                    path.set_extension("S");
-                    fs::write(&path, &code)?;
-                }
-            }
-        }
+    #[cfg(feature = "semantics")]
+    let (program, map) = if should_validate(&stage) {
+        semantics::check(ast)?
+    } else {
+        return Ok(None);
+    };
 
-        Ok(path)
+    #[cfg(feature = "codegen")]
+    if should_codegen(&stage) {
+        let code = codegen::generate(program, should_emit(&stage), map);
+        let path = path.with_extension("S");
+        fs::write(&path, &code)?;
+        Ok(Some(path))
+    } else {
+        Ok(None)
     }
 
-    #[cfg(not(feature = "parse"))]
-    Ok("".into())
+    #[cfg(not(feature = "codegen"))]
+    Ok(None)
 }
 
+fn parse<'a>(tokens: &'a [Token<'a>]) -> Option<Result<ast::ParseProgram<'a>, Error>> {
+    if should_parse(&CONFIG.get().unwrap().stage) {
+        Some(parse::parse(tokens).map_err(Error::from))
+    } else {
+        None
+    }
+}
+
+pub fn configure(config: &Config) {
+    CONFIG
+        .set(*config)
+        .expect("error in configuration control flow")
+}
+
+#[cfg(feature = "codegen")]
 const fn should_emit(s: &Option<CompileStage>) -> bool {
     should_codegen(s)
 }
@@ -73,10 +89,12 @@ const fn should_parse(s: &Option<CompileStage>) -> bool {
     !matches!(s, Some(CompileStage::Lex))
 }
 
+#[cfg(feature = "semantics")]
 const fn should_validate(s: &Option<CompileStage>) -> bool {
     should_parse(s) && !matches!(s, Some(CompileStage::Parse))
 }
 
+#[cfg(feature = "codegen")]
 const fn should_codegen(s: &Option<CompileStage>) -> bool {
     if should_validate(s) {
         !matches!(s, Some(CompileStage::Validate))
@@ -85,12 +103,7 @@ const fn should_codegen(s: &Option<CompileStage>) -> bool {
     }
 }
 
-fn parse(tokens: Box<[DebugToken]>) -> Result<parse::ast::Program, Error> {
-    let tokens = tokens.into_iter().map(|x| x.token).collect();
-    Ok(parse::parse(tokens)?)
-}
-
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum CVersion {
     C17,
     C23,
@@ -110,24 +123,22 @@ pub enum CompileStage {
     Validate,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum Error {
-    Todo,
-    InvalidInput,
-    Io(io::Error),
+    #[error(transparent)]
+    Io(#[from] io::Error),
+    #[error("Non-Ascii Character read: {0}")]
+    NoAscii(#[from] ascii::AsAsciiStrError),
+    #[error("Lexing: {0}")]
     Lexing(lex::Error),
 
     #[cfg(feature = "parse")]
+    #[error("Parsing: {0}")]
     Parsing(parse::Error),
 
     #[cfg(feature = "semantics")]
+    #[error("Semantics: {0}")]
     Semantics(semantics::Error),
-}
-
-impl From<io::Error> for Error {
-    fn from(e: io::Error) -> Self {
-        Error::Io(e)
-    }
 }
 
 #[cfg(feature = "semantics")]

@@ -1,8 +1,9 @@
-use crate::lex::Token;
-use crate::lex::{Constant, Identifier};
+use crate::ast::{Constant, Token};
+use ascii::AsciiStr;
 use std::iter::Iterator;
 use std::slice::Iter;
 pub struct SliceIter<'a, T: Copy>(Iter<'a, T>);
+use super::types::Key;
 
 impl<T: Copy> Iterator for SliceIter<'_, T> {
     type Item = T;
@@ -43,12 +44,12 @@ impl<'a, T: Copy> SliceIter<'a, T> {
     }
 }
 
-pub struct TokenIter(std::vec::IntoIter<Token>);
+pub struct TokenIter<'a>(std::slice::Iter<'a, Token<'a>>);
 
 use fmt::Debug;
 use fmt::Formatter;
 use std::fmt;
-impl Debug for TokenIter {
+impl Debug for TokenIter<'_> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self.peek() {
             Some(t) => write!(f, "TokenIter{{{t:?}}}"),
@@ -59,7 +60,7 @@ impl Debug for TokenIter {
 use super::parse;
 use parse::VarType;
 
-impl TokenIter {
+impl<'b, 'a: 'b> TokenIter<'a> {
     #[allow(dead_code)]
     pub fn print_next(&self) {
         eprintln!("next: {:?}", self.peek());
@@ -73,23 +74,25 @@ impl TokenIter {
         }
     }
 
-    pub fn new(tokens: Box<[Token]>) -> Self {
-        let tokens: Vec<Token> = tokens.into();
-        Self(tokens.into_iter())
+    pub fn new(tokens: &'a [Token]) -> Self {
+        Self(tokens.iter())
     }
 
     pub fn is_empty(&self) -> bool {
         self.peek().is_none()
     }
 
-    pub fn peek(&self) -> Option<&Token> {
+    pub fn peek(&self) -> Option<&Token<'a>> {
         self.0.as_slice().first()
     }
 
-    pub fn next_if(&mut self, f: impl Fn(&Token) -> bool) -> Option<Token> {
-        let next = self.peek()?;
-        if f(next) {
-            self.next()
+    pub fn next_if(&'b mut self, f: impl Fn(&Token<'_>) -> bool) -> Option<Token<'a>> {
+        if let Some(next) = self.peek() {
+            if f(&next) {
+                self.next()
+            } else {
+                None
+            }
         } else {
             None
         }
@@ -110,7 +113,7 @@ impl TokenIter {
         self.0.as_slice().get(1)
     }
 
-    pub fn consume(&mut self, token: impl Into<Token>) -> Result<(), parse::Error> {
+    pub fn consume(&mut self, token: impl Into<Token<'static>>) -> Result<(), parse::Error> {
         let token = token.into();
         if self.peek().is_some_and(|x| x == &token) {
             self.next();
@@ -123,7 +126,7 @@ impl TokenIter {
 
     pub fn consume_arr(
         &mut self,
-        iter: impl IntoIterator<Item = Token>,
+        iter: impl IntoIterator<Item = Token<'static>>,
     ) -> Result<(), parse::Error> {
         for token in iter {
             self.consume(token)?;
@@ -131,22 +134,22 @@ impl TokenIter {
         Ok(())
     }
 
-    pub fn consume_identifier(&mut self) -> Result<Identifier, parse::Error> {
-        match self.next_if(Token::identifier) {
-            Some(Token::Identifier(ident)) => Ok(ident),
+    pub fn consume_identifier(&'b mut self) -> Result<Key<'a>, parse::Error> {
+        match self.next_if(|x| Token::identifier(x)) {
+            Some(Token::Ident(ident)) => Ok(ident),
             _ => Err(parse::Error::ExpectedIdentifier),
         }
     }
 
-    pub fn consume_constant(&mut self) -> Result<Constant, parse::Error> {
-        match self.next_if(Token::constant) {
-            Some(Token::Constant(c)) => Ok(c),
-            None => Err(parse::Error::UnexpectedEof),
-            _ => Err(parse::Error::ExpectedConstant),
+    pub fn consume_constant(&'a mut self) -> Result<Constant, parse::Error> {
+        if let Some(Token::Const(c)) = self.next_if(|x| Token::constant(x)) {
+            Ok(c)
+        } else {
+            Err(parse::Error::ExpectedConstant)
         }
     }
 
-    pub fn consume_any(&mut self) -> Result<Token, parse::Error> {
+    pub fn consume_any(&mut self) -> Result<Token<'a>, parse::Error> {
         self.next().ok_or(parse::Error::UnexpectedEof)
     }
     pub fn token_slice(&self) -> &[Token] {
@@ -167,9 +170,9 @@ impl TokenIter {
     }
 }
 
-impl Iterator for TokenIter {
-    type Item = Token;
-    fn next(&mut self) -> Option<Token> {
-        self.0.next()
+impl<'a> Iterator for TokenIter<'a> {
+    type Item = Token<'a>;
+    fn next(&mut self) -> Option<Token<'a>> {
+        self.0.next().copied()
     }
 }

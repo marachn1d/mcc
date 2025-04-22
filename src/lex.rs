@@ -1,133 +1,20 @@
+use super::ast::{Constant, DebugToken, Token};
+
 use super::slice_iter::SliceIter;
+use super::types::symbol_table::{Key, StringTable};
+use ascii::{AsciiChar, AsciiStr};
 
-use std::fmt::{self, Display, Formatter};
-use std::rc::Rc;
-
-#[derive(Debug, Clone)]
-pub struct DebugToken {
-    pub token: Token,
-    pub line: usize,
-}
-
-impl DebugToken {
-    pub fn into_inner(self) -> (Token, usize) {
-        (self.token, self.line)
-    }
-
-    pub const fn line(&self) -> usize {
-        self.line
-    }
-}
-
-impl std::ops::Deref for DebugToken {
-    type Target = Token;
-
-    fn deref(&self) -> &Self::Target {
-        &self.token
-    }
-}
-use std::ops::Deref;
-
-use std::ops::DerefMut;
-impl AsRef<Token> for DebugToken {
-    fn as_ref(&self) -> &Token {
-        self.deref()
-    }
-}
-
-impl AsMut<Token> for DebugToken {
-    fn as_mut(&mut self) -> &mut Token {
-        self.deref_mut()
-    }
-}
-
-impl std::ops::DerefMut for DebugToken {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.token
-    }
-}
-
-impl From<DebugToken> for Token {
-    fn from(debug: DebugToken) -> Token {
-        debug.token
-    }
-}
-
-#[derive(PartialEq, Eq, Debug, Clone)]
-pub enum Token {
-    // Keywords
-    Int,
-    Void,
-    Return,
-    If,
-    Else,
-    Goto,
-    Do,
-    While,
-    For,
-    Break,
-    Continue,
-    Switch,
-    Default,
-    Case,
-    Static,
-    Extern,
-    Long,
-
-    Constant(Constant),
-    Identifier(Identifier),
-    OpenParen,
-    CloseParen,
-    OpenBrace,
-    Semicolon,
-    CloseBrace,
-    Tilde,
-    Decrement,
-    Minus,
-    Plus,
-
-    PlusEqual,
-    MinusEqual,
-    TimesEqual,
-    DivEqual,
-    PercentEqual,
-    BitAndEqual,
-    BitOrEqual,
-    BitXorEqual,
-
-    Asterisk,
-    Slash,
-    Percent,
-    Ampersand,
-    Bar,
-    Caret,
-    Increment,
-    LeftShift,
-    LeftShiftEqual,
-    RightShift,
-    RightShiftEqual,
-    Not,
-    LogicalAnd,
-    LogicalOr,
-    EqualTo,
-    NotEqual,
-    LessThan,
-    GreaterThan,
-    Leq,
-    Geq,
-    Equals,
-    Comma,
-
-    QuestionMark,
-    Colon,
-}
-
-pub fn tokenize(bytes: &[u8]) -> Result<Box<[DebugToken]>, Error> {
-    let mut iter = SliceIter::new(bytes);
+pub fn tokenize<'a>(
+    bytes: &AsciiStr,
+    tbl: &StringTable<'a>,
+) -> Result<Box<[DebugToken<'a>]>, Error> {
+    // we know they're ascii characters going in, so we're gonna use bytes so we can use the slice
+    // pattern below :)
+    let mut iter = SliceIter::new(bytes.as_bytes());
 
     let mut tokens = Vec::new();
     let mut cur_line = 0;
-    while let Some(token) = lex_slice(&mut iter, &mut cur_line)? {
+    while let Some(token) = lex_slice(&mut iter, &mut cur_line, &tbl)? {
         tokens.push(DebugToken {
             token,
             line: cur_line,
@@ -136,7 +23,11 @@ pub fn tokenize(bytes: &[u8]) -> Result<Box<[DebugToken]>, Error> {
     Ok(tokens.into())
 }
 
-fn lex_slice(iter: &mut SliceIter<u8>, cur_line: &mut usize) -> Result<Option<Token>, Error> {
+fn lex_slice<'a: 'b, 'b>(
+    iter: &mut SliceIter<'b, u8>,
+    cur_line: &mut usize,
+    table: &StringTable<'a>,
+) -> Result<Option<Token<'a>>, Error> {
     match iter.as_slice() {
         [b'<', b'<', b'=', ..] => {
             iter.next();
@@ -247,9 +138,10 @@ fn lex_slice(iter: &mut SliceIter<u8>, cur_line: &mut usize) -> Result<Option<To
                 *cur_line += 1;
             }
             iter.next();
-            lex_slice(iter, cur_line)
+            lex_slice(iter, cur_line, table)
         }
         [a, ..] => {
+            let lit_start = iter.as_slice();
             iter.next();
             Ok(Some(match a {
                 b'(' => Token::OpenParen,
@@ -260,7 +152,7 @@ fn lex_slice(iter: &mut SliceIter<u8>, cur_line: &mut usize) -> Result<Option<To
                 b'~' => Token::Tilde,
                 b'0'..=b'9' => {
                     let byte = AsciiDigit::from_int(*a).unwrap();
-                    Token::Constant(constant_number(byte, iter)?)
+                    Token::Const(constant_number(byte, iter)?)
                 }
                 b'-' => Token::Minus,
                 b'+' => Token::Plus,
@@ -277,7 +169,7 @@ fn lex_slice(iter: &mut SliceIter<u8>, cur_line: &mut usize) -> Result<Option<To
                 b',' => Token::Comma,
                 b'?' => Token::QuestionMark,
                 b':' => Token::Colon,
-                a => literal(*a, iter)?,
+                _ => literal(lit_start, iter, table)?,
             }))
         }
         [] => Ok(None),
@@ -311,7 +203,7 @@ fn constant_number(start: AsciiDigit, iter: &mut SliceIter<u8>) -> Result<Consta
     match iter.peek() {
         Some(b'l') => {
             iter.next();
-            Ok(Constant::from(parse_long(&bytes)))
+            Ok(Constant::Long(parse_long(&bytes)))
         }
         Some(x) if !word_character(x) => {
             let long = parse_long(&bytes);
@@ -323,13 +215,25 @@ fn constant_number(start: AsciiDigit, iter: &mut SliceIter<u8>) -> Result<Consta
     }
 }
 
-fn literal(byte: u8, iter: &mut SliceIter<u8>) -> Result<Token, Error> {
-    let mut bytes = vec![byte];
-    while let Some(character) = next_if_word(iter) {
-        bytes.push(character);
+fn intern<'a>(tbl: &StringTable<'a>, slice: &[u8]) -> Key<'a> {
+    tbl.get_or_intern(slice)
+}
+
+// assumes that lit_slice is 1 behind iter
+fn literal<'a>(
+    lit_slice: &[u8],
+    iter: &mut SliceIter<u8>,
+    tbl: &StringTable<'a>,
+) -> Result<Token<'a>, Error> {
+    let mut end = 1;
+    while next_if_word(iter).is_some() {
+        end += 1;
     }
+
     if iter.peek().is_some_and(|byte| !word_character(byte)) {
-        Ok(match bytes.as_slice() {
+        let key = tbl.get_or_intern(&lit_slice[0..end]);
+
+        Ok(match key.as_bytes() {
             b"int" => Token::Int,
             b"return" => Token::Return,
             b"void" => Token::Void,
@@ -347,31 +251,29 @@ fn literal(byte: u8, iter: &mut SliceIter<u8>) -> Result<Token, Error> {
             b"static" => Token::Static,
             b"extern" => Token::Extern,
             b"long" => Token::Long,
-            _ => identifier(bytes.into())?.into(),
+            _ => Token::Ident(key),
         })
     } else {
         Err(Error::InvalidLiteral)
     }
 }
 
-fn identifier(bytes: Box<[u8]>) -> Result<Identifier, Error> {
-    if word_start(bytes[0]) && bytes[1..].iter().all(|&x| word_character(x)) {
-        Ok(Identifier(bytes.into()))
+/*
+fn identifier<'a>(str: &'a AsciiStr) -> Result<Token<'a>, Error> {
+    if word_start(str[0]) {
+        Ok(Token::Ident(str))
     } else {
         Err(Error::InvalidIdentifier)
     }
 }
+*/
 
 const fn _word_boundary(byte: u8) -> bool {
     !word_character(byte)
 }
 
-const fn word_start(byte: u8) -> bool {
-    match byte {
-        b if b.is_ascii_alphabetic() => true,
-        b'_' => true,
-        _ => false,
-    }
+fn word_start(byte: AsciiChar) -> bool {
+    byte.is_alphabetic() || byte == AsciiChar::UnderScore
 }
 
 const fn word_character(byte: u8) -> bool {
@@ -407,153 +309,25 @@ fn parse_long(slice: &[AsciiDigit]) -> i64 {
     }
     cur
 }
-impl Token {
-    pub const fn identifier(&self) -> bool {
-        matches!(self, Self::Identifier(_))
-    }
-    pub const fn constant(&self) -> bool {
-        matches!(self, Self::Constant(_))
-    }
-}
 
 fn next_if_word(iter: &mut SliceIter<u8>) -> Option<u8> {
     iter.next_if(word_character)
 }
 
-impl PartialEq<Token> for Constant {
-    fn eq(&self, other: &Token) -> bool {
-        if let Token::Constant(c) = other {
-            c == self
-        } else {
-            false
-        }
-    }
-}
-
-impl PartialEq<Token> for Identifier {
-    fn eq(&self, other: &Token) -> bool {
-        if let Token::Identifier(c) = other {
-            c == self
-        } else {
-            false
-        }
-    }
-}
-
-#[derive(PartialEq, Eq, Clone, Hash)]
-pub struct Identifier(pub Rc<Box<[u8]>>);
-
-impl Identifier {
-    pub fn new(name: &[u8]) -> Self {
-        let mut vec = Vec::new();
-        vec.extend_from_slice(name);
-        Self(Rc::new(vec.into_boxed_slice()))
-    }
-}
-
-impl fmt::Debug for Identifier {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "{}", unsafe { std::str::from_utf8_unchecked(&self.0) })
-    }
-}
-
-impl AsRef<[u8]> for Identifier {
-    fn as_ref(&self) -> &[u8] {
-        &self.0
-    }
-}
-
-impl From<String> for Identifier {
-    fn from(s: String) -> Self {
-        Self(s.into_bytes().into_boxed_slice().into())
-    }
-}
-
-impl From<&str> for Identifier {
-    fn from(s: &str) -> Self {
-        let r#box: Box<[u8]> = s.as_bytes().iter().copied().collect();
-        Self(r#box.into())
-    }
-}
-
-impl From<&[u8]> for Identifier {
-    fn from(s: &[u8]) -> Self {
-        let r#box: Box<[u8]> = s.iter().copied().collect();
-        Self(r#box.into())
-    }
-}
-
-impl From<Identifier> for Token {
-    fn from(i: Identifier) -> Self {
-        Self::Identifier(i)
-    }
-}
-
-impl From<Constant> for Token {
-    fn from(c: Constant) -> Self {
-        Self::Constant(c)
-    }
-}
-
-#[derive(Debug, PartialEq, Eq, Copy, Clone, Ord, PartialOrd)]
-pub enum Constant {
-    Int(i32),
-    Long(i64),
-}
-
-impl Constant {
-    pub fn int(&self) -> i32 {
-        match self {
-            Self::Int(i) => *i,
-            Self::Long(l) => *l as i32,
-        }
-    }
-
-    pub fn long(&self) -> i64 {
-        match self {
-            Self::Int(i) => *i as i64,
-            Self::Long(l) => *l,
-        }
-    }
-}
-
-impl From<i32> for Constant {
-    fn from(i: i32) -> Self {
-        Self::Int(i)
-    }
-}
-
-impl From<i64> for Constant {
-    fn from(i: i64) -> Self {
-        Self::Long(i)
-    }
-}
-
-impl fmt::Display for Constant {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        match self {
-            Self::Int(i) => i.fmt(f),
-            Self::Long(l) => l.fmt(f),
-        }
-    }
-}
-
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("Invalid Constant")]
     InvalidConstant,
+    #[error("Invalid Literal")]
     InvalidLiteral,
+    #[error("Invalid Identifier")]
     InvalidIdentifier,
+    #[error("Non Ascii Character")]
     NotAscii,
+    #[error("{0}")]
     Other(String),
 }
 
 fn error<T>(message: &str) -> Result<T, Error> {
     Err(Error::Other(message.into()))
-}
-
-impl Display for Identifier {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        use std::str::from_utf8_unchecked;
-        write!(f, "{}", unsafe { from_utf8_unchecked(&self.0) })
-    }
 }

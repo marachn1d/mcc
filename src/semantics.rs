@@ -32,7 +32,7 @@ pub enum Type {
     Int,
     Long,
 }
-
+// move this into ast
 #[derive(Debug, Copy, Clone)]
 pub struct LabelId(usize);
 
