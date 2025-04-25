@@ -1,9 +1,8 @@
+pub mod ast;
 mod specifier_list;
 use super::slice_iter::TokenIter;
 pub use crate::ast::parse_prelude::*;
-use ascii::AsciiStr;
 
-use std::fmt::{self, Display, Formatter};
 type Result<T> = std::result::Result<T, Error>;
 
 pub fn parse<'a: 'b, 'b>(tokens: &'a [Token<'a>]) -> Result<Program<'a>> {
@@ -216,18 +215,6 @@ impl PartialEq for StorageClass {
     }
 }
 
-#[derive(Debug)]
-pub struct Function<'a> {
-    pub name: &'a AsciiStr,
-    pub body: Block<'a>,
-}
-
-impl Display for Function<'_> {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "Function(\nname={},\nbody={:?}\n)", self.name, self.body)
-    }
-}
-
 fn statement<'a>(tokens: &mut TokenIter<'a>) -> Result<Stmnt<'a>> {
     Ok(match tokens.peek_any()? {
         Token::Return => {
@@ -378,7 +365,7 @@ fn optional_expr<'a>(
 
 // for debugging
 #[allow(dead_code)]
-fn print_return<T: fmt::Debug>(mut f: impl FnMut() -> T) -> T {
+fn print_return<T: std::fmt::Debug>(mut f: impl FnMut() -> T) -> T {
     let val = f();
     eprintln!("{:?}", val);
     val
@@ -529,7 +516,7 @@ fn factor<'a>(tokens: &mut TokenIter<'a>) -> Result<Expr<'a>> {
                 let args = argument_list(tokens)?;
                 Ok(Expr::FunctionCall { name: key, args })
             } else {
-                Ok(Expr::Var(ident))
+                Ok(Expr::Var(key))
             }
         }
 

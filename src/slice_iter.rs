@@ -1,5 +1,4 @@
 use crate::ast::{Constant, Token};
-use ascii::AsciiStr;
 use std::iter::Iterator;
 use std::slice::Iter;
 pub struct SliceIter<'a, T: Copy>(Iter<'a, T>);
@@ -57,8 +56,8 @@ impl Debug for TokenIter<'_> {
         }
     }
 }
-use super::parse;
-use parse::VarType;
+use super::types::VarType;
+use crate::parse;
 
 impl<'b, 'a: 'b> TokenIter<'a> {
     #[allow(dead_code)]

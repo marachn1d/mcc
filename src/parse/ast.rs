@@ -1,6 +1,5 @@
-use super::Constant;
 use super::Key;
-use super::{FnType, StaticInit, VarType};
+use crate::c_types::*;
 pub use inc_dec::*;
 use std::fmt::{self, Display, Formatter};
 pub mod prelude {
@@ -10,6 +9,7 @@ pub mod prelude {
         Binary, Block, BlockItem, Bop, Dec, Expr, FnDec, ForInit, Label, Param, ParamList, Program,
         Stmnt, StorageClass, UnOp, Unary, VarDec,
     };
+    use crate::c_types::*;
 }
 
 #[derive(Debug)]

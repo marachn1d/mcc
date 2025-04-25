@@ -13,7 +13,7 @@ tinystr = "0.8.1"
 debug = true
 
 [features]
-    default = ["codegen"]
+    default = ["parse"]
     codegen = ["semantics"]
     semantics = ["parse"]
     parse = ["lex"]

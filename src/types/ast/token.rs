@@ -1,5 +1,6 @@
-use super::super::symbol_table::Key;
-use ascii::AsciiStr;
+use super::Constant;
+
+use super::Key;
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 pub enum Token<'a> {
     // Keywords
@@ -76,14 +77,6 @@ impl Token<'_> {
     pub const fn constant(&self) -> bool {
         matches!(self, Self::Const(_))
     }
-}
-
-#[derive(Debug, PartialEq, Eq, Copy, Clone, Ord, PartialOrd)]
-pub enum Constant {
-    Int(i32),
-    UInt(u32),
-    Long(i64),
-    ULong(u64),
 }
 
 #[derive(Debug, Clone)]

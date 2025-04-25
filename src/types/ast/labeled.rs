@@ -1,14 +1,13 @@
 pub use super::incdec::*;
-use ascii::AsciiStr;
 
 use super::parse_prelude as parse;
-use parse::{Bop, Constant, FnType, Label, ParamList, StaticInit, StorageClass, UnOp, VarType, Expr};
+use super::{Constant, FnType, Key, Label, LabelId, StaticInit, VarType};
+use parse::{Bop, ParamList, StorageClass, UnOp};
 use IncDec;
 
-use crate::semantics::LabelId;
-
-pub mod prelude{
-    pub use super::{Dec, FnDec, VarDec, Block, BlockItem, Stmnt, Expr, ForInit, LabelId, VarType}
+pub mod prelude {
+    pub use super::super::{Label, LabelId};
+    pub use super::{Block, BlockItem, Dec, Expr, FnDec, ForInit, Stmnt, VarDec};
 }
 
 pub type Program<'a> = Box<[Dec<'a>]>;
@@ -21,7 +20,7 @@ pub enum Dec<'a> {
 
 #[derive(Debug, Clone)]
 pub struct FnDec<'a> {
-    pub name: &'a AsciiStr,
+    pub name: Key<'a>,
     pub params: ParamList<'a>,
     pub body: Option<Block<'a>>,
     pub sc: Option<StorageClass>,
@@ -30,7 +29,7 @@ pub struct FnDec<'a> {
 
 #[derive(Debug, Clone)]
 pub struct VarDec<'a> {
-    pub name: &'a AsciiStr,
+    pub name: Key<'a>,
     pub init: Option<Expr<'a>>,
     pub sc: Option<StorageClass>,
     pub typ: VarType,
@@ -74,10 +73,10 @@ pub enum Stmnt<'a> {
     },
     Compound(Block<'a>),
     Label {
-        name: Label<'a>,
+        name: Label,
         body: Box<Self>,
     },
-    Goto(&'a AsciiStr),
+    Goto(Key<'a>),
     Switch {
         val: Expr<'a>,
         body: Box<Self>,
@@ -116,7 +115,7 @@ pub enum Expr<'a> {
         exp: Box<Self>,
     },
 
-    Var(&'a AsciiStr),
+    Var(Key<'a>),
     Const(Constant),
     Unary {
         operator: UnOp,
@@ -130,13 +129,13 @@ pub enum Expr<'a> {
         r#false: Box<Self>,
     },
     FunctionCall {
-        name: &'a AsciiStr,
+        name: Key<'a>,
         args: Box<[Self]>,
     },
 }
 
 impl<'a> From<parse::Expr<'a>> for Expr<'a> {
-    fn from(e: parse::Expr) -> Self {
+    fn from(e: parse::Expr<'a>) -> Self {
         use parse::Expr as AE;
         use Expr as E;
         match e {
@@ -185,7 +184,7 @@ impl<'a> From<parse::Expr<'a>> for Expr<'a> {
 }
 
 impl<'a> From<Box<parse::Expr<'a>>> for Box<Expr<'a>> {
-    fn from(e: Box<parse::Expr>) -> Self {
+    fn from(e: Box<parse::Expr<'a>>) -> Self {
         Box::new(Expr::from(*e))
     }
 }

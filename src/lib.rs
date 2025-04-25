@@ -9,6 +9,7 @@ pub mod types;
 pub use ast::DebugToken;
 pub use ast::Token;
 pub use types::ast;
+pub mod c_types;
 pub mod slice_iter;
 
 #[cfg(feature = "codegen")]
@@ -26,14 +27,11 @@ pub struct Config {
     pub version: CVersion,
 }
 
-use types::symbol_table::{StringTable, ValueStore};
 pub fn compile(path: &Path) -> Result<Option<PathBuf>, Error> {
     let bytes = fs::read(path)?;
     let stage = CONFIG.get().unwrap().stage;
-    let strs = ValueStore::new();
-    let str_tab = StringTable::new(&strs);
 
-    let tokens = lex::tokenize(AsciiStr::from_ascii(&bytes)?, &str_tab)?;
+    let tokens = lex::tokenize(AsciiStr::from_ascii(&bytes)?)?;
     let tokens: Box<[Token]> = tokens.into_iter().map(|x| x.token).collect();
     if stage == Some(CompileStage::Lex) {
         return Ok(None);

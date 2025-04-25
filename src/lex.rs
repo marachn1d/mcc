@@ -1,20 +1,16 @@
 use super::ast::{Constant, DebugToken, Token};
 
 use super::slice_iter::SliceIter;
-use super::types::symbol_table::{Key, StringTable};
 use ascii::{AsciiChar, AsciiStr};
 
-pub fn tokenize<'a>(
-    bytes: &AsciiStr,
-    tbl: &StringTable<'a>,
-) -> Result<Box<[DebugToken<'a>]>, Error> {
+pub fn tokenize<'a>(bytes: &AsciiStr) -> Result<Box<[DebugToken<'a>]>, Error> {
     // we know they're ascii characters going in, so we're gonna use bytes so we can use the slice
     // pattern below :)
     let mut iter = SliceIter::new(bytes.as_bytes());
 
     let mut tokens = Vec::new();
     let mut cur_line = 0;
-    while let Some(token) = lex_slice(&mut iter, &mut cur_line, &tbl)? {
+    while let Some(token) = lex_slice(&mut iter, &mut cur_line)? {
         tokens.push(DebugToken {
             token,
             line: cur_line,
@@ -26,7 +22,6 @@ pub fn tokenize<'a>(
 fn lex_slice<'a: 'b, 'b>(
     iter: &mut SliceIter<'b, u8>,
     cur_line: &mut usize,
-    table: &StringTable<'a>,
 ) -> Result<Option<Token<'a>>, Error> {
     match iter.as_slice() {
         [b'<', b'<', b'=', ..] => {
@@ -138,7 +133,7 @@ fn lex_slice<'a: 'b, 'b>(
                 *cur_line += 1;
             }
             iter.next();
-            lex_slice(iter, cur_line, table)
+            lex_slice(iter, cur_line)
         }
         [a, ..] => {
             let lit_start = iter.as_slice();
@@ -169,7 +164,7 @@ fn lex_slice<'a: 'b, 'b>(
                 b',' => Token::Comma,
                 b'?' => Token::QuestionMark,
                 b':' => Token::Colon,
-                _ => literal(lit_start, iter, table)?,
+                _ => literal(lit_start, iter)?,
             }))
         }
         [] => Ok(None),
@@ -215,25 +210,15 @@ fn constant_number(start: AsciiDigit, iter: &mut SliceIter<u8>) -> Result<Consta
     }
 }
 
-fn intern<'a>(tbl: &StringTable<'a>, slice: &[u8]) -> Key<'a> {
-    tbl.get_or_intern(slice)
-}
-
 // assumes that lit_slice is 1 behind iter
-fn literal<'a>(
-    lit_slice: &[u8],
-    iter: &mut SliceIter<u8>,
-    tbl: &StringTable<'a>,
-) -> Result<Token<'a>, Error> {
+fn literal<'a>(lit_slice: &[u8], iter: &mut SliceIter<u8>) -> Result<Token<'a>, Error> {
     let mut end = 1;
     while next_if_word(iter).is_some() {
         end += 1;
     }
 
     if iter.peek().is_some_and(|byte| !word_character(byte)) {
-        let key = tbl.get_or_intern(&lit_slice[0..end]);
-
-        Ok(match key.as_bytes() {
+        Ok(match lit_slice {
             b"int" => Token::Int,
             b"return" => Token::Return,
             b"void" => Token::Void,
@@ -251,7 +236,7 @@ fn literal<'a>(
             b"static" => Token::Static,
             b"extern" => Token::Extern,
             b"long" => Token::Long,
-            _ => Token::Ident(key),
+            _ => Token::Ident(lit_slice),
         })
     } else {
         Err(Error::InvalidLiteral)

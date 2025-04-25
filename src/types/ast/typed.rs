@@ -1,82 +1,80 @@
 use super::labeled_prelude as labeled;
 use super::labeled_prelude::*;
-use labeled::{Bop, Constant, FnType, Label, ParamList, StaticInit, StorageClass, UnOp, VarType};
-
-use super::{Arr, Identifier, IncDec, Label};
-use crate::lex::Constant;
-use crate::parse;
-use crate::semantics::LabelId;
-use parse::{Bop, FnType, ParamList, StorageClass, UnOp, VarType};
-
-pub type Program = Arr<Dec>;
+use super::{Constant, FnType, Key, Label, LabelId, VarType};
+use labeled::{Bop, ParamList, StorageClass, UnOp};
+pub mod prelude {
+    pub use super::super::{Label, LabelId};
+    pub use super::{Block, BlockItem, Dec, Expr, FnDec, ForInit, Stmnt, VarDec};
+}
+pub type Program<'a> = Box<[Dec<'a>]>;
 
 #[derive(Debug, Clone)]
-pub enum Dec {
-    Var(VarDec),
-    Fn(FnDec),
+pub enum Dec<'a> {
+    Var(VarDec<'a>),
+    Fn(FnDec<'a>),
 }
 
 #[derive(Debug, Clone)]
-pub struct FnDec {
-    pub name: Identifier,
-    pub params: ParamList,
-    pub body: Option<Block>,
+pub struct FnDec<'a> {
+    pub name: Key<'a>,
+    pub params: ParamList<'a>,
+    pub body: Option<Block<'a>>,
     pub sc: Option<StorageClass>,
     pub typ: FnType,
 }
 
 #[derive(Debug, Clone)]
-pub struct VarDec {
-    pub name: Identifier,
-    pub init: Option<Expr>,
+pub struct VarDec<'a> {
+    pub name: Key<'a>,
+    pub init: Option<Expr<'a>>,
     pub sc: Option<StorageClass>,
     pub typ: VarType,
 }
 
-pub type Block = Arr<BlockItem>;
+pub type Block<'a> = Box<[BlockItem<'a>]>;
 
 #[derive(Debug, Clone)]
-pub enum BlockItem {
-    S(Stmnt),
-    D(Dec),
+pub enum BlockItem<'a> {
+    S(Stmnt<'a>),
+    D(Dec<'a>),
 }
 
 #[derive(Debug, Clone)]
-pub enum Stmnt {
-    Ret(Expr),
-    Exp(Expr),
+pub enum Stmnt<'a> {
+    Ret(Expr<'a>),
+    Exp(Expr<'a>),
     If {
-        condition: Expr,
+        condition: Expr<'a>,
         then: Box<Self>,
         r#else: Option<Box<Self>>,
     },
     Break(LabelId),
     Continue(LabelId),
     While {
-        condition: Expr,
+        condition: Expr<'a>,
         body: Box<Self>,
         label: LabelId,
     },
     DoWhile {
         body: Box<Self>,
-        condition: Expr,
+        condition: Expr<'a>,
         label: LabelId,
     },
     For {
-        init: Option<Box<ForInit>>,
-        condition: Option<Expr>,
-        post: Option<Expr>,
+        init: Option<Box<ForInit<'a>>>,
+        condition: Option<Expr<'a>>,
+        post: Option<Expr<'a>>,
         body: Box<Self>,
         label: LabelId,
     },
-    Compound(Block),
+    Compound(Block<'a>),
     Label {
         name: Label,
         body: Box<Self>,
     },
-    Goto(Identifier),
+    Goto(Key<'a>),
     Switch {
-        val: Expr,
+        val: Expr<'a>,
         body: Box<Self>,
         cases: Box<[Constant]>,
         default: bool,
@@ -86,13 +84,13 @@ pub enum Stmnt {
 }
 
 #[derive(Debug, Clone)]
-pub enum ForInit {
-    E(Expr),
-    D(VarDec),
+pub enum ForInit<'a> {
+    E(Expr<'a>),
+    D(VarDec<'a>),
 }
 
 #[derive(Debug, Clone)]
-pub enum Expr {
+pub enum Expr<'a> {
     Assignment {
         dst: Box<Self>,
         src: Box<Self>,
@@ -121,11 +119,11 @@ pub enum Expr {
     },
 
     Var {
-        name: Identifier,
+        name: Key<'a>,
         ty: VarType,
     },
     Const {
-        cnst: crate::lex::Constant,
+        cnst: Constant,
         ty: VarType,
     },
     Unary {
@@ -151,8 +149,7 @@ pub enum Expr {
     },
 }
 
-use super::StaticInit;
-impl Expr {
+impl Expr<'_> {
     pub const fn ty(&self) -> VarType {
         match self {
             Self::Assignment { ty, .. }

@@ -1,35 +1,20 @@
-use crate::lex::Identifier;
-use crate::parse;
-use crate::parse::BlockItem as AstBlockItem;
-
-use crate::parse::Block as AstBlock;
-use crate::parse::Expr as AstExpression;
-use crate::parse::ForInit as AstForInit;
-use crate::parse::Program as AstProgram;
-use crate::parse::Stmnt as AstStatement;
-
-use crate::parse::VarDec as AstVDec;
-
-use crate::parse::FnDec as AstFnDec;
-use parse::Binary as AstBinary;
-use parse::Dec as AstDeclaration;
-use parse::StorageClass;
+use crate::types::ast::parse_prelude::*;
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
 static COUNTER: AtomicU32 = AtomicU32::new(0);
 
 use std::collections::HashMap;
-type VarMap = HashMap<Identifier, Var>;
+type VarMap<'a> = HashMap<Key<'a>, Var<'a>>;
 
 #[derive(Clone, Debug, PartialEq)]
-struct Var {
-    name: Identifier,
+struct Var<'a> {
+    name: Key<'a>,
     from_current_block: bool,
     has_external_linkage: bool,
 }
 
-impl Var {
+impl Var<'_> {
     fn new_var(name: &Identifier, sc: &Option<StorageClass>) -> Self {
         Self {
             name: name.clone(),
@@ -46,7 +31,7 @@ impl Var {
     }
 }
 
-pub fn resolve(AstProgram(decs): &mut AstProgram) -> Result<(), Error> {
+pub fn resolve(Program(decs): &mut Program) -> Result<(), Error> {
     let mut map: VarMap = VarMap::new();
     for dec in decs {
         resolve_top_level_dec(dec, &mut map)?;
@@ -112,9 +97,9 @@ fn insert_local_var(
     Ok(())
 }
 
-fn resolve_top_level_dec(dec: &mut AstDeclaration, map: &mut VarMap) -> Result<(), Error> {
+fn resolve_top_level_dec(dec: &mut Dec, map: &mut VarMap) -> Result<(), Error> {
     match dec {
-        AstDeclaration::Var(AstVDec { name, .. }) => {
+        Dec::Var(VarDec { name, .. }) => {
             map.insert(
                 name.clone(),
                 Var {
@@ -125,7 +110,7 @@ fn resolve_top_level_dec(dec: &mut AstDeclaration, map: &mut VarMap) -> Result<(
             );
         }
 
-        AstDeclaration::Fn(AstFnDec {
+        Dec::Fn(FnDec {
             name,
             params,
             sc,
@@ -144,8 +129,8 @@ fn resolve_top_level_dec(dec: &mut AstDeclaration, map: &mut VarMap) -> Result<(
 }
 
 fn resolve_fn_dec(
-    name: &mut Identifier,
-    body: &mut Option<AstBlock>,
+    name: &mut Key<'_>,
+    body: &mut Option<Block>,
     params: &mut super::ParamList,
     storage_class: &mut Option<StorageClass>,
     map: &mut VarMap,
@@ -168,7 +153,7 @@ fn resolve_param(params: &mut super::ParamList, map: &mut VarMap) -> Result<(), 
             return Err(Error::DuplicateDeclaration);
         }
 
-        let unique: Identifier = new_var(&param.0);
+        let unique = new_var(&param.as_ref());
         map.insert(param.clone(), Var::new_var(&unique, &None));
 
         *param = unique;
@@ -290,7 +275,7 @@ fn resolve_statement(statement: &mut AstStatement, map: &mut VarMap) -> Result<(
     }
 }
 
-fn new_scope(map: &VarMap) -> VarMap {
+fn new_scope<'a>(map: &VarMap<'a>) -> VarMap<'a> {
     let mut new_scope = map.clone();
     for var in new_scope.values_mut() {
         var.from_current_block = false;
