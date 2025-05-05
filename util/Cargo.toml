@@ -1,0 +1,11 @@
+[package]
+name = "util"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tinystr = "0.8.1"
+ast = {path = "../ast"}
+symtab = {path = "../symtab"}
+thiserror = "2.0.12"
+either = "1.15.0"

@@ -1,4 +1,3 @@
-use super::Identifier;
 use super::InstructionSet;
 use crate::lex::Constant;
 use crate::parse;

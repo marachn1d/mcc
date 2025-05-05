@@ -1,24 +1,22 @@
-use crate::lex::Constant;
-use std::sync::atomic::{AtomicUsize, Ordering};
-static LOOPS: AtomicUsize = AtomicUsize::new(0);
-use super::labeled::*;
-use super::LabelId;
-use crate::parse;
-use crate::parse::Label as AstLabel;
+use ast::labeled::prelude::*;
+use ast::parse;
+use ast::Expr;
 use parse::BlockItem as AstBlockItem;
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("Invalid Break")]
     Break,
+    #[error("Invalid Continue")]
     Continue,
+    #[error("Invalid Switch")]
     Switch,
+    #[error("Invalid Case")]
     Case,
+    #[error("Duplicate Default")]
     DoubleDefault,
+    #[error("Duplicate Case")]
     DupliCase,
-}
-
-fn new_label() -> LabelId {
-    LabelId(LOOPS.fetch_add(1, Ordering::Acquire) + 1)
 }
 
 pub fn label(program: parse::Program) -> Result<Program, Error> {
@@ -30,7 +28,7 @@ pub fn label(program: parse::Program) -> Result<Program, Error> {
     Ok(decs.into_boxed_slice())
 }
 
-fn label_declaration(dec: parse::Dec, cur_loop: &mut Scope) -> Result<Dec, Error> {
+fn label_declaration<'a>(dec: parse::Dec<'a>, cur_loop: &mut Scope) -> Result<Dec<'a>, Error> {
     match dec {
         parse::Dec::Var(parse::VarDec {
             name,
@@ -75,7 +73,10 @@ fn label_declaration(dec: parse::Dec, cur_loop: &mut Scope) -> Result<Dec, Error
     }
 }
 
-fn label_blocks(block: Arr<parse::BlockItem>, cur_loop: &mut Scope) -> Result<Block, Error> {
+fn label_blocks<'a>(
+    block: Box<[parse::BlockItem<'a>]>,
+    cur_loop: &mut Scope,
+) -> Result<Block<'a>, Error> {
     let mut vec = Vec::with_capacity(block.len());
     for item in block {
         vec.push(match item {
@@ -86,10 +87,14 @@ fn label_blocks(block: Arr<parse::BlockItem>, cur_loop: &mut Scope) -> Result<Bl
     Ok(vec.into())
 }
 
-fn do_while(body: parse::Stmnt, condition: parse::Expr, cur: &mut Scope) -> Result<Stmnt, Error> {
+fn do_while<'a>(
+    body: parse::Stmnt<'a>,
+    condition: Expr<'a>,
+    cur: &mut Scope,
+) -> Result<Stmnt<'a>, Error> {
     let condition = condition.into();
     let prev_normal = cur.normal;
-    let label = new_label();
+    let label = LabelId::new();
 
     cur.normal = Some(label);
     let body = Box::new(label_statement(body, cur)?);
@@ -101,13 +106,13 @@ fn do_while(body: parse::Stmnt, condition: parse::Expr, cur: &mut Scope) -> Resu
     })
 }
 
-fn while_stmnt(
-    body: parse::Stmnt,
-    condition: parse::Expr,
+fn while_stmnt<'a>(
+    body: parse::Stmnt<'a>,
+    condition: Expr<'a>,
     cur: &mut Scope,
-) -> Result<Stmnt, Error> {
+) -> Result<Stmnt<'a>, Error> {
     let prev_normal = cur.normal;
-    let label = new_label();
+    let label = LabelId::new();
 
     cur.normal = Some(label);
     let body = label_statement(body, cur)?.into();
@@ -120,19 +125,15 @@ fn while_stmnt(
     })
 }
 
-fn exp(exp: Option<parse::Expr>) -> Option<Expr> {
-    exp.map(Expr::from)
-}
-
-fn for_stmnt(
-    body: parse::Stmnt,
-    post: Option<parse::Expr>,
-    r#init: Option<parse::ForInit>,
-    condition: Option<parse::Expr>,
+fn for_stmnt<'a>(
+    body: parse::Stmnt<'a>,
+    post: Option<Expr<'a>>,
+    r#init: Option<parse::ForInit<'a>>,
+    condition: Option<Expr<'a>>,
     cur: &mut Scope,
-) -> Result<Stmnt, Error> {
+) -> Result<Stmnt<'a>, Error> {
     let prev_normal = cur.normal;
-    let label = new_label();
+    let label = LabelId::new();
 
     cur.normal = Some(label);
     let body = Box::new(label_statement(body, cur)?);
@@ -147,7 +148,7 @@ fn for_stmnt(
                 typ,
             }) => ForInit::D(VarDec {
                 name,
-                init: exp(init),
+                init,
                 sc,
                 typ,
             }),
@@ -156,14 +157,14 @@ fn for_stmnt(
         .map(Box::new);
     Ok(Stmnt::For {
         body,
-        post: exp(post),
+        post,
         init,
-        condition: exp(condition),
+        condition,
         label,
     })
 }
 
-fn label_statement(statement: parse::Stmnt, cur: &mut Scope) -> Result<Stmnt, Error> {
+fn label_statement<'a>(statement: parse::Stmnt<'a>, cur: &mut Scope) -> Result<Stmnt<'a>, Error> {
     //use parse::Stmnt;
     match statement {
         parse::Stmnt::DoWhile { body, condition } => do_while(*body, condition, cur),
@@ -193,63 +194,27 @@ fn label_statement(statement: parse::Stmnt, cur: &mut Scope) -> Result<Stmnt, Er
         parse::Stmnt::Ret(e) => Ok(Stmnt::Ret(e.into())),
         parse::Stmnt::Exp(e) => Ok(Stmnt::Exp(e.into())),
         parse::Stmnt::Goto(g) => Ok(Stmnt::Goto(g)),
-        parse::Stmnt::Label {
-            label: AstLabel::Named(name),
-            body,
-        } => label_statement(*body, cur).map(|body| {
-            Ok(Stmnt::Label {
-                name: Label::Named(name),
-                body: Box::new(body),
-            })
-        })?,
-        // current plan is to pass a struct called scope which keeps the loop id for switch
-        // statements and other Loops seperately, cur checks labelids and uses the lesser one,
-        // and handles continue targets
-        parse::Stmnt::Label {
-            label: parse::Label::Default,
-            body,
-        } => {
-            // borrowck is evil and won't let me copy the lable id properly so instead i'm doing
-            // this evil thing
-            let label = match cur.switch.as_mut() {
-                // this means we got default in an env with an alreadu defined default. Illegal.
-                Some(SwitchState { default: true, .. }) => Err(Error::DoubleDefault),
-
-                // this means we got
-                Some(SwitchState {
-                    default,
-                    cases: _,
-                    label,
-                }) => {
-                    *default = true;
-                    Ok(*label)
-                }
-                None => Err(Error::Switch),
-            }?;
-            let body = label_statement(*body, cur)?.into();
-            Ok(Stmnt::Label {
-                name: Label::Default(label),
-                body,
+        parse::Stmnt::NamedLabel { label: l, body } => {
+            label_statement(*body, cur).map(|b| Stmnt::NamedLabel {
+                l,
+                body: Box::new(b),
             })
         }
-        parse::Stmnt::Label {
-            label: AstLabel::Case(c),
-            body,
-        } => {
-            let Some(switch) = &mut cur.switch else {
-                return Err(Error::Switch);
-            };
-            switch.cases.push(c);
-            let body = label_statement(*body, cur)?.into();
-            let id = cur.switch.as_ref().unwrap().label;
-            Ok(Stmnt::Label {
-                name: Label::Case { c, id },
-                body,
+        parse::Stmnt::Default(body) => {
+            let id = cur.found_default()?;
+            label_statement(*body, cur).map(|s| Stmnt::Default(with_label(s, id)))
+        }
+
+        parse::Stmnt::Case { case, body } => {
+            let id = cur.found_default()?;
+            label_statement(*body, cur).map(|s| Stmnt::Case {
+                case,
+                stmnt: with_label(s, id),
             })
         }
 
         parse::Stmnt::Switch { val, body } => {
-            let label = new_label();
+            let label = LabelId::new();
             let prev_switch = cur.switch.replace(SwitchState::new(label));
             let body = label_statement(*body, cur)?.into();
             let mut switch_info = if let Some(prev) = prev_switch {
@@ -276,12 +241,19 @@ fn label_statement(statement: parse::Stmnt, cur: &mut Scope) -> Result<Stmnt, Er
     }
 }
 
-fn if_stmnt(
-    c: parse::Expr,
-    then: parse::Stmnt,
-    r#else: Option<parse::Stmnt>,
+fn with_label<'a>(s: Stmnt<'a>, id: LabelId) -> LabelStmnt<'a> {
+    LabelStmnt {
+        body: Box::new(s),
+        id,
+    }
+}
+
+fn if_stmnt<'a>(
+    c: Expr<'a>,
+    then: parse::Stmnt<'a>,
+    r#else: Option<parse::Stmnt<'a>>,
     cur: &mut Scope,
-) -> Result<Stmnt, Error> {
+) -> Result<Stmnt<'a>, Error> {
     let then = Box::new(label_statement(then, cur)?);
     let r#else = if let Some(r#else) = r#else {
         Some(Box::new(label_statement(r#else, cur)?))
@@ -316,6 +288,15 @@ impl SwitchState {
             label: id,
         }
     }
+
+    const fn found_default(&mut self) -> Result<LabelId, Error> {
+        if self.default {
+            Err(Error::DoubleDefault)
+        } else {
+            self.default = true;
+            Ok(self.label)
+        }
+    }
 }
 
 impl Scope {
@@ -339,6 +320,14 @@ impl Scope {
                     Some(switch)
                 }
             }
+        }
+    }
+
+    const fn found_default(&mut self) -> Result<LabelId, Error> {
+        if let Some(default) = &mut self.switch {
+            default.found_default()
+        } else {
+            Err(Error::Switch)
         }
     }
 }

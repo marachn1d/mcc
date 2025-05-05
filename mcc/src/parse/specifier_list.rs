@@ -74,6 +74,8 @@ impl SpeclistFsm {
                 self.typ = Some(VarType::Long);
                 Ok(())
             }
+
+            _ => todo!(),
         }
     }
 
@@ -86,6 +88,8 @@ impl SpeclistFsm {
             }
             Some(VarType::Long) if !self.int => Ok(()),
             Some(VarType::Int | VarType::Long) => self.invalid_type(),
+
+            _ => todo!(),
         }
     }
 

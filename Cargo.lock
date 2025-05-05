@@ -3,10 +3,18 @@
 version = 4
 
 [[package]]
-name = "ascii"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d92bec98840b8f03a5ff5413de5293bfcd8bf96467cf5452609f939ec6f5de16"
+name = "asm"
+version = "0.1.0"
+dependencies = [
+ "ast",
+]
+
+[[package]]
+name = "ast"
+version = "0.1.0"
+dependencies = [
+ "symtab",
+]
 
 [[package]]
 name = "displaydoc"
@@ -20,12 +28,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "either"
+version = "1.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
+
+[[package]]
 name = "mcc"
 version = "0.1.0"
 dependencies = [
- "ascii",
+ "asm",
+ "ast",
+ "symtab",
  "thiserror",
- "tinystr",
+ "util",
 ]
 
 [[package]]
@@ -44,6 +60,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1885c039570dc00dcb4ff087a89e185fd56bae234ddc7f056a945bf36467248d"
 dependencies = [
  "proc-macro2",
+]
+
+[[package]]
+name = "symtab"
+version = "0.1.0"
+dependencies = [
+ "thiserror",
+ "tinystr",
 ]
 
 [[package]]
@@ -92,6 +116,17 @@ name = "unicode-ident"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5a5f39404a5da50712a4c1eecf25e90dd62b613502b7e925fd4e4d19b5c96512"
+
+[[package]]
+name = "util"
+version = "0.1.0"
+dependencies = [
+ "ast",
+ "either",
+ "symtab",
+ "thiserror",
+ "tinystr",
+]
 
 [[package]]
 name = "zerofrom"

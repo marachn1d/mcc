@@ -1,29 +1,24 @@
-use super::ast::type_prelude::*;
-use crate::lex::Identifier;
+use ast::typed::*;
+use ast::Key;
+
 use crate::semantics::SymbolTable;
 use std::collections::HashSet;
 
 pub fn check(program: &Program, vars: &SymbolTable) -> Result<(), Error> {
-    for r#fn in program {
-        check_dec(r#fn, vars)?
+    for f in program {
+        if let Dec::Fn(FnDec {
+            name,
+            body: Some(body),
+            ..
+        }) = f
+        {
+            check_body(body, vars, name)?
+        }
     }
     Ok(())
 }
 
-fn check_dec(dec: &Dec, vars: &SymbolTable) -> Result<(), Error> {
-    if let Dec::Fn(FnDec {
-        name,
-        body: Some(body),
-        ..
-    }) = dec
-    {
-        check_body(body, vars, name)
-    } else {
-        Ok(())
-    }
-}
-
-fn check_body(block: &[BlockItem], vars: &SymbolTable, fn_name: &Identifier) -> Result<(), Error> {
+fn check_body(block: &[BlockItem], vars: &SymbolTable, fn_name: &Key) -> Result<(), Error> {
     let mut labels = HashSet::new();
     for item in block.iter() {
         if let BlockItem::S(statement) = item {
@@ -40,42 +35,11 @@ fn check_body(block: &[BlockItem], vars: &SymbolTable, fn_name: &Identifier) -> 
     Ok(())
 }
 
-fn name_clashes(label: &Identifier, vars: &SymbolTable, fn_name: &Identifier) -> bool {
-    use super::Attr;
-    if label == fn_name {
-        false
-    } else {
-        !matches!(vars.get(label), None | Some(Attr::Static { .. }))
-    }
-}
-
-fn handle_label(
-    label: &Label,
-    body: &Stmnt,
-    vars: &SymbolTable,
-    labels: &mut HashSet<Identifier>,
-    fn_name: &Identifier,
-) -> Result<(), Error> {
-    // we pass along everything else
-    let Label::Named(label) = label else {
-        return check_labels(body, vars, labels, fn_name);
-    };
-    // if the label is already defined but it's not main bc main can be a label
-
-    if name_clashes(label, vars, fn_name) {
-        Err(Error::ClashedLabel)
-    } else if labels.insert(label.clone()) {
-        check_labels(body, vars, labels, fn_name)
-    } else {
-        Err(Error::RedefinedLabel)
-    }
-}
-
-fn check_labels(
-    statement: &Stmnt,
-    vars: &SymbolTable,
-    labels: &mut HashSet<Identifier>,
-    fn_name: &Identifier,
+fn check_labels<'a>(
+    statement: &Stmnt<'a>,
+    vars: &SymbolTable<'a>,
+    labels: &mut HashSet<Key<'a>>,
+    fn_name: &Key<'a>,
 ) -> Result<(), Error> {
     match statement {
         Stmnt::Compound(block) => {
@@ -90,7 +54,19 @@ fn check_labels(
             check_labels(body, vars, labels, fn_name)
         }
 
-        Stmnt::Label { name, body } => handle_label(name, body, vars, labels, fn_name),
+        Stmnt::NamedLabel { l, body } => {
+            if name_clashes(l, vars, fn_name) {
+                Err(Error::ClashedLabel)
+            } else if labels.insert(*l) {
+                check_labels(body, vars, labels, fn_name)
+            } else {
+                Err(Error::RedefinedLabel)
+            }
+        }
+        Stmnt::Default(stmnt) | Stmnt::Case { stmnt, .. } => {
+            check_labels(&stmnt.body, vars, labels, fn_name)
+        }
+
         Stmnt::If {
             condition: _,
             then,
@@ -112,7 +88,16 @@ fn check_labels(
     }
 }
 
-fn check_gotos(statement: &Stmnt, labels: &HashSet<Identifier>) -> Result<(), Error> {
+fn name_clashes(label: &Key, vars: &SymbolTable, fn_name: &Key) -> bool {
+    use super::Attr;
+    if label == fn_name {
+        false
+    } else {
+        !matches!(vars.get(label), None | Some(Attr::Static { .. }))
+    }
+}
+
+fn check_gotos(statement: &Stmnt, labels: &HashSet<Key>) -> Result<(), Error> {
     match statement {
         Stmnt::Goto(goto) => {
             if labels.contains(goto) {
@@ -140,11 +125,13 @@ fn check_gotos(statement: &Stmnt, labels: &HashSet<Identifier>) -> Result<(), Er
             }
             Ok(())
         }
-        Stmnt::While { body, .. }
+        Stmnt::NamedLabel { body, .. }
+        | Stmnt::While { body, .. }
         | Stmnt::DoWhile { body, .. }
-        | Stmnt::Label { body, .. }
         | Stmnt::Switch { body, .. }
         | Stmnt::For { body, .. } => check_gotos(body, labels),
+
+        Stmnt::Case { stmnt, .. } | Stmnt::Default(stmnt) => check_gotos(&stmnt.body, labels),
 
         Stmnt::Ret(_) | Stmnt::Exp(_) | Stmnt::Null | Stmnt::Break(_) | Stmnt::Continue(_) => {
             Ok(())
@@ -152,9 +139,12 @@ fn check_gotos(statement: &Stmnt, labels: &HashSet<Identifier>) -> Result<(), Er
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("label already defined")]
     RedefinedLabel,
+    #[error("labels clash")]
     ClashedLabel,
+    #[error("undefined label")]
     UndefinedLabel,
 }

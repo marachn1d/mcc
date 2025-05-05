@@ -1,16 +1,12 @@
 //pub mod ast;
-use ascii::AsciiStr;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use symtab::{NotAscii, Store};
 use thiserror::Error;
 pub mod lex;
-pub mod types;
 pub use ast::DebugToken;
 pub use ast::Token;
-pub use types::ast;
-pub mod c_types;
-pub mod slice_iter;
 
 #[cfg(feature = "codegen")]
 pub mod codegen;
@@ -28,10 +24,10 @@ pub struct Config {
 }
 
 pub fn compile(path: &Path) -> Result<Option<PathBuf>, Error> {
-    let bytes = fs::read(path)?;
+    let mut bytes = Store::try_from(fs::read(path)?)?;
     let stage = CONFIG.get().unwrap().stage;
 
-    let tokens = lex::tokenize(AsciiStr::from_ascii(&bytes)?)?;
+    let tokens = lex::tokenize(&bytes)?;
     let tokens: Box<[Token]> = tokens.into_iter().map(|x| x.token).collect();
     if stage == Some(CompileStage::Lex) {
         return Ok(None);
@@ -46,7 +42,7 @@ pub fn compile(path: &Path) -> Result<Option<PathBuf>, Error> {
 
     #[cfg(feature = "semantics")]
     let (program, map) = if should_validate(&stage) {
-        semantics::check(ast)?
+        semantics::check(ast, &bytes)?
     } else {
         return Ok(None);
     };
@@ -65,7 +61,8 @@ pub fn compile(path: &Path) -> Result<Option<PathBuf>, Error> {
     Ok(None)
 }
 
-fn parse<'a>(tokens: &'a [Token<'a>]) -> Option<Result<ast::ParseProgram<'a>, Error>> {
+#[cfg(feature = "parse")]
+fn parse<'a>(tokens: &'a [Token<'a>]) -> Option<Result<ast::parse::Program<'a>, Error>> {
     if should_parse(&CONFIG.get().unwrap().stage) {
         Some(parse::parse(tokens).map_err(Error::from))
     } else {
@@ -125,8 +122,8 @@ pub enum CompileStage {
 pub enum Error {
     #[error(transparent)]
     Io(#[from] io::Error),
-    #[error("Non-Ascii Character read: {0}")]
-    NoAscii(#[from] ascii::AsAsciiStrError),
+    #[error("Non-Ascii Character :(")]
+    NoAscii(#[from] NotAscii),
     #[error("Lexing: {0}")]
     Lexing(lex::Error),
 

@@ -1,19 +1,20 @@
 mod check_labels;
 mod resolve;
 pub mod typecheck;
-use crate::parse::ParamList;
-use crate::parse::Program as AstProgram;
-use crate::parse::StorageClass;
+pub use ast::c_vals::StaticInit;
+use ast::parse::Program as AstProgram;
 pub use check_labels::check as check_labels;
+use symtab::Store;
 pub use typecheck::Attr;
-pub use typecheck::StaticInit;
 pub use typecheck::SymbolTable;
 mod resolve_loops;
-pub use crate::types::{ast::typed_prelude as typed, labeled_prelude as labeled};
 pub use resolve::resolve;
 
-pub fn check(mut program: AstProgram) -> Result<(typed::Program, SymbolTable), Error> {
-    resolve(&mut program).map_err(Error::Resolve)?;
+pub fn check<'a>(
+    mut program: AstProgram<'a>,
+    store: &'a Store,
+) -> Result<(ast::typed::Program<'a>, SymbolTable<'a>), Error> {
+    resolve(&mut program, store).map_err(Error::Resolve)?;
 
     let labeled = resolve_loops::label(program).map_err(Error::Loops)?;
 
@@ -30,11 +31,18 @@ pub enum Type {
     Long,
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error(transparent)]
     Label(LabelError),
+
+    #[error(transparent)]
     Loops(LoopError),
+
+    #[error(transparent)]
     Resolve(ResolveError),
+
+    #[error(transparent)]
     TypeCheck(typecheck::Error),
 }
 

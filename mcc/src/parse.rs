@@ -1,7 +1,8 @@
-pub mod ast;
+use ast::parse::prelude::*;
+use ast::Token;
+
 mod specifier_list;
-use super::slice_iter::TokenIter;
-pub use crate::ast::parse_prelude::*;
+use util::{TokenIter, TokenIterError};
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -188,33 +189,6 @@ pub enum Type {
     Fn(FnType),
 }
 
-impl VarType {
-    pub const fn common_type(&self, other: &Self) -> Option<Self> {
-        match (self, other) {
-            (Self::Long, Self::Long) | (Self::Long, Self::Int) | (Self::Int, Self::Long) => {
-                Some(Self::Long)
-            }
-            (Self::Int, Self::Int) => Some(Self::Int),
-        }
-    }
-
-    pub const fn alignment(&self) -> u32 {
-        match self {
-            Self::Int => 4,
-            Self::Long => 8,
-        }
-    }
-}
-
-impl PartialEq for StorageClass {
-    fn eq(&self, other: &Self) -> bool {
-        matches!(
-            (self, other),
-            (Self::Static, Self::Static) | (Self::Extern, Self::Extern)
-        )
-    }
-}
-
 fn statement<'a>(tokens: &mut TokenIter<'a>) -> Result<Stmnt<'a>> {
     Ok(match tokens.peek_any()? {
         Token::Return => {
@@ -259,23 +233,19 @@ fn statement<'a>(tokens: &mut TokenIter<'a>) -> Result<Stmnt<'a>> {
             Stmnt::Goto(identifier)
         }
         // LABEL
-        Token::Ident(_) if tokens.peek_peek().is_some_and(|x| x == &Token::Colon) => {
-            let name = tokens.consume_identifier()?;
-            let label = Label::Named(name);
+        Token::Ident(l) if tokens.peek_peek().is_some_and(|x| x == &Token::Colon) => {
+            let label = *l;
             tokens.next();
-            let body = statement(tokens)?.into();
-
-            Stmnt::Label { label, body }
+            Stmnt::NamedLabel {
+                label,
+                body: statement(tokens)?.into(),
+            }
         }
 
         Token::Default => {
             tokens.next();
             tokens.consume(Token::Colon)?;
-            let body = statement(tokens)?.into();
-            Stmnt::Label {
-                label: Label::Default,
-                body,
-            }
+            Stmnt::Default(statement(tokens)?.into())
         }
         Token::OpenBrace => {
             let block = block(tokens)?;
@@ -289,14 +259,15 @@ fn statement<'a>(tokens: &mut TokenIter<'a>) -> Result<Stmnt<'a>> {
         }
         Token::Case => {
             tokens.next();
-            let Token::Const(con) = tokens.consume_any()? else {
+            let Token::Const(case) = tokens.consume_any()? else {
                 return Err(Error::Catchall("expected constant"));
             };
 
             tokens.consume(Token::Colon)?;
-            let label = Label::Case(con);
-            let body = statement(tokens)?.into();
-            Ok(Stmnt::Label { label, body })?
+            Stmnt::Case {
+                case,
+                body: Box::new(statement(tokens)?),
+            }
         }
         Token::Continue => {
             tokens.next();
@@ -562,6 +533,8 @@ pub struct DebugError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("{0}")]
+    Iter(String),
     #[error("Unexpected Eof")]
     UnexpectedEof,
     #[error("Expected {0:?}")]
@@ -590,4 +563,10 @@ pub enum Error {
     InvalidType(specifier_list::SpeclistFsm),
     #[error("Expected Storage Class")]
     NoStorageClass,
+}
+
+impl From<TokenIterError<'_>> for Error {
+    fn from(error: TokenIterError) -> Self {
+        Self::Iter(error.to_string())
+    }
 }

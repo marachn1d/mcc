@@ -1,39 +1,56 @@
-mod labeled;
-mod parse;
-mod token;
-mod typed;
-
-pub use super::c_types::{Constant, FnType, StaticInit, VarType};
-pub(crate) use super::RefKey as Key;
-pub use parse::Program as ParseProgram;
+pub mod c_vals;
+pub mod expr;
+pub mod labeled;
+pub mod parse;
+pub mod token;
+pub mod typed;
+pub use c_vals::Constant;
+pub use expr::*;
+pub use symtab::Key;
 pub use token::{DebugToken, Token};
-pub mod incdec {
-    pub use super::parse::inc_dec::{Fix, IncDec, IncOp, POST_DEC, POST_INC, PRE_DEC, PRE_INC};
+
+pub(crate) mod prelude {
+    pub use super::c_vals::*;
+    pub use super::expr::*;
+    use super::labeled;
+    pub use super::Bop;
+    pub use super::StorageClass;
+    pub use super::UnOp;
+    pub use symtab::Key;
 }
 
-pub mod parse_prelude {
-    pub use super::parse::prelude::*;
-    pub(crate) use super::{FnType, VarType};
-    pub(crate) use super::{Key, Token};
-}
-
-pub mod labeled_prelude {
-    pub use super::parse::prelude::*;
-    pub use super::token::Token;
-}
-
-pub mod typed_prelude {
-    pub use super::token::Token;
-    pub use super::typed::prelude::*;
+pub mod types_prelude {
+    pub use super::c_vals::{FnType, VarType};
 }
 
 #[derive(Debug, Copy, Clone)]
-pub struct LabelId(usize);
+pub enum StorageClass {
+    Static,
+    Extern,
+}
+
+impl PartialEq for StorageClass {
+    fn eq(&self, other: &Self) -> bool {
+        matches!(
+            (self, other),
+            (Self::Static, Self::Static) | (Self::Extern, Self::Extern)
+        )
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct LabelId(pub usize);
+
+impl std::fmt::Display for LabelId {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
 
 #[derive(Debug, Copy, Clone)]
 pub struct Label {
-    id: usize,
-    pos: LabelPos,
+    pub id: usize,
+    pub pos: LabelPos,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -46,7 +63,15 @@ pub enum LabelPos {
     Default,
 }
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+static LOOP_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
 impl LabelId {
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> Self {
+        Self(LOOP_COUNTER.fetch_add(1, Ordering::AcqRel))
+    }
+
     pub const fn start(&self) -> Label {
         self.pos(LabelPos::Start)
     }
@@ -68,14 +93,13 @@ impl LabelId {
     }
 
     pub const fn default(&self) -> Label {
-        self.pos(LabelPos::Case(c))
+        self.pos(LabelPos::Default)
     }
 
     const fn pos(&self, pos: LabelPos) -> Label {
         Label { id: self.0, pos }
     }
 }
-
 use std::fmt::{self, Display, Formatter};
 impl Display for Label {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {

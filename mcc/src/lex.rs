@@ -1,12 +1,11 @@
-use super::ast::{Constant, DebugToken, Token};
+use ast::{Constant, DebugToken, Token};
+use symtab::{Key, Store};
+use util::SliceIter;
 
-use super::slice_iter::SliceIter;
-use ascii::{AsciiChar, AsciiStr};
-
-pub fn tokenize<'a>(bytes: &AsciiStr) -> Result<Box<[DebugToken<'a>]>, Error> {
+pub fn tokenize<'a>(bytes: &'a Store) -> Result<Box<[DebugToken<'a>]>, Error> {
     // we know they're ascii characters going in, so we're gonna use bytes so we can use the slice
     // pattern below :)
-    let mut iter = SliceIter::new(bytes.as_bytes());
+    let mut iter = SliceIter::new(bytes.as_ref());
 
     let mut tokens = Vec::new();
     let mut cur_line = 0;
@@ -20,10 +19,10 @@ pub fn tokenize<'a>(bytes: &AsciiStr) -> Result<Box<[DebugToken<'a>]>, Error> {
 }
 
 fn lex_slice<'a: 'b, 'b>(
-    iter: &mut SliceIter<'b, u8>,
+    iter: &mut SliceIter<'a>,
     cur_line: &mut usize,
 ) -> Result<Option<Token<'a>>, Error> {
-    match iter.as_slice() {
+    match iter.as_bytes() {
         [b'<', b'<', b'=', ..] => {
             iter.next();
             iter.next();
@@ -135,35 +134,36 @@ fn lex_slice<'a: 'b, 'b>(
             iter.next();
             lex_slice(iter, cur_line)
         }
-        [a, ..] => {
+        [_, ..] => {
             let lit_start = iter.as_slice();
-            iter.next();
+            // safe because we know there's 1 item there
+            let a = unsafe { iter.next().unwrap_unchecked() };
             Ok(Some(match a {
-                b'(' => Token::OpenParen,
-                b')' => Token::CloseParen,
-                b'{' => Token::OpenBrace,
-                b';' => Token::Semicolon,
-                b'}' => Token::CloseBrace,
-                b'~' => Token::Tilde,
-                b'0'..=b'9' => {
-                    let byte = AsciiDigit::from_int(*a).unwrap();
+                '(' => Token::OpenParen,
+                ')' => Token::CloseParen,
+                '{' => Token::OpenBrace,
+                ';' => Token::Semicolon,
+                '}' => Token::CloseBrace,
+                '~' => Token::Tilde,
+                '0'..='9' => {
+                    let byte = AsciiDigit::from_char(a).unwrap();
                     Token::Const(constant_number(byte, iter)?)
                 }
-                b'-' => Token::Minus,
-                b'+' => Token::Plus,
-                b'*' => Token::Asterisk,
-                b'/' => Token::Slash,
-                b'%' => Token::Percent,
-                b'&' => Token::Ampersand,
-                b'|' => Token::Bar,
-                b'^' => Token::Caret,
-                b'!' => Token::Not,
-                b'<' => Token::LessThan,
-                b'>' => Token::GreaterThan,
-                b'=' => Token::Equals,
-                b',' => Token::Comma,
-                b'?' => Token::QuestionMark,
-                b':' => Token::Colon,
+                '-' => Token::Minus,
+                '+' => Token::Plus,
+                '*' => Token::Asterisk,
+                '/' => Token::Slash,
+                '%' => Token::Percent,
+                '&' => Token::Ampersand,
+                '|' => Token::Bar,
+                '^' => Token::Caret,
+                '!' => Token::Not,
+                '<' => Token::LessThan,
+                '>' => Token::GreaterThan,
+                '=' => Token::Equals,
+                ',' => Token::Comma,
+                '?' => Token::QuestionMark,
+                ':' => Token::Colon,
                 _ => literal(lit_start, iter)?,
             }))
         }
@@ -172,31 +172,31 @@ fn lex_slice<'a: 'b, 'b>(
 }
 
 impl AsciiDigit {
-    const fn from_int(int: u8) -> Option<Self> {
+    const fn from_char(int: char) -> Option<Self> {
         match int {
-            b'0' => Some(AsciiDigit::Zero),
-            b'1' => Some(AsciiDigit::One),
-            b'2' => Some(AsciiDigit::Two),
-            b'3' => Some(AsciiDigit::Three),
-            b'4' => Some(AsciiDigit::Four),
-            b'5' => Some(AsciiDigit::Five),
-            b'6' => Some(AsciiDigit::Six),
-            b'7' => Some(AsciiDigit::Seven),
-            b'8' => Some(AsciiDigit::Eight),
-            b'9' => Some(AsciiDigit::Nine),
+            '0' => Some(AsciiDigit::Zero),
+            '1' => Some(AsciiDigit::One),
+            '2' => Some(AsciiDigit::Two),
+            '3' => Some(AsciiDigit::Three),
+            '4' => Some(AsciiDigit::Four),
+            '5' => Some(AsciiDigit::Five),
+            '6' => Some(AsciiDigit::Six),
+            '7' => Some(AsciiDigit::Seven),
+            '8' => Some(AsciiDigit::Eight),
+            '9' => Some(AsciiDigit::Nine),
             _ => None,
         }
     }
 }
 
-fn constant_number(start: AsciiDigit, iter: &mut SliceIter<u8>) -> Result<Constant, Error> {
+fn constant_number(start: AsciiDigit, iter: &mut SliceIter) -> Result<Constant, Error> {
     let mut bytes = vec![start];
     while let Some(constant) = next_if_number(iter) {
         bytes.push(constant);
     }
 
     match iter.peek() {
-        Some(b'l') => {
+        Some('l') => {
             iter.next();
             Ok(Constant::Long(parse_long(&bytes)))
         }
@@ -211,32 +211,32 @@ fn constant_number(start: AsciiDigit, iter: &mut SliceIter<u8>) -> Result<Consta
 }
 
 // assumes that lit_slice is 1 behind iter
-fn literal<'a>(lit_slice: &[u8], iter: &mut SliceIter<u8>) -> Result<Token<'a>, Error> {
+fn literal<'a>(lit_slice: &'a str, iter: &mut SliceIter) -> Result<Token<'a>, Error> {
     let mut end = 1;
     while next_if_word(iter).is_some() {
         end += 1;
     }
 
     if iter.peek().is_some_and(|byte| !word_character(byte)) {
-        Ok(match lit_slice {
-            b"int" => Token::Int,
-            b"return" => Token::Return,
-            b"void" => Token::Void,
-            b"if" => Token::If,
-            b"else" => Token::Else,
-            b"goto" => Token::Goto,
-            b"do" => Token::Do,
-            b"while" => Token::While,
-            b"for" => Token::For,
-            b"break" => Token::Break,
-            b"continue" => Token::Continue,
-            b"switch" => Token::Switch,
-            b"case" => Token::Case,
-            b"default" => Token::Default,
-            b"static" => Token::Static,
-            b"extern" => Token::Extern,
-            b"long" => Token::Long,
-            _ => Token::Ident(lit_slice),
+        Ok(match &lit_slice[0..end] {
+            "int" => Token::Int,
+            "return" => Token::Return,
+            "void" => Token::Void,
+            "if" => Token::If,
+            "else" => Token::Else,
+            "goto" => Token::Goto,
+            "do" => Token::Do,
+            "while" => Token::While,
+            "for" => Token::For,
+            "break" => Token::Break,
+            "continue" => Token::Continue,
+            "switch" => Token::Switch,
+            "case" => Token::Case,
+            "default" => Token::Default,
+            "static" => Token::Static,
+            "extern" => Token::Extern,
+            "long" => Token::Long,
+            _ => Token::Ident(Key::new(lit_slice)),
         })
     } else {
         Err(Error::InvalidLiteral)
@@ -253,24 +253,20 @@ fn identifier<'a>(str: &'a AsciiStr) -> Result<Token<'a>, Error> {
 }
 */
 
-const fn _word_boundary(byte: u8) -> bool {
+const fn _word_boundary(byte: char) -> bool {
     !word_character(byte)
 }
 
-fn word_start(byte: AsciiChar) -> bool {
-    byte.is_alphabetic() || byte == AsciiChar::UnderScore
+fn word_start(byte: char) -> bool {
+    byte.is_alphabetic() || byte == '_'
 }
 
-const fn word_character(byte: u8) -> bool {
-    match byte {
-        b if b.is_ascii_alphanumeric() => true,
-        b'_' => true,
-        _ => false,
-    }
+const fn word_character(byte: char) -> bool {
+    byte.is_ascii_alphanumeric() || byte == '_'
 }
 
-fn next_if_number(iter: &mut SliceIter<u8>) -> Option<AsciiDigit> {
-    iter.next_if_map(AsciiDigit::from_int)
+fn next_if_number(iter: &mut SliceIter) -> Option<AsciiDigit> {
+    iter.next_if_map(AsciiDigit::from_char)
 }
 
 #[derive(Clone, Copy)]
@@ -295,7 +291,7 @@ fn parse_long(slice: &[AsciiDigit]) -> i64 {
     cur
 }
 
-fn next_if_word(iter: &mut SliceIter<u8>) -> Option<u8> {
+fn next_if_word(iter: &mut SliceIter) -> Option<char> {
     iter.next_if(word_character)
 }
 
