@@ -1,3 +1,4 @@
+pub mod attr;
 pub mod c_vals;
 pub mod expr;
 pub mod labeled;
@@ -61,7 +62,21 @@ pub enum LabelPos {
     End,
     Case(Constant),
     Default,
+    And,
+    Or,
+    If,
+    Else,
+    Conditional,
 }
+/*
+    And,
+    Or,
+    End,
+    If,
+    Named,
+    Else,
+    Conditional,
+*/
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 static LOOP_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -96,22 +111,30 @@ impl LabelId {
         self.pos(LabelPos::Default)
     }
 
-    const fn pos(&self, pos: LabelPos) -> Label {
+    pub const fn pos(&self, pos: LabelPos) -> Label {
         Label { id: self.0, pos }
     }
 }
 use std::fmt::{self, Display, Formatter};
 impl Display for Label {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        use LabelPos::{Break, Case, Continue, Default, End, Start};
+        use LabelPos::{
+            And, Break, Case, Conditional, Continue, Default, Else, End, If, Or, Start,
+        };
         let id = self.id;
+
         match self.pos {
-            Break => write!(f, "s{id}b"),
-            Continue => write!(f, "s{id}c"),
-            Case(c) => write!(f, "sc{id}{}", c),
-            Default => write!(f, "s{id}d"),
-            Start => write!(f, "s{id}tart"),
-            End => write!(f, "e{id}nd"),
+            Break => write!(f, "_mcc_break{id}"),
+            Continue => write!(f, "_mcc_cont{id}"),
+            Case(_) => write!(f, "_mcc_case{id}"),
+            Default => write!(f, "_mcc_default{id}"),
+            Start => write!(f, "_mcc_start{id}"),
+            End => write!(f, "_mcc_end{id}"),
+            And => write!(f, "_mcc_and_false{id}"),
+            Or => write!(f, "_mcc_or_true{id}"),
+            Else => write!(f, "_mcc_else{id}"),
+            If => write!(f, "_mcc_if{id}"),
+            Conditional => write!(f, "_mcc_cond{id}"),
         }
     }
 }

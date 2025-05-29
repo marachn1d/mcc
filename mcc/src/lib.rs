@@ -49,7 +49,7 @@ pub fn compile(path: &Path) -> Result<Option<PathBuf>, Error> {
 
     #[cfg(feature = "codegen")]
     if should_codegen(&stage) {
-        let code = codegen::generate(program, should_emit(&stage), map);
+        let code = codegen::generate(&program, should_emit(&stage), map);
         let path = path.with_extension("S");
         fs::write(&path, &code)?;
         Ok(Some(path))

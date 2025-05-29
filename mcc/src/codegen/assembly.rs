@@ -1,9 +1,9 @@
+/*
 pub mod tacky;
 pub mod x86;
-use super::Identifier;
-pub use crate::parse::VarType;
 use crate::semantics::Attr;
 pub use crate::semantics::StaticInit;
+pub use ast::types_prelude::VarType;
 use std::collections::HashMap;
 use std::io::Write;
 pub use tacky::Instruction as TackyInstruction;
@@ -14,7 +14,7 @@ pub use x86::Op;
 pub use x86::Pseudo;
 pub use x86::PseudoOp;
 pub use x86::X86;
-pub type SymbolTable = HashMap<Identifier, BackendSymbol>;
+pub type SymbolTable = HashMap<(), BackendSymbol>;
 
 pub fn update_table(mut table: crate::semantics::SymbolTable) -> SymbolTable {
     let mut tbl = SymbolTable::new();
@@ -26,6 +26,7 @@ pub fn update_table(mut table: crate::semantics::SymbolTable) -> SymbolTable {
 
 const fn asm_type(ty: VarType) -> AsmType {
     match ty {
+        _ => todo!(),
         VarType::Int => AsmType::Longword,
         VarType::Long => AsmType::Quadword,
     }
@@ -244,3 +245,4 @@ impl Register {
         }
     }
 }
+*/

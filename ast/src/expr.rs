@@ -1,5 +1,7 @@
 use crate::prelude::*;
 
+//pub type Expr<'a> = expr::Expr<'a, Expr<'a>>;
+
 #[derive(Debug, Clone)]
 pub enum Expr<'a> {
     Assignment {

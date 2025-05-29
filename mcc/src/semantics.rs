@@ -1,12 +1,11 @@
 mod check_labels;
 mod resolve;
 pub mod typecheck;
+pub use ast::attr::{Attr, SymbolTable};
 pub use ast::c_vals::StaticInit;
 use ast::parse::Program as AstProgram;
 pub use check_labels::check as check_labels;
 use symtab::Store;
-pub use typecheck::Attr;
-pub use typecheck::SymbolTable;
 mod resolve_loops;
 pub use resolve::resolve;
 

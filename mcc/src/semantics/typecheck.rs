@@ -1,3 +1,4 @@
+use ast::attr::{Attr, SymbolTable};
 use ast::c_vals::*;
 use ast::typed::prelude::*;
 use ast::typed::{Binary, Expr, Unary};
@@ -5,82 +6,8 @@ use ast::Key;
 use ast::StorageClass;
 use ast::{Bop, UnOp};
 
-use std::collections::HashMap;
-
 use std::collections::hash_map::Entry;
 
-pub type SymbolTable<'a> = HashMap<Key<'a>, Attr>;
-#[derive(Debug)]
-pub enum Attr {
-    Static {
-        typ: VarType,
-        init: Option<InitialVal>,
-        global: bool,
-    },
-    Automatic(VarType),
-    Fn {
-        defined: bool,
-        global: bool,
-        typ: FnType,
-    },
-}
-
-impl Attr {
-    pub const fn global(&self) -> bool {
-        match self {
-            Self::Static { global, .. } | Self::Fn { global, .. } => *global,
-            Self::Automatic(_) => false,
-        }
-    }
-
-    pub const fn var_type(&self) -> Result<&VarType, Error> {
-        match self {
-            Self::Static { typ, .. } | Self::Automatic(typ) => Ok(typ),
-            Self::Fn { .. } => Err(Error::ExpectedVarType),
-        }
-    }
-
-    pub const fn fn_type(&self) -> Result<&FnType, Error> {
-        match self {
-            Self::Fn { typ, .. } => Ok(typ),
-            Self::Static { .. } | Self::Automatic(_) => Err(Error::ExpectedFnType),
-        }
-    }
-}
-
-#[derive(Debug, Copy, Clone)]
-pub enum InitialVal {
-    Tentative,
-    Initial(StaticInit),
-}
-
-impl InitialVal {
-    pub const fn get_static(&self, ty: VarType) -> StaticInit {
-        match (self, ty) {
-            (InitialVal::Initial(s), _) => *s,
-            (InitialVal::Tentative, VarType::Int | VarType::UInt) => StaticInit::Int(0),
-            (InitialVal::Tentative, VarType::Long | VarType::ULong) => StaticInit::Long(0),
-        }
-    }
-
-    pub fn as_long(&self) -> i64 {
-        match self {
-            Self::Initial(StaticInit::Long(i)) => *i,
-            Self::Initial(StaticInit::Int(i)) => (*i).into(),
-            Self::Tentative => 0,
-        }
-    }
-
-    pub const fn as_int(&self) -> i32 {
-        match self {
-            Self::Initial(StaticInit::Int(i)) => *i,
-            Self::Initial(StaticInit::Long(i)) => *i as i32,
-            Self::Tentative => 0,
-        }
-    }
-}
-
-// check FunctionDeclaration, VariableDeclaration,
 use ast::labeled as lab;
 pub fn typecheck(p: lab::Program) -> Result<(SymbolTable, Program), Error> {
     let mut table = SymbolTable::new();
@@ -114,27 +41,23 @@ fn top_level_var<'a>(
     let mut initial = if sc == Some(StorageClass::Extern) {
         extern_initializer(&init)?
     } else {
-        Some(top_level_initializer(init.as_ref())?)
+        top_level_initializer(init.as_ref())?
     };
 
     // we're global unless static
     let mut global = sc != Some(StorageClass::Static);
 
-    let table_entry = table.get(&name);
-
-    if let Some(Attr::Static {
-        init: old_init,
-        global: old_global,
-        typ: old_type,
-    }) = table_entry
-    {
-        check_linkage(&mut global, *old_global, &sc)?;
-        check_initializer_conflict(old_init, &mut initial)?;
-        if typ != *old_type {
-            return Err(Error::ConflictingType);
+    match table.get(&name) {
+        Some(Attr::Static {
+            init: old_init,
+            global: old_global,
+            typ: old_type,
+        }) if typ == *old_type => {
+            check_linkage(&mut global, *old_global, &sc)?;
+            check_initializer_conflict(old_init, &mut initial)?;
         }
-    } else if table_entry.is_some() {
-        return Err(Error::ConflictingType);
+        Some(_) => return Err(Error::ConflictingType),
+        None => (),
     };
 
     table.insert(
@@ -158,22 +81,19 @@ fn top_level_var<'a>(
 }
 
 fn extern_initializer(init: &Option<ast::Expr>) -> Result<Option<InitialVal>, Error> {
-    init.as_ref()
-        .map(|expr| {
-            expr.static_init()
-                .map(InitialVal::Initial)
-                .ok_or(Error::NotConstInitialized)
-        })
-        .transpose()
+    match init.as_ref().map(ast::Expr::static_init).flatten() {
+        None => Err(Error::NotConstInitialized),
+        Some(i) => Ok(Some(InitialVal::from(&i))),
+    }
 }
 
-fn top_level_initializer(init: Option<&ast::Expr>) -> Result<InitialVal, Error> {
-    if let Some(init) = init {
-        init.static_init()
-            .map(InitialVal::Initial)
-            .ok_or(Error::NotConstInitialized)
-    } else {
-        Ok(InitialVal::Tentative)
+fn top_level_initializer(init: Option<&ast::Expr>) -> Result<Option<InitialVal>, Error> {
+    match init {
+        Some(e) => match e.static_init() {
+            None => Err(Error::NotConstInitialized),
+            Some(i) => Ok(Some(InitialVal::from(&i))),
+        },
+        None => Ok(None),
     }
 }
 
@@ -197,17 +117,19 @@ fn check_initializer_conflict(
     old: &Option<InitialVal>,
     new: &mut Option<InitialVal>,
 ) -> Result<(), Error> {
-    match (&new, old) {
+    match (*new, *old) {
         // if they're both declared something's wrong, even if it's the same definition
-        (Some(InitialVal::Initial(_)), Some(InitialVal::Initial(_))) => {
+        (Some(InitialVal::Init(_)), Some(InitialVal::Init(_))) => {
             Err(Error::ConflictingDeclaration)
         }
+
         // if we have an initial pass then we take it
-        (Some(InitialVal::Initial(c)), _) | (_, Some(InitialVal::Initial(c))) => {
-            *new = Some(InitialVal::Initial(*c));
+        (i @ Some(InitialVal::Init(_)), None) | (None, i @ Some(InitialVal::Init(_))) => {
+            *new = i;
             Ok(())
         }
-        // if we have a tentative we take it
+
+        // otherwise if the old one is tentative we go with tentative
         (Some(InitialVal::Tentative), _) | (_, Some(InitialVal::Tentative)) => {
             *new = Some(InitialVal::Tentative);
             Ok(())
@@ -264,7 +186,7 @@ fn variable_declaration<'a>(
             table.insert(
                 name,
                 Attr::Static {
-                    init: Some(InitialVal::Initial(StaticInit::from(*c))),
+                    init: Some(InitialVal::Init(StaticInit::from(*c))),
                     global: false,
                     typ,
                 },
@@ -276,7 +198,7 @@ fn variable_declaration<'a>(
             table.insert(
                 name,
                 Attr::Static {
-                    init: Some(InitialVal::Initial(StaticInit::Long(0))),
+                    init: Some(InitialVal::Init(StaticInit::Long(0))),
                     global: false,
                     typ,
                 },
@@ -816,4 +738,15 @@ pub enum Error {
 
     #[error("Expected Function Type")]
     ExpectedFnType,
+}
+
+use ast::attr::ExpectedType;
+impl From<ExpectedType> for Error {
+    fn from(value: ExpectedType) -> Self {
+        use ExpectedType::{Fn, Var};
+        match value {
+            Fn => Self::ExpectedFnType,
+            Var => Self::ExpectedVarType,
+        }
+    }
 }

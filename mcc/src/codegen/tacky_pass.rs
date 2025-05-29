@@ -1,25 +1,18 @@
-use crate::semantics::{Attr, SymbolTable};
+use crate::semantics::Attr;
 use asm::tacky::*;
-use ast::labels::Label;
+//use ast::labels::Label;
+use super::SymKey;
 use ast::typed;
 use ast::types_prelude::VarType;
-use ast::AstLabel;
+//use ast::AstLabel;
+use super::SymbolTable;
+use asm::tacky::TackyTmp;
 use ast::Constant;
 use ast::Key;
 use ast::StorageClass;
 use ast::{Fix, IncDec, IncOp};
 use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering;
 
-/*
- *
- *
- *  TODO: AsmLabel util type in asm
- *  Counter type in util? nah
- *
- *
- *
- */
 static TEMP_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 static LABEL_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -37,20 +30,24 @@ pub fn emit<'a>(program: &typed::Program<'a>, symbol_table: &mut SymbolTable<'a>
     tlvs.reverse();
 
     for (name, attr) in symbol_table {
-        if let Attr::Static {
+        let SymKey::Key(name) = name else {
+            continue;
+        };
+        let Attr::Static {
             init: Some(init),
             global: g,
             typ: t,
         } = attr
-        {
-            let init = init.get_static(*t);
-            tlvs.push(TopLevel::StaticVar(StaticVar {
-                name: name.clone(),
-                global: *g,
-                init,
-                typ: *t,
-            }))
-        }
+        else {
+            continue;
+        };
+        let init = init.get_static(*t);
+        tlvs.push(TopLevel::StaticVar(StaticVar {
+            name: *name,
+            global: *g,
+            init,
+            typ: *t,
+        }))
     }
 
     tlvs.reverse();
@@ -69,11 +66,11 @@ fn convert_function<'a>(
 ) -> Option<FnDef<'a>> {
     if let Some(body) = body {
         let mut body_ops = Vec::new();
-        convert_block(body, &mut body_ops, &name, table);
+        convert_block(body, &mut body_ops, name, table);
         body_ops.push(Op::Return(Val::Constant(Constant::Long(0))));
 
         Some(FnDef {
-            name: name.clone(),
+            name: *name,
             params: params.into_iter().map(|param| param.name).collect(),
             body: body_ops.into(),
             global: sc.is_none_or(|sc| sc == StorageClass::Extern),
@@ -98,11 +95,15 @@ fn convert_block<'a>(
     }
 }
 
-fn convert_statement(
-    statement: &typed::Stmnt,
-    ops: &mut Vec<Op>,
-    fn_name: &Key,
-    table: &mut SymbolTable,
+fn push_label(label: ast::Label, ops: &mut Vec<Op>) {
+    ops.push(Op::Label(Label::Anon(label)))
+}
+
+fn convert_statement<'a>(
+    statement: &typed::Stmnt<'a>,
+    ops: &mut Vec<Op<'a>>,
+    fn_name: &Key<'a>,
+    table: &mut SymbolTable<'a>,
 ) {
     use typed::Stmnt::*;
     match statement {
@@ -111,35 +112,36 @@ fn convert_statement(
             condition,
             label,
         } => {
-            ops.push(Op::Label(label.start()));
+            push_label(label.start(), ops);
             convert_statement(body, ops, fn_name, table);
-            ops.push(Op::Label(label.r#continue()));
+
+            push_label(label.r#continue(), ops);
             let result = convert_expression(condition, ops, table);
             ops.extend([
                 Op::JumpIfNotZero {
                     condition: result,
-                    target: label.start(),
+                    target: Label::start(label),
                 },
-                Op::Label(label.r#break()),
+                Op::Label(Label::break_(label)),
             ]);
         }
         While {
             body,
             condition,
-            label,
+            label: id,
         } => {
-            ops.push(Op::Label(label.r#continue()));
+            push_label(id.r#continue(), ops);
             let result = convert_expression(condition, ops, table);
             ops.push(Op::JumpIfZero {
                 condition: result,
-                target: label.r#break(),
+                target: Label::break_(id),
             });
             convert_statement(body, ops, fn_name, table);
             ops.extend([
                 Op::Jump {
-                    target: label.r#continue(),
+                    target: Label::continue_(id),
                 },
-                Op::Label(label.r#break()),
+                Op::Label(Label::break_(id)),
             ]);
         }
         For {
@@ -147,44 +149,44 @@ fn convert_statement(
             condition,
             post,
             body,
-            label,
+            label: id,
         } => {
-            match init.map(|x| *x) {
-                Some(typed::ForInit::D(v)) => convert_vardec(&v, ops, table),
+            match init.as_ref().map(|x| x.as_ref()) {
+                Some(typed::ForInit::D(v)) => convert_vardec(v, ops, table),
                 Some(typed::ForInit::E(exp)) => {
-                    convert_expression(&exp, ops, table);
+                    convert_expression(exp, ops, table);
                 }
                 None => {}
             };
-            ops.push(Op::Label(label.start()));
+            ops.push(Op::Label(Label::start(id)));
             if let Some(condition) = condition {
                 let v = convert_expression(condition, ops, table);
                 ops.push(Op::JumpIfZero {
                     condition: v,
-                    target: label.r#break(),
+                    target: Label::break_(id),
                 })
             }
             convert_statement(body, ops, fn_name, table);
             //
-            ops.push(Op::Label(label.r#continue()));
+            ops.push(Op::Label(Label::continue_(id)));
             if let Some(post) = post {
                 convert_expression(post, ops, table);
             }
             ops.extend([
                 Op::Jump {
-                    target: label.start(),
+                    target: Label::start(id),
                 },
-                Op::Label(label.r#break()),
+                Op::Label(Label::break_(id)),
             ])
         }
-        Break(label) => {
+        Break(id) => {
             ops.push(Op::Jump {
-                target: label.r#break(),
+                target: Label::break_(id),
             });
         }
-        Continue(label) => {
+        Continue(id) => {
             ops.push(Op::Jump {
-                target: label.r#continue(),
+                target: Label::continue_(id),
             });
         }
 
@@ -204,10 +206,11 @@ fn convert_statement(
             r#else: None,
         } => {
             let c = convert_expression(condition, ops, table);
-            let label = if_label();
+            let label = Label::and();
             ops.push(Op::JumpIfZero {
                 condition: c,
-                target: label.clone(),
+                //erm
+                target: label,
             });
             convert_statement(then, ops, fn_name, table);
             ops.push(Op::Label(label));
@@ -218,8 +221,8 @@ fn convert_statement(
             r#else: Some(r#else),
         } => {
             let c = convert_expression(condition, ops, table);
-            let else_label = else_label();
-            let end = if_label();
+            let else_label = Label::else_();
+            let end = Label::if_();
             ops.push(Op::JumpIfZero {
                 condition: c,
                 target: else_label.clone(),
@@ -230,28 +233,22 @@ fn convert_statement(
             ops.push(Op::Label(end));
         }
 
-        Label {
-            name: AstLabel::Named(name),
-            body,
-            id,
-        } => {
-            ops.push(Op::Label(named_label(&name, fn_name)));
+        NamedLabel { l, body } => {
+            ops.push(Op::Label(Label::Named {
+                lbl: *l,
+                f: *fn_name,
+            }));
             convert_statement(body, ops, fn_name, table);
         }
-        Label {
-            name: AstLabel::Case(c),
-            body,
-            id,
+        Case {
+            case,
+            stmnt: ast::typed::LabelStmnt { label, body },
         } => {
-            ops.push(Op::Label(id.case(*c)));
+            ops.push(Op::Label(Label::case(label, case)));
             convert_statement(body, ops, fn_name, table);
         }
-        Label {
-            name: AstLabel::Default,
-            body,
-            id,
-        } => {
-            ops.push(Op::Label(id.default()));
+        Default(ast::typed::LabelStmnt { label, body }) => {
+            ops.push(Op::Label(Label::default(label)));
             convert_statement(body, ops, fn_name, table);
         }
         Switch {
@@ -261,7 +258,7 @@ fn convert_statement(
             body,
             default,
         } => {
-            let end_label = label.r#break();
+            let end_label = Label::break_(label);
             let switch_val = convert_expression(val, ops, table);
             for case in cases {
                 let target_var = new_var(VarType::Int, table);
@@ -271,18 +268,18 @@ fn convert_statement(
                         operator: Bin::EqualTo,
                         source_1: switch_val.clone(),
                         source_2: Val::Constant(*case),
-                        dst: Val::Var(target_var),
+                        dst: target_var,
                     },
                     // jump to its label
                     Op::JumpIfNotZero {
-                        condition: Val::Var(target_var),
-                        target: label.case(*case),
+                        condition: target_var,
+                        target: Label::case(label, case),
                     },
                 ]);
             }
             ops.push(Op::Jump {
                 target: if *default {
-                    label.default()
+                    Label::default(label)
                 } else {
                     end_label.clone()
                 },
@@ -290,8 +287,11 @@ fn convert_statement(
             convert_statement(body, ops, fn_name, table);
             ops.push(Op::Label(end_label));
         }
-        Goto(label) => ops.push(Op::Jump {
-            target: named_label(&label, fn_name),
+        Goto(l) => ops.push(Op::Jump {
+            target: Label::Named {
+                lbl: *l,
+                f: *fn_name,
+            },
         }),
     }
 }
@@ -316,7 +316,7 @@ fn convert_cast<'a>(
         (target, exp, _) if target == exp.typ() => convert_expression(exp, ops, table),
         (_, exp, ty) => {
             let src = convert_expression(exp, ops, table);
-            let dst = Val::Var(new_var(ty, r#table));
+            let dst = new_var(ty, r#table);
             // add dst to symbol table
             //
             convert_cast_op(ty, src, dst, ops)
@@ -354,7 +354,7 @@ fn convert_expression<'a>(
             for arg in args {
                 args_vec.push(convert_expression(arg, ops, table));
             }
-            let result = Val::Var(new_var(*ty, table));
+            let result = new_var(*ty, table);
             ops.push(Op::FunCall {
                 name: *name,
                 args: args_vec.into(),
@@ -382,9 +382,9 @@ fn convert_expression<'a>(
         }) => match process_binop(operator) {
             ProcessedBinop::LogAnd => {
                 let source_1 = convert_expression(left, ops, table);
-                let false_label = and_label();
-                let end_label = end_label();
-                let result = Val::Var(new_var(*ty, table));
+                let false_label = Label::and();
+                let end_label = Label::end();
+                let result = new_var(*ty, table);
                 ops.push(Op::JumpIfZero {
                     condition: source_1,
                     target: false_label.clone(),
@@ -413,9 +413,9 @@ fn convert_expression<'a>(
             }
             ProcessedBinop::LogOr => {
                 let source_1 = convert_expression(left, ops, table);
-                let true_label = or_label();
-                let end_label = end_label();
-                let result = Val::Var(new_var(*ty, table));
+                let true_label = Label::or();
+                let end_label = Label::end();
+                let result = new_var(*ty, table);
                 // if source 1 is true we jump to true label
                 ops.push(Op::JumpIfNotZero {
                     condition: source_1,
@@ -447,7 +447,7 @@ fn convert_expression<'a>(
             ProcessedBinop::Normal(operator) => {
                 let source_1 = convert_expression(left, ops, table);
                 let source_2 = convert_expression(right, ops, table);
-                let dst = Val::Var(new_var(*ty, table));
+                let dst = new_var(*ty, table);
                 let binary = Op::Binary {
                     operator,
                     source_1,
@@ -478,10 +478,10 @@ fn convert_expression<'a>(
             ty,
         } => {
             let c = convert_expression(condition, ops, table);
-            let result = Val::Var(new_var(*ty, table));
-            let false_label = conditional_label();
+            let result = new_var(*ty, table);
+            let false_label = Label::conditional();
 
-            let end = conditional_label();
+            let end = Label::conditional();
             ops.push(Op::JumpIfZero {
                 condition: c,
                 target: false_label.clone(),
@@ -520,7 +520,7 @@ fn convert_expression<'a>(
                 dst: tmp.clone(),
             };
             ops.push(unary);
-            Val::Var(tmp)
+            tmp
         }
         Expr::Nested(e) => convert_expression(e, ops, table),
         Expr::Var { key: v, .. } => Val::Var(*v),
@@ -558,7 +558,7 @@ fn convert_expression<'a>(
                 IncOp::Dec => Bin::Subtract,
             };
 
-            let old_val = Val::Var(new_var(*ty, table));
+            let old_val = new_var(*ty, table);
             //prefix
             ops.extend([
                 Op::Copy {
@@ -652,6 +652,22 @@ const fn process_binop(binop: &ast::Bop) -> ProcessedBinop {
     }
 }
 
+fn new_var<'a>(typ: VarType, symbols: &mut SymbolTable) -> Val<'a> {
+    let tacky_tmp = tacky_temp();
+    symbols.insert(SymKey::Var(tacky_tmp), Attr::Automatic(typ));
+    Val::Tmp(tacky_temp())
+}
+
+fn tacky_temp() -> TackyTmp {
+    TackyTmp::new()
+}
+
+/*
+fn var_label() -> Label {
+}
+*/
+
+/*
 fn new_var(typ: VarType, symbols: &mut SymbolTable) -> Label {
     let number = TEMP_COUNT.fetch_add(1, Ordering::SeqCst);
     let var_name: Box<[u8]> = format!("tmp_{number}").into_bytes().into();
@@ -700,3 +716,4 @@ fn conditional_label() -> Identifier {
     let var_name: Box<[u8]> = format!("c{number}").into_bytes().into();
     Identifier(var_name.into())
 }
+*/

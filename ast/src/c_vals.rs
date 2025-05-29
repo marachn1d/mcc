@@ -39,6 +39,41 @@ pub enum StaticInit {
     Long(i64),
 }
 
+#[derive(Debug, Copy, Clone)]
+pub enum InitialVal {
+    Tentative,
+    Init(StaticInit),
+}
+
+impl InitialVal {
+    pub const fn get_static(&self, ty: VarType) -> StaticInit {
+        if let Self::Init(s) = self {
+            *s
+        } else {
+            match ty {
+                VarType::Int => StaticInit::Int(0),
+                VarType::Long => StaticInit::Long(0),
+                _ => todo!(),
+            }
+        }
+    }
+}
+
+impl From<&Option<StaticInit>> for InitialVal {
+    fn from(val: &Option<StaticInit>) -> Self {
+        match val {
+            Some(s) => Self::from(s),
+            None => Self::Tentative,
+        }
+    }
+}
+
+impl From<&StaticInit> for InitialVal {
+    fn from(v: &StaticInit) -> Self {
+        Self::Init(*v)
+    }
+}
+
 impl From<Constant> for StaticInit {
     fn from(c: Constant) -> Self {
         match c {
