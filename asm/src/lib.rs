@@ -1,5 +1,5 @@
 pub mod tacky;
-mod x86;
+pub mod x86;
 
 use std::collections::HashMap;
 pub type SymbolTable<'a> = HashMap<ast::Key<'a>, AsmSym>;

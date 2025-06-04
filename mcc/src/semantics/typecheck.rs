@@ -146,6 +146,7 @@ fn declaration<'a>(dec: lab::Dec<'a>, table: &mut SymbolTable<'a>) -> Result<Dec
     }
 }
 
+//typechecking needs a big refactor, seperate control flow and logic
 fn variable_declaration<'a>(
     lab::VarDec {
         name,
