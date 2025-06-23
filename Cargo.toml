@@ -1,19 +1,6 @@
-[package]
-name = "mcc"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+resolver = "2"
+members = [ "ast", "mcc", "util"]
+#members = [ "asm", "ast", "mcc", "symtab","util"]
 
-[dependencies]
-
-
-
-[profile.release]
-debug = true
-
-[features]
-    default = ["codegen"]
-    codegen = ["semantics"]
-    semantics = ["parse"]
-    parse = ["lex"]
-    lex = []
 

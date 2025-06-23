@@ -1,0 +1,19 @@
+[package]
+name = "mcc"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+
+
+
+[profile.release]
+debug = true
+
+[features]
+    default = ["codegen"]
+    codegen = ["semantics"]
+    semantics = ["parse"]
+    parse = ["lex"]
+    lex = []
+
