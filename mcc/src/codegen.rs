@@ -1,5 +1,5 @@
 mod assembly;
-//mod pseudo_pass;
+mod pseudo_pass;
 use std::collections::HashMap;
 mod tacky_pass;
 //mod x86_pass;
@@ -23,18 +23,16 @@ pub fn generate(
 
     let tacky = tacky_pass::emit(&program, &mut symtab);
 
-    todo!()
-
-    /*
     if emit_asm {
-        let (pseudo, table) = pseudo_pass::emit(tacky, table);
-
+        let (pseudo, table) = pseudo_pass::emit(tacky, symtab);
+        /*
         let asm = x86_pass::fix_ast(pseudo, &table);
         assembly::emit(&asm)
+        */
+        todo!()
     } else {
         Box::new([])
     }
-    */
 }
 
 #[derive(PartialEq, Eq, Hash)]

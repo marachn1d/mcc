@@ -1,35 +1,8 @@
-use super::assembly;
-use crate::lex::Identifier as TackyIdent;
-use crate::parse::UnOp;
-use crate::parse::VarType;
-use crate::semantics::Attr;
-use assembly::tacky::TackyBinary;
-use assembly::tacky::Value;
-use assembly::x86::AsmType;
-use assembly::Binary;
-use assembly::Op;
-use assembly::OpVec;
-
 use super::SymbolTable;
-use assembly::tacky::Program as TackyProgram;
+use asm::tacky;
+use asm::x86;
 
-use assembly::tacky::FunctionDefinition as TackyFD;
-use assembly::tacky::TopLevel as TackyTL;
-
-use assembly::tacky::StaticVar as TackySV;
-use assembly::CondCode;
-use assembly::Pseudo;
-
-use assembly::x86::pseudo_regs as pseudop;
-use assembly::PseudoOp;
-use assembly::StaticVar;
-use assembly::TackyInstruction;
-use assembly::TopLevel;
-use assembly::{FunctionDefinition, Program, Register};
-
-use assembly::SymbolTable as BackendTable;
-
-pub fn emit(program: TackyProgram, table: SymbolTable) -> (Program<Pseudo>, BackendTable) {
+pub fn emit<'a>(program: tacky::Program, table: SymbolTable<'a>) -> (x86::Pseu, SymbolTable<'a>) {
     let mut decs = Vec::with_capacity(program.0.len());
     for dec in program.0 {
         decs.push(match dec {

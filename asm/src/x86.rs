@@ -1,8 +1,16 @@
+mod register;
+use super::tacky::Val;
+use ast::UnOp;
+
+use register::Register;
+
 use ast::Key;
 use std::fmt::{self, Display, Formatter};
+pub type KeyTy = String;
 
-pub type Pseu<'a> = BaseX86<'a, PseuOp>;
-pub type X86<'a> = BaseX86<'a, Op>;
+// for now we're gonna go expensive
+pub type Pseu = BaseX86<PseuOp<KeyTy>, KeyTy>;
+pub type X86 = BaseX86<Op<KeyTy>, KeyTy>;
 
 pub type OpPair<T> = (T, T);
 
@@ -13,7 +21,7 @@ pub enum AsmType {
 }
 
 #[derive(Clone, Debug)]
-pub enum BaseX86<'a, T> {
+pub enum BaseX86<T, Key: AsRef<str>> {
     Mov {
         ty: AsmType,
         regs: OpPair<T>,
@@ -33,7 +41,7 @@ pub enum BaseX86<'a, T> {
         ty: AsmType,
     },
     Push(T),
-    Call(Key<'a>),
+    Call(Key),
     Ret,
     Idiv {
         divisor: T,
@@ -44,16 +52,16 @@ pub enum BaseX86<'a, T> {
         ty: AsmType,
         regs: OpPair<T>,
     },
-    Jmp(Key<'a>),
+    Jmp(Key),
     JmpCC {
         condition: CondCode,
-        label: Key<'a>,
+        label: Key,
     },
     SetCC {
         condition: CondCode,
         op: T,
     },
-    Label(Key<'a>),
+    Label(Key),
 }
 
 #[derive(Clone, Debug)]
@@ -83,7 +91,7 @@ impl Display for CondCode {
     }
 }
 
-impl BaseX86<'_, PseuOp> {
+impl Pseu {
     pub const fn allocate_stack(n: i64) -> Self {
         Self::binary(
             Binary::Sub,
@@ -103,7 +111,7 @@ impl BaseX86<'_, PseuOp> {
     }
 }
 
-impl BaseX86<Op> {
+impl<K: AsRef<str>> BaseX86<Op<K>, K> {
     pub const fn allocate_stack(n: i64) -> Self {
         Self::binary(
             Binary::Sub,
@@ -114,7 +122,7 @@ impl BaseX86<Op> {
     }
 }
 
-impl<T: Operand> BaseX86<T> {
+impl<T, K: AsRef<str>> BaseX86<T, K> {
     pub const fn mov(src: T, dst: T, ty: AsmType) -> Self {
         Self::Mov {
             regs: (src, dst),
@@ -252,39 +260,37 @@ impl Display for X86 {
     }
 }
 
-impl Op {
-    pub const fn pseudo(self) -> PseudoOp {
-        PseudoOp::Normal(self)
+impl<Key: AsRef<str>> Op<Key> {
+    pub const fn pseudo(self) -> PseuOp<Key> {
+        PseuOp::Normal(self)
     }
 }
 
 pub mod op_regs {
+    use super::KeyTy;
     use super::Op;
     use super::Register;
-    pub const AX: Op = Op::Register(Register::Ax);
-    pub const CX: Op = Op::Register(Register::Cx);
-    pub const DX: Op = Op::Register(Register::Dx);
-    pub const DI: Op = Op::Register(Register::Di);
-    pub const SI: Op = Op::Register(Register::Si);
-    pub const R8: Op = Op::Register(Register::R8);
-    pub const R9: Op = Op::Register(Register::R9);
-    pub const R10: Op = Op::Register(Register::R10);
-    pub const R11: Op = Op::Register(Register::R11);
-    pub const SP: Op = Op::Register(Register::Sp);
+    pub const AX: Op<KeyTy> = Op::Register(Register::Ax);
+    pub const CX: Op<KeyTy> = Op::Register(Register::Cx);
+    pub const DX: Op<KeyTy> = Op::Register(Register::Dx);
+    pub const DI: Op<KeyTy> = Op::Register(Register::Di);
+    pub const SI: Op<KeyTy> = Op::Register(Register::Si);
+    pub const R8: Op<KeyTy> = Op::Register(Register::R8);
+    pub const R9: Op<KeyTy> = Op::Register(Register::R9);
+    pub const R10: Op<KeyTy> = Op::Register(Register::R10);
+    pub const R11: Op<KeyTy> = Op::Register(Register::R11);
+    pub const SP: Op<KeyTy> = Op::Register(Register::Sp);
 }
 
 #[derive(Clone, Debug)]
-pub enum Op {
+pub enum Op<Key: AsRef<str>> {
     Imm(i64),
     Register(Register),
     Stack(isize),
-    Data(Identifier),
+    Data(Key),
 }
-impl Operand for Op {}
 
-impl Operand for PseudoOp {}
-
-impl From<Register> for Op {
+impl<Key: AsRef<str>> From<Register> for Op<Key> {
     fn from(reg: Register) -> Self {
         Self::Register(reg)
     }
@@ -346,18 +352,18 @@ impl From<UnOp> for Unary {
     }
 }
 
-impl Display for Op {
+impl<K: AsRef<str>> Display for Op<K> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
             Self::Imm(val) => write!(f, "${val}"),
             Self::Register(r) => write!(f, "{}", r.extended()),
             Self::Stack(n) => write!(f, "{n}(%rbp)"),
-            Self::Data(name) => write!(f, "_{name}(%rip)"),
+            Self::Data(name) => write!(f, "_{}(%rip)", name.as_ref()),
         }
     }
 }
 
-impl Op {
+impl<K: AsRef<str>> Op<K> {
     fn sized_fmt(&self, size: AsmType) -> String {
         if let Self::Register(r) = self {
             match size {
@@ -371,27 +377,35 @@ impl Op {
 }
 
 #[derive(Clone, Debug)]
-pub enum PseuOp {
-    Normal(Op),
-    Pseu(Key<'a>),
+pub enum PseuOp<K: AsRef<str>> {
+    Normal(Op<K>),
+    Pseu(K),
 }
-impl From<Value> for PseudoOp {
-    fn from(val: Value) -> Self {
+impl<K> From<Val<'_>> for PseuOp<K>
+where
+    for<'a> K: AsRef<str> + From<&'a str>,
+{
+    fn from(val: Val) -> Self {
+        use ast::Constant;
         match val {
-            Value::Constant(c) => Self::imm(c.long()),
+            Val::Constant(Constant::Long(x)) => Self::imm(x),
 
-            Value::Var(v) => Self::PseudoRegister(v),
+            Val::Var(v) => Self::Pseu(K::from(v.as_ref())),
+            Val::Tmp(k) => Self::Pseu(K::from(k.as_ref())),
+
+            _ => todo!(),
         }
     }
 }
 
-impl From<Identifier> for PseudoOp {
-    fn from(ident: Identifier) -> Self {
-        Self::PseudoRegister(ident.clone())
+impl<K: AsRef<str>> From<K> for PseuOp<K> {
+    fn from(ident: K) -> Self {
+        Self::Pseu(ident)
     }
 }
 
-impl<T: Into<Op>> From<T> for PseudoOp {
+/*
+impl<K: AsRef<str>, T: Into<Op<K>>> From<T> for PseuOp<K> {
     fn from(val: T) -> Self {
         let operand: Op = val.into();
         match operand {
@@ -402,11 +416,13 @@ impl<T: Into<Op>> From<T> for PseudoOp {
         }
     }
 }
+*/
 
 #[allow(dead_code)]
 pub mod pseudo_regs {
     use super::op_regs as regs;
-    use super::PseudoOp as Psu;
+    use super::KeyTy;
+    type Psu = super::PseuOp<KeyTy>;
     pub const AX: Psu = Psu::Normal(regs::AX);
     pub const CX: Psu = Psu::Normal(regs::CX);
     pub const DX: Psu = Psu::Normal(regs::DX);
@@ -419,7 +435,7 @@ pub mod pseudo_regs {
     pub const SP: Psu = Psu::Normal(regs::SP);
 }
 
-impl PseudoOp {
+impl<K: AsRef<str>> PseuOp<K> {
     pub const SYSV_ARG_REGS: [Register; 6] = [
         Register::Di,
         Register::Si,
@@ -436,7 +452,7 @@ impl PseudoOp {
         Self::Normal(Op::Register(reg))
     }
 
-    pub const fn data(name: Identifier) -> Self {
+    pub const fn data(name: K) -> Self {
         Self::Normal(Op::Data(name))
     }
 

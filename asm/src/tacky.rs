@@ -171,6 +171,16 @@ impl TackyTmp {
     pub fn new() -> Self {
         Self::default()
     }
+
+    pub fn leak_str<'a>(&self) -> &'a str {
+        self.to_string().leak()
+    }
+}
+
+impl AsRef<str> for TackyTmp {
+    fn as_ref(&self) -> &str {
+        self.leak_str()
+    }
 }
 
 impl Default for TackyTmp {

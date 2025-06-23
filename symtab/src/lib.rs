@@ -19,39 +19,73 @@ pub use zero_copy::TinyKey;
 pub use zero_copy::{AsciiStore as Store, NotAscii};
 
 mod intern {
+    use std::mem::MaybeUninit;
     use std::pin::Pin;
     use std::ptr::NonNull;
-
     // new setup: symtab contains prop, and symbols, keys are a pointer to symbols, symbols contain
     // a pointer to properties, properties uses typestate. Symbols are homogenously allocated in a
     // bump allocated vec of bytes
 
-    union SymEntry {
-        attr: NonNull<Attr>,
-        byte: u8,
-        next: Option<Pin<NonNull<[Self]>>>,
+    type SymEntry = (Box<Attr>, Box<[u8]>);
+
+    struct SymTab {
+        ents: Box<[MaybeUninit<SymEntry>]>,
+        size:usize
+        next: Option<Box<SymTab>>,
     }
 
-    struct SymbolString([SymEntry]);
+    impl SymTab{
+        const DEFAULT_SIZE:usize = 256;
+        fn new() -> Self{
+            let mut vec = Vec::with_capacity(Self::DEFAULT_SIZE);
+            for _ in 0..Self::DEFAULT_SIZE{
+                vec.push(MaybeUninit::uninit());
+            }
 
-    impl SymbolString {
-        pub const fn attr(&self) -> &Attr {
-            todo!()
-        }
 
-        pub const fn str(&self) -> &Attr {
-            todo!()
+            Self{
+                ents: vec.into_boxed_slice(),
+                size:0,
+                next:None,
+            }
         }
     }
+    /*
+        union SymEntry {
+            attr: ManuallyDrop<Box<Attr>>,
+            byte: u8,
+            next: ManuallyDrop<Option<Pin<Box<SymVec>>>>,
+        }
 
-    struct Key(NonNull<SymbolString>);
+        impl SymEntry {
+            // unsafe bc you need to remember that it's an attr and drop it
+            fn attr() -> Self {
+                let attr = ManuallyDrop::new(Box::new(Attr {}));
+                Self { attr }
+            }
+
+            unsafe fn drop_attr(self) {
+                drop(ManuallyDrop::into_inner(unsafe { self.attr }))
+            }
+
+            unsafe fn drop_next(self) {
+                match ManuallyDrop::into_inner(unsafe { self.next }) {
+                    Some(x) => drop(Pin::into_inner(x)),
+                    None => (),
+                }
+            }
+
+            unsafe fn drop_box_ptr<T>(ptr: *mut T) {
+                let bx = unsafe { Box::from_raw(ptr) };
+                drop(bx)
+            }
+        }
+    */
+
+    struct Key(NonNull<SymEntry>);
 
     // properties of strings
     struct Attr {}
-
-    struct GrowVec<T> {
-        data: Box<[T]>,
-    }
 }
 
 mod zero_copy {
