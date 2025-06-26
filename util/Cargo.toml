@@ -4,4 +4,5 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-    ast = {path = "../ast"}
+    ast = { path = "../ast" }
+    thiserror = "2.0.12"

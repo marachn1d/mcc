@@ -1,6 +1,5 @@
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub enum Token<Ident> {
-    // Keywords
     Int,
     Void,
     Return,
@@ -18,8 +17,8 @@ pub enum Token<Ident> {
     Static,
     Extern,
     Long,
-    Constant(Constant),
-    Identifier(Ident),
+    Const(Constant),
+    Ident(Ident),
     OpenParen,
     CloseParen,
     OpenBrace,
@@ -66,6 +65,28 @@ pub enum Token<Ident> {
     Colon,
 }
 
+impl<Ident> Token<Ident> {
+    pub fn constant(&self) -> bool {
+        matches!(self, Self::Const(_))
+    }
+
+    pub fn identifier(&self) -> bool {
+        matches!(self, Self::Ident(_))
+    }
+}
+
+use std::fmt::{self, Display, Formatter};
+
+impl<T: fmt::Debug + Display> Display for Token<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        if let Self::Ident(s) = self {
+            <T as Display>::fmt(s, f)
+        } else {
+            <Self as fmt::Debug>::fmt(self, f)
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Copy, Clone, Ord, PartialOrd)]
 pub enum Constant {
     Int(i32),
@@ -89,7 +110,7 @@ struct DebugToken<Ident> {
 
 impl<T> From<Constant> for Token<T> {
     fn from(c: Constant) -> Self {
-        Self::Constant(c)
+        Self::Const(c)
     }
 }
 

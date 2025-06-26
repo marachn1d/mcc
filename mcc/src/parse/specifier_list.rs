@@ -1,4 +1,6 @@
-use super::{Error, SpecifierList, StorageClass, Token, TokenIter, VarType};
+use super::{Error, SpecifierList, StorageClass, Token, VarType};
+
+use util::TokenIter;
 
 #[derive(Debug, Clone)]
 pub struct SpeclistFsm {

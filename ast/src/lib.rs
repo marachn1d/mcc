@@ -1,6 +1,12 @@
-pub mod token;
+mod token;
+mod var_type;
 
-pub use token::{Constant, Token};
+pub type Ident = String;
+pub type Token = token::Token<Ident>;
+
+pub use token::Constant;
+
+pub use var_type::VarType;
 
 pub fn add(left: u64, right: u64) -> u64 {
     left + right

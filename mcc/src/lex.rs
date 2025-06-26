@@ -1,4 +1,4 @@
-use super::slice_iter::SliceIter;
+use util::SliceIter;
 
 use std::fmt::{self, Display, Formatter};
 use std::rc::Rc;

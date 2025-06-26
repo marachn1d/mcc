@@ -4,10 +4,13 @@ use std::fs;
 use std::io;
 use std::path::PathBuf;
 
+// TODO: Define token type, let it be slow rn
+
 pub mod lex;
+pub use ast::Token;
 pub use lex::DebugToken;
-pub use lex::Token;
-pub mod slice_iter;
+
+pub use util::TokenIter;
 
 #[cfg(feature = "codegen")]
 pub mod codegen;

@@ -1,5 +1,7 @@
 use ast::Constant;
+use ast::Ident;
 use ast::Token;
+use ast::VarType;
 use std::iter::Iterator;
 use std::slice::Iter;
 pub struct SliceIter<'a, T: Copy>(Iter<'a, T>);
@@ -43,12 +45,12 @@ impl<'a, T: Copy> SliceIter<'a, T> {
     }
 }
 
-pub struct TokenIter<T>(std::vec::IntoIter<Token<T>>);
+pub struct TokenIter(std::vec::IntoIter<Token>);
 
 use fmt::Debug;
 use fmt::Formatter;
 use std::fmt;
-impl<T: Debug> Debug for TokenIter<T> {
+impl Debug for TokenIter {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self.peek() {
             Some(t) => write!(f, "TokenIter{{{t:?}}}"),
@@ -57,28 +59,45 @@ impl<T: Debug> Debug for TokenIter<T> {
     }
 }
 //use super::parse;
-//use parse::VarType;
+use thiserror::Error;
+#[derive(Error, Debug)]
+pub enum Expected {
+    #[error("Unexpected Eof")]
+    Eof,
+    #[error("Expected Constant, got {0}")]
+    Constant(Token),
+    #[error("Expected Identifier, got {0}")]
+    Identifier(Token),
+    #[error("Expected Token {expected}, got {got}")]
+    Token { expected: Token, got: Token },
 
-impl<T> TokenIter<T> {
-    /*
+    #[error("Expected Type, got {0}")]
+    Type(Token),
+}
+
+fn expected<T>(tok: Option<Token>, exp: impl FnOnce(Token) -> Expected) -> Result<T, Expected> {
+    match tok {
+        Some(x) => Err(exp(x)),
+        None => Err(Expected::Eof),
+    }
+}
+
+impl TokenIter {
     #[allow(dead_code)]
     pub fn print_next(&self) {
         eprintln!("next: {:?}", self.peek());
     }
-    */
 
-    /*
-    pub fn consume_type(&mut self) -> Option<VarType> {
-        match self.next_if(|x| x == &Token::Int || x == &Token::Long) {
-            Some(Token::Int) => Some(VarType::Int),
-            Some(Token::Long) => Some(VarType::Long),
-            _ => None,
+    pub fn consume_type(&mut self) -> Result<VarType, Expected> {
+        match self.next() {
+            Some(Token::Int) => Ok(VarType::Int),
+            Some(Token::Long) => Ok(VarType::Long),
+            a => expected(a, Expected::Type),
         }
     }
-    */
 
-    pub fn new(tokens: Box<[Token<T>]>) -> Self {
-        let tokens: Vec<Token<T>> = tokens.into();
+    pub fn new(tokens: Box<[Token]>) -> Self {
+        let tokens: Vec<Token> = tokens.into();
         Self(tokens.into_iter())
     }
 
@@ -86,11 +105,11 @@ impl<T> TokenIter<T> {
         self.peek().is_none()
     }
 
-    pub fn peek(&self) -> Option<&Token<T>> {
+    pub fn peek(&self) -> Option<&Token> {
         self.0.as_slice().first()
     }
 
-    pub fn next_if(&mut self, f: impl Fn(&Token<T>) -> bool) -> Option<Token<T>> {
+    pub fn next_if(&mut self, f: impl Fn(&Token) -> bool) -> Option<Token> {
         let next = self.peek()?;
         if f(next) {
             self.next()
@@ -98,72 +117,67 @@ impl<T> TokenIter<T> {
             None
         }
     }
-    pub fn next_if_map<U>(&mut self, f: impl Fn(Token<T>) -> Option<T>) -> Option<T> {
+    pub fn next_if_map<T>(&mut self, f: impl Fn(Token) -> Option<T>) -> Option<T> {
         f(self.next()?)
     }
 
-    /*
-    pub fn peek_any(&self) -> Result<&Token<T>, parse::Error> {
-        self.peek().ok_or(parse::Error::UnexpectedEof)
+    pub fn peek_any(&self) -> Result<&Token, Expected> {
+        self.peek().ok_or(Expected::Eof)
     }
-    */
 
-    pub fn as_slice(&self) -> &[Token<T>] {
+    pub fn as_slice(&self) -> &[Token] {
         self.0.as_slice()
     }
 
-    pub fn peek_peek(&self) -> Option<&Token<T>> {
+    pub fn peek_peek(&self) -> Option<&Token> {
         self.0.as_slice().get(1)
     }
 
-    /*
-    pub fn consume(&mut self, token: impl Into<Token<T>>) -> Result<(), parse::Error> {
-        let token = token.into();
-        if self.peek().is_some_and(|x| x == &token) {
-            self.next();
+    pub fn consume(&mut self, token: impl Into<Token>) -> Result<(), Expected> {
+        let expected = token.into();
+        let got = self.peek_any()?;
+        if got == &expected {
+            Ok(())
         } else {
-            return Err(parse::Error::Expected(token));
+            Err(Expected::Token {
+                expected,
+                got: got.clone(),
+            })
         }
-
-        Ok(())
     }
 
-    pub fn consume_arr(
-        &mut self,
-        iter: impl IntoIterator<Item = Token>,
-    ) -> Result<(), parse::Error> {
+    pub fn consume_arr(&mut self, iter: impl IntoIterator<Item = Token>) -> Result<(), Expected> {
         for token in iter {
             self.consume(token)?;
         }
         Ok(())
     }
 
-    pub fn consume_identifier(&mut self) -> Result<Identifier, parse::Error> {
-        match self.next_if(Token::identifier) {
-            Some(Token::Identifier(ident)) => Ok(ident),
-            _ => Err(parse::Error::ExpectedIdentifier),
+    pub fn consume_identifier(&mut self) -> Result<Ident, Expected> {
+        match self.next() {
+            Some(Token::Ident(ident)) => Ok(ident),
+            other => expected(other, Expected::Identifier),
         }
     }
 
-    pub fn consume_constant(&mut self) -> Result<Constant, parse::Error> {
+    pub fn consume_constant(&mut self) -> Result<Constant, Expected> {
         match self.next_if(Token::constant) {
-            Some(Token::Constant(c)) => Ok(c),
-            None => Err(parse::Error::UnexpectedEof),
-            _ => Err(parse::Error::ExpectedConstant),
+            Some(Token::Const(c)) => Ok(c),
+            other => expected(other, Expected::Constant),
         }
     }
 
-    pub fn consume_any(&mut self) -> Result<Token, parse::Error> {
-        self.next().ok_or(parse::Error::UnexpectedEof)
+    pub fn consume_any(&mut self) -> Result<Token, Expected> {
+        self.next().ok_or(Expected::Eof)
     }
     pub fn token_slice(&self) -> &[Token] {
         self.as_slice()
     }
 
-    pub fn take_until(
+    pub fn take_until<T: From<Expected>>(
         &mut self,
-        mut f: impl FnMut(&Token) -> Result<bool, parse::Error>,
-    ) -> Result<(), parse::Error> {
+        mut f: impl FnMut(&Token) -> Result<bool, T>,
+    ) -> Result<(), T> {
         let mut next = self.peek_any()?;
 
         while f(next)? {
@@ -172,12 +186,11 @@ impl<T> TokenIter<T> {
         }
         Ok(())
     }
-    */
 }
 
-impl<T> Iterator for TokenIter<T> {
-    type Item = Token<T>;
-    fn next(&mut self) -> Option<Token<T>> {
+impl Iterator for TokenIter {
+    type Item = Token;
+    fn next(&mut self) -> Option<Token> {
         self.0.next()
     }
 }

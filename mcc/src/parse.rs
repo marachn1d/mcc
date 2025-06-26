@@ -9,7 +9,7 @@ pub use ast::{
 pub use ast::inc_dec::{self, *};
 
 use super::lex::Identifier;
-use super::slice_iter::TokenIter;
+use util::TokenIter;
 
 use super::Token;
 use std::fmt::{self, Display, Formatter};
@@ -504,7 +504,7 @@ fn factor(tokens: &mut TokenIter) -> Result<Expr, Error> {
     match tokens.consume_any()? {
         Token::Increment => factor(tokens).map(Expr::pre_inc),
         Token::Decrement => factor(tokens).map(Expr::pre_dec),
-        Token::Constant(c) => Ok(Expr::Const(c)),
+        Token::Const(c) => Ok(Expr::Const(c)),
 
         t @ (Token::Minus | Token::Tilde | Token::Not) => {
             let operator = if t == Token::Minus {
@@ -580,12 +580,10 @@ pub struct DebugError {
 
 #[derive(Debug)]
 pub enum Error {
+    Expected(util::Expected),
     UnexpectedEof,
-    Expected(Token),
-    ExpectedIdentifier,
-    ExpectedConstant,
     ExpectedExpr,
-    ExpectedAnyKeyword,
+    ExpectedKeyword,
     Catchall(&'static str),
     ExtraStuff,
     DoubleDef,
@@ -594,4 +592,10 @@ pub enum Error {
     InvalidSpecifiers,
     InvalidType(specifier_list::SpeclistFsm),
     NoStorageClass,
+}
+
+impl From<util::Expected> for Error {
+    fn from(value: util::Expected) -> Self {
+        Self::Expected(value)
+    }
 }
