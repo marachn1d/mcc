@@ -1,18 +1,16 @@
-pub mod ast;
 mod specifier_list;
 
-pub use ast::{
+pub use ast::parse::{
     Arr, Binary, Block, BlockItem, Bop, Dec, Expr, FnDec, FnType, ForInit, Label, Param, ParamList,
-    Program, Stmnt, StorageClass, UnOp, Unary, VarDec, VarType,
+    Program, Stmnt, StorageClass, UnOp, Unary, VarDec,
 };
+pub use ast::VarType;
 
-pub use ast::inc_dec::{self, *};
+pub use ast::parse::inc_dec::{self, *};
 
-use super::lex::Identifier;
 use util::TokenIter;
 
 use super::Token;
-use std::fmt::{self, Display, Formatter};
 
 pub fn parse(tokens: Box<[Token]>) -> Result<Program, Error> {
     let mut tokens = TokenIter::new(tokens);
@@ -54,7 +52,7 @@ fn declaration(tokens: &mut TokenIter) -> Result<Dec, Error> {
 fn top_level_fndec(
     tokens: &mut TokenIter,
     SpecifierList { sc, typ }: SpecifierList,
-    name: Identifier,
+    name: String,
 ) -> Result<FnDec, Error> {
     let params = param_list(tokens)?;
 
@@ -81,7 +79,7 @@ fn top_level_fndec(
 fn top_level_vardec(
     iter: &mut TokenIter,
     SpecifierList { sc, typ }: SpecifierList,
-    name: Identifier,
+    name: String,
 ) -> Result<VarDec, Error> {
     let exp = expression(iter, None)?;
     iter.consume(Token::Semicolon)?;
@@ -191,51 +189,6 @@ fn var_declaration(tokens: &mut TokenIter, sc: Option<StorageClass>) -> Result<V
     })
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub enum Type {
-    Var(VarType),
-    Fn(FnType),
-}
-
-impl VarType {
-    pub const fn common_type(&self, other: &Self) -> Option<Self> {
-        match (self, other) {
-            (Self::Long, Self::Long) | (Self::Long, Self::Int) | (Self::Int, Self::Long) => {
-                Some(Self::Long)
-            }
-            (Self::Int, Self::Int) => Some(Self::Int),
-        }
-    }
-
-    pub const fn alignment(&self) -> u32 {
-        match self {
-            Self::Int => 4,
-            Self::Long => 8,
-        }
-    }
-}
-
-impl PartialEq for StorageClass {
-    fn eq(&self, other: &Self) -> bool {
-        matches!(
-            (self, other),
-            (Self::Static, Self::Static) | (Self::Extern, Self::Extern)
-        )
-    }
-}
-
-#[derive(Debug)]
-pub struct Function {
-    pub name: Identifier,
-    pub body: Block,
-}
-
-impl Display for Function {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "Function(\nname={},\nbody={:?}\n)", self.name, self.body)
-    }
-}
-
 fn statement(tokens: &mut TokenIter) -> Result<Stmnt, Error> {
     Ok(match tokens.peek_any()? {
         Token::Return => {
@@ -280,7 +233,7 @@ fn statement(tokens: &mut TokenIter) -> Result<Stmnt, Error> {
             Stmnt::Goto(identifier)
         }
         // LABEL
-        Token::Identifier(_) if tokens.peek_peek().is_some_and(|x| x == &Token::Colon) => {
+        Token::Ident(_) if tokens.peek_peek().is_some_and(|x| x == &Token::Colon) => {
             let name = tokens.consume_identifier()?;
             let label = Label::Named(name.clone());
             tokens.next();
@@ -310,14 +263,14 @@ fn statement(tokens: &mut TokenIter) -> Result<Stmnt, Error> {
         }
         Token::Case => {
             tokens.next();
-            let Token::Constant(con) = tokens.consume_any()? else {
+            let Token::Const(con) = tokens.consume_any()? else {
                 return Err(Error::Catchall("expected constant"));
             };
 
             tokens.consume(Token::Colon)?;
             let label = Label::Case(con);
             let body = statement(tokens)?.into();
-            Ok(Stmnt::Label { label, body })?
+            Stmnt::Label { label, body }
         }
         Token::Continue => {
             tokens.next();
@@ -379,14 +332,6 @@ fn optional_expr(tokens: &mut TokenIter, delim: Token) -> Result<Option<Expr>, E
         tokens.consume(delim)?;
         Ok(Some(expression))
     }
-}
-
-// for debugging
-#[allow(dead_code)]
-fn print_return<T: fmt::Debug>(mut f: impl FnMut() -> T) -> T {
-    let val = f();
-    eprintln!("{:?}", val);
-    val
 }
 
 fn for_init(tokens: &mut TokenIter) -> Result<Option<ForInit>, Error> {
@@ -518,7 +463,7 @@ fn factor(tokens: &mut TokenIter) -> Result<Expr, Error> {
             Ok(Expr::Unary(Unary { exp, op: operator }))
         }
         Token::OpenParen => {
-            if let Some(target) = tokens.consume_type() {
+            if let Some(target) = tokens.peek_consume_type() {
                 tokens.consume(Token::CloseParen)?;
                 let exp = factor(tokens)?.into();
                 Ok(Expr::Cast { target, exp })
@@ -528,7 +473,7 @@ fn factor(tokens: &mut TokenIter) -> Result<Expr, Error> {
                 Ok(Expr::Nested(exp))
             }
         }
-        Token::Identifier(ident) => {
+        Token::Ident(ident) => {
             if tokens.peek() == Some(&Token::OpenParen) {
                 tokens.next();
                 let args = argument_list(tokens)?;

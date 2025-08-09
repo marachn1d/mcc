@@ -93,6 +93,7 @@ pub enum Constant {
     Long(i64),
 }
 
+#[allow(dead_code)]
 fn word_character<T: AsRef<char>>(byte: &T) -> bool {
     // assuming that performance "loss" is worth dedup
     word_start(byte) || byte.as_ref().is_ascii_digit()
@@ -102,7 +103,7 @@ fn word_start<T: AsRef<char>>(byte: &T) -> bool {
     byte.as_ref().is_ascii_alphanumeric() || *byte.as_ref() == '_'
 }
 
-struct DebugToken<Ident> {
+pub struct DebugToken<Ident> {
     pub token: Token<Ident>,
     pub line: usize,
     pub char: usize,
@@ -111,6 +112,18 @@ struct DebugToken<Ident> {
 impl<T> From<Constant> for Token<T> {
     fn from(c: Constant) -> Self {
         Self::Const(c)
+    }
+}
+
+impl From<i32> for Constant {
+    fn from(c: i32) -> Self {
+        Self::Int(c)
+    }
+}
+
+impl From<i64> for Constant {
+    fn from(c: i64) -> Self {
+        Self::Long(c)
     }
 }
 
@@ -127,5 +140,55 @@ impl Constant {
             Self::Int(i) => *i as i64,
             Self::Long(l) => *l,
         }
+    }
+}
+
+impl<Ident> DebugToken<Ident> {
+    pub fn into_inner(self) -> (Token<Ident>, usize) {
+        (self.token, self.line)
+    }
+
+    pub const fn line(&self) -> usize {
+        self.line
+    }
+}
+
+impl<Ident> std::ops::Deref for DebugToken<Ident> {
+    type Target = Token<Ident>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.token
+    }
+}
+use std::ops::Deref;
+
+use std::ops::DerefMut;
+impl<Ident> AsRef<Token<Ident>> for DebugToken<Ident> {
+    fn as_ref(&self) -> &Token<Ident> {
+        self.deref()
+    }
+}
+
+impl<I> AsMut<Token<I>> for DebugToken<I> {
+    fn as_mut(&mut self) -> &mut Token<I> {
+        self.deref_mut()
+    }
+}
+
+impl<I> std::ops::DerefMut for DebugToken<I> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.token
+    }
+}
+
+impl<I> From<DebugToken<I>> for Token<I> {
+    fn from(debug: DebugToken<I>) -> Token<I> {
+        debug.token
+    }
+}
+
+impl From<crate::Ident> for Token<crate::Ident> {
+    fn from(i: crate::Ident) -> Self {
+        Self::Ident(i)
     }
 }

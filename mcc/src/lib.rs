@@ -7,8 +7,8 @@ use std::path::PathBuf;
 // TODO: Define token type, let it be slow rn
 
 pub mod lex;
+pub use ast::DebugToken;
 pub use ast::Token;
-pub use lex::DebugToken;
 
 pub use util::TokenIter;
 
@@ -88,7 +88,7 @@ const fn should_codegen(s: &Option<CompileStage>) -> bool {
     }
 }
 
-fn parse(tokens: Box<[DebugToken]>) -> Result<parse::ast::Program, Error> {
+fn parse(tokens: Box<[DebugToken]>) -> Result<ast::parse::Program, Error> {
     let tokens = tokens.into_iter().map(|x| x.token).collect();
     Ok(parse::parse(tokens)?)
 }

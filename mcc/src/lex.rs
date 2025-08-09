@@ -1,213 +1,116 @@
+use ast::{Constant, DebugToken, Ident, Token};
 use util::SliceIter;
 
 use std::fmt::{self, Display, Formatter};
 use std::rc::Rc;
-
-#[derive(Debug, Clone)]
-pub struct DebugToken {
-    pub token: Token,
-    pub line: usize,
-}
-
-impl DebugToken {
-    pub fn into_inner(self) -> (Token, usize) {
-        (self.token, self.line)
-    }
-
-    pub const fn line(&self) -> usize {
-        self.line
-    }
-}
-
-impl std::ops::Deref for DebugToken {
-    type Target = Token;
-
-    fn deref(&self) -> &Self::Target {
-        &self.token
-    }
-}
-use std::ops::Deref;
-
-use std::ops::DerefMut;
-impl AsRef<Token> for DebugToken {
-    fn as_ref(&self) -> &Token {
-        self.deref()
-    }
-}
-
-impl AsMut<Token> for DebugToken {
-    fn as_mut(&mut self) -> &mut Token {
-        self.deref_mut()
-    }
-}
-
-impl std::ops::DerefMut for DebugToken {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.token
-    }
-}
-
-impl From<DebugToken> for Token {
-    fn from(debug: DebugToken) -> Token {
-        debug.token
-    }
-}
-
-#[derive(PartialEq, Eq, Debug, Clone)]
-pub enum Token {
-    // Keywords
-    Int,
-    Void,
-    Return,
-    If,
-    Else,
-    Goto,
-    Do,
-    While,
-    For,
-    Break,
-    Continue,
-    Switch,
-    Default,
-    Case,
-    Static,
-    Extern,
-    Long,
-
-    Constant(Constant),
-    Identifier(Identifier),
-    OpenParen,
-    CloseParen,
-    OpenBrace,
-    Semicolon,
-    CloseBrace,
-    Tilde,
-    Decrement,
-    Minus,
-    Plus,
-
-    PlusEqual,
-    MinusEqual,
-    TimesEqual,
-    DivEqual,
-    PercentEqual,
-    BitAndEqual,
-    BitOrEqual,
-    BitXorEqual,
-
-    Asterisk,
-    Slash,
-    Percent,
-    Ampersand,
-    Bar,
-    Caret,
-    Increment,
-    LeftShift,
-    LeftShiftEqual,
-    RightShift,
-    RightShiftEqual,
-    Not,
-    LogicalAnd,
-    LogicalOr,
-    EqualTo,
-    NotEqual,
-    LessThan,
-    GreaterThan,
-    Leq,
-    Geq,
-    Equals,
-    Comma,
-
-    QuestionMark,
-    Colon,
-}
 
 pub fn tokenize(bytes: &[u8]) -> Result<Box<[DebugToken]>, Error> {
     let mut iter = SliceIter::new(bytes);
 
     let mut tokens = Vec::new();
     let mut cur_line = 0;
-    while let Some(token) = lex_slice(&mut iter, &mut cur_line)? {
+    let mut cur_char = 0;
+    while let Some(token) = lex_slice(&mut iter, &mut cur_line, &mut cur_char)? {
         tokens.push(DebugToken {
             token,
             line: cur_line,
+            char: cur_char,
         });
     }
     Ok(tokens.into())
 }
 
-fn lex_slice(iter: &mut SliceIter<u8>, cur_line: &mut usize) -> Result<Option<Token>, Error> {
+fn lex_slice(
+    iter: &mut SliceIter<u8>,
+    cur_line: &mut usize,
+    cur_char: &mut usize,
+) -> Result<Option<Token>, Error> {
     match iter.as_slice() {
         [b'<', b'<', b'=', ..] => {
-            iter.next();
-            iter.next();
-            iter.next();
+            for _ in 0..3 {
+                iter.next();
+            }
+            *cur_char += 3;
+
             Ok(Some(Token::LeftShiftEqual))
         }
         [b'>', b'>', b'=', ..] => {
-            iter.next();
-            iter.next();
-            iter.next();
+            for _ in 0..3 {
+                iter.next();
+            }
+            *cur_char += 3;
             Ok(Some(Token::RightShiftEqual))
         }
         [b'-', b'-', ..] => {
             iter.next();
             iter.next();
+            *cur_char += 2;
             Ok(Some(Token::Decrement))
         }
         [b'<', b'<', ..] => {
             iter.next();
             iter.next();
+            *cur_char += 2;
             Ok(Some(Token::LeftShift))
         }
         [b'&', b'&', ..] => {
             iter.next();
             iter.next();
+            *cur_char += 2;
             Ok(Some(Token::LogicalAnd))
         }
         [b'|', b'|', ..] => {
             iter.next();
             iter.next();
+            *cur_char += 2;
             Ok(Some(Token::LogicalOr))
         }
         [b'!', b'=', ..] => {
             iter.next();
             iter.next();
+            *cur_char += 2;
             Ok(Some(Token::NotEqual))
         }
         [b'=', b'=', ..] => {
             iter.next();
             iter.next();
+            *cur_char += 2;
             Ok(Some(Token::EqualTo))
         }
         [b'>', b'=', ..] => {
             iter.next();
             iter.next();
+            *cur_char += 2;
             Ok(Some(Token::Geq))
         }
         [b'<', b'=', ..] => {
             iter.next();
             iter.next();
+            *cur_char += 2;
             Ok(Some(Token::Leq))
         }
         [b'>', b'>', ..] => {
             iter.next();
             iter.next();
+            *cur_char += 2;
             Ok(Some(Token::RightShift))
         }
         [b'+', b'=', ..] => {
             iter.next();
             iter.next();
+            *cur_char += 2;
             Ok(Some(Token::PlusEqual))
         }
         [b'+', b'+', ..] => {
             iter.next();
             iter.next();
+            *cur_char += 2;
             Ok(Some(Token::Increment))
         }
         [b'-', b'=', ..] => {
             iter.next();
             iter.next();
+            *cur_char += 2;
             Ok(Some(Token::MinusEqual))
         }
         [b'*', b'=', ..] => {
@@ -247,7 +150,7 @@ fn lex_slice(iter: &mut SliceIter<u8>, cur_line: &mut usize) -> Result<Option<To
                 *cur_line += 1;
             }
             iter.next();
-            lex_slice(iter, cur_line)
+            lex_slice(iter, cur_line, cur_char)
         }
         [a, ..] => {
             iter.next();
@@ -260,7 +163,7 @@ fn lex_slice(iter: &mut SliceIter<u8>, cur_line: &mut usize) -> Result<Option<To
                 b'~' => Token::Tilde,
                 b'0'..=b'9' => {
                     let byte = AsciiDigit::from_int(*a).unwrap();
-                    Token::Constant(constant_number(byte, iter)?)
+                    Token::Const(constant_number(byte, iter)?)
                 }
                 b'-' => Token::Minus,
                 b'+' => Token::Plus,
@@ -354,9 +257,9 @@ fn literal(byte: u8, iter: &mut SliceIter<u8>) -> Result<Token, Error> {
     }
 }
 
-fn identifier(bytes: Box<[u8]>) -> Result<Identifier, Error> {
+fn identifier(bytes: Box<[u8]>) -> Result<Ident, Error> {
     if word_start(bytes[0]) && bytes[1..].iter().all(|&x| word_character(x)) {
-        Ok(Identifier(bytes.into()))
+        Ok(unsafe { String::from_utf8_unchecked(bytes.to_vec()) })
     } else {
         Err(Error::InvalidIdentifier)
     }
@@ -403,37 +306,8 @@ fn parse_long(slice: &[AsciiDigit]) -> i64 {
     }
     cur
 }
-impl Token {
-    pub const fn identifier(&self) -> bool {
-        matches!(self, Self::Identifier(_))
-    }
-    pub const fn constant(&self) -> bool {
-        matches!(self, Self::Constant(_))
-    }
-}
-
 fn next_if_word(iter: &mut SliceIter<u8>) -> Option<u8> {
     iter.next_if(word_character)
-}
-
-impl PartialEq<Token> for Constant {
-    fn eq(&self, other: &Token) -> bool {
-        if let Token::Constant(c) = other {
-            c == self
-        } else {
-            false
-        }
-    }
-}
-
-impl PartialEq<Token> for Identifier {
-    fn eq(&self, other: &Token) -> bool {
-        if let Token::Identifier(c) = other {
-            c == self
-        } else {
-            false
-        }
-    }
 }
 
 #[derive(PartialEq, Eq, Clone, Hash)]
@@ -476,61 +350,6 @@ impl From<&[u8]> for Identifier {
     fn from(s: &[u8]) -> Self {
         let r#box: Box<[u8]> = s.iter().copied().collect();
         Self(r#box.into())
-    }
-}
-
-impl From<Identifier> for Token {
-    fn from(i: Identifier) -> Self {
-        Self::Identifier(i)
-    }
-}
-
-impl From<Constant> for Token {
-    fn from(c: Constant) -> Self {
-        Self::Constant(c)
-    }
-}
-
-#[derive(Debug, PartialEq, Eq, Copy, Clone, Ord, PartialOrd)]
-pub enum Constant {
-    Int(i32),
-    Long(i64),
-}
-
-impl Constant {
-    pub fn int(&self) -> i32 {
-        match self {
-            Self::Int(i) => *i,
-            Self::Long(l) => *l as i32,
-        }
-    }
-
-    pub fn long(&self) -> i64 {
-        match self {
-            Self::Int(i) => *i as i64,
-            Self::Long(l) => *l,
-        }
-    }
-}
-
-impl From<i32> for Constant {
-    fn from(i: i32) -> Self {
-        Self::Int(i)
-    }
-}
-
-impl From<i64> for Constant {
-    fn from(i: i64) -> Self {
-        Self::Long(i)
-    }
-}
-
-impl fmt::Display for Constant {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        match self {
-            Self::Int(i) => i.fmt(f),
-            Self::Long(l) => l.fmt(f),
-        }
     }
 }
 

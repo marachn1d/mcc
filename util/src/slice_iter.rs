@@ -88,6 +88,20 @@ impl TokenIter {
         eprintln!("next: {:?}", self.peek());
     }
 
+    pub fn peek_consume_type(&mut self) -> Option<VarType> {
+        match self.peek()? {
+            Token::Int => {
+                self.next();
+                Some(VarType::Int)
+            }
+            Token::Long => {
+                self.next();
+                Some(VarType::Long)
+            }
+            _ => None,
+        }
+    }
+
     pub fn consume_type(&mut self) -> Result<VarType, Expected> {
         match self.next() {
             Some(Token::Int) => Ok(VarType::Int),
