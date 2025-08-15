@@ -1,8 +1,14 @@
-use crate::lex::Constant;
+use ast::semantics::labeled;
+use ast::semantics::typed;
+use ast::semantics::{Label, LabelId};
+use ast::Arr;
+
+use ast::Constant;
+
+use labeled::{Block, BlockItem, Dec, Expr, FnDec, ForInit, Program, Stmnt, VarDec};
+
 use std::sync::atomic::{AtomicUsize, Ordering};
 static LOOPS: AtomicUsize = AtomicUsize::new(0);
-use super::labeled::*;
-use super::LabelId;
 use crate::parse;
 use crate::parse::Label as AstLabel;
 use parse::BlockItem as AstBlockItem;

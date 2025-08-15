@@ -93,6 +93,15 @@ pub enum Constant {
     Long(i64),
 }
 
+impl std::fmt::Display for Constant {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::Int(i) => i.fmt(f),
+            Self::Long(l) => l.fmt(f),
+        }
+    }
+}
+
 #[allow(dead_code)]
 fn word_character<T: AsRef<char>>(byte: &T) -> bool {
     // assuming that performance "loss" is worth dedup

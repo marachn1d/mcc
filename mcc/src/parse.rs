@@ -1,10 +1,10 @@
 mod specifier_list;
 
 pub use ast::parse::{
-    Arr, Binary, Block, BlockItem, Bop, Dec, Expr, FnDec, FnType, ForInit, Label, Param, ParamList,
+    Binary, Block, BlockItem, Bop, Dec, Expr, FnDec, FnType, ForInit, Label, Param, ParamList,
     Program, Stmnt, StorageClass, UnOp, Unary, VarDec,
 };
-pub use ast::VarType;
+pub use ast::{Arr, VarType};
 
 pub use ast::parse::inc_dec::{self, *};
 

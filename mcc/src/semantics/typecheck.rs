@@ -1,14 +1,15 @@
-use super::ast::label_prelude as ast;
-use super::ast::type_prelude::*;
-use crate::parse::Bop;
-use crate::semantics::StorageClass;
+use ast::parse::StorageClass;
+use ast::parse::{Bop, ParamList};
+use ast::semantics::labeled;
+use ast::semantics::typed::{BlockItem, Dec, Expr, FnDec, ForInit, Program, Stmnt, VarDec};
+use ast::Constant;
+use ast::{parse::FnType, parse::StaticInit, Ident, VarType};
 
-use crate::parse::{FnType, VarType};
 use std::collections::HashMap;
 
 use std::collections::hash_map::Entry;
 
-pub type SymbolTable = HashMap<Identifier, Attr>;
+pub type SymbolTable = HashMap<Ident, Attr>;
 #[derive(Debug)]
 pub enum Attr {
     Static {
@@ -47,39 +48,10 @@ impl Attr {
     }
 }
 
-use crate::lex::Constant;
-
 #[derive(Debug, Copy, Clone)]
 pub enum InitialVal {
     Tentative,
     Initial(StaticInit),
-}
-
-#[derive(Debug, Copy, Clone)]
-pub enum StaticInit {
-    Int(i32),
-    Long(i64),
-}
-
-impl std::fmt::Display for StaticInit {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            Self::Int(0) => f.write_str(".zero 4"),
-            Self::Long(0) => f.write_str(".zero 8"),
-            Self::Int(i) => write!(f, ".long {i}"),
-            Self::Long(i) => write!(f, ".quad {i}"),
-        }
-    }
-}
-
-impl From<Constant> for StaticInit {
-    fn from(c: Constant) -> Self {
-        match c {
-            Constant::Int(i) => Self::Int(i),
-
-            Constant::Long(i) => Self::Long(i),
-        }
-    }
 }
 
 impl InitialVal {
@@ -110,7 +82,7 @@ impl InitialVal {
 
 // check FunctionDeclaration, VariableDeclaration,
 
-pub fn typecheck(p: ast::Program) -> Result<(SymbolTable, Program), Error> {
+pub fn typecheck(p: labeled::Program) -> Result<(SymbolTable, Program), Error> {
     let mut table = SymbolTable::new();
     let mut decs = Vec::with_capacity(p.len());
     for dec in p {
@@ -120,20 +92,20 @@ pub fn typecheck(p: ast::Program) -> Result<(SymbolTable, Program), Error> {
     Ok((table, decs.into()))
 }
 
-fn top_level_declaration(dec: ast::Dec, table: &mut SymbolTable) -> Result<Dec, Error> {
+fn top_level_declaration(dec: labeled::Dec, table: &mut SymbolTable) -> Result<Dec, Error> {
     match dec {
-        ast::Dec::Fn(f) => function_declaration(f, table, false).map(Dec::Fn),
-        ast::Dec::Var(v) => top_level_var(v, table).map(Dec::Var),
+        labeled::Dec::Fn(f) => function_declaration(f, table, false).map(Dec::Fn),
+        labeled::Dec::Var(v) => top_level_var(v, table).map(Dec::Var),
     }
 }
 
 fn top_level_var(
-    ast::VarDec {
+    labeled::VarDec {
         name,
         init,
         typ,
         sc,
-    }: ast::VarDec,
+    }: labeled::VarDec,
     table: &mut SymbolTable,
 ) -> Result<VarDec, Error> {
     let mut initial = if sc == Some(StorageClass::Extern) {
@@ -182,7 +154,7 @@ fn top_level_var(
     })
 }
 
-fn extern_initializer(init: &Option<ast::Expr>) -> Result<Option<InitialVal>, Error> {
+fn extern_initializer(init: &Option<labeled::Expr>) -> Result<Option<InitialVal>, Error> {
     init.as_ref()
         .map(|expr| {
             expr.static_init()
@@ -192,7 +164,7 @@ fn extern_initializer(init: &Option<ast::Expr>) -> Result<Option<InitialVal>, Er
         .transpose()
 }
 
-fn top_level_initializer(init: Option<&ast::Expr>) -> Result<InitialVal, Error> {
+fn top_level_initializer(init: Option<&labeled::Expr>) -> Result<InitialVal, Error> {
     if let Some(init) = init {
         init.static_init()
             .map(InitialVal::Initial)
@@ -242,20 +214,20 @@ fn check_initializer_conflict(
     }
 }
 
-fn declaration(dec: ast::Dec, table: &mut SymbolTable) -> Result<Dec, Error> {
+fn declaration(dec: labeled::Dec, table: &mut SymbolTable) -> Result<Dec, Error> {
     match dec {
-        ast::Dec::Fn(f) => function_declaration(f, table, true).map(Dec::Fn),
-        ast::Dec::Var(v) => variable_declaration(v, table).map(Dec::Var),
+        labeled::Dec::Fn(f) => function_declaration(f, table, true).map(Dec::Fn),
+        labeled::Dec::Var(v) => variable_declaration(v, table).map(Dec::Var),
     }
 }
 
 fn variable_declaration(
-    ast::VarDec {
+    labeled::VarDec {
         name,
         init,
         typ,
         sc,
-    }: ast::VarDec,
+    }: labeled::VarDec,
     table: &mut SymbolTable,
 ) -> Result<VarDec, Error> {
     let init = match (sc, &init) {
@@ -285,7 +257,7 @@ fn variable_declaration(
             }
             None
         }
-        (Some(StorageClass::Static), Some(ast::Expr::Const(c))) => {
+        (Some(StorageClass::Static), Some(labeled::Expr::Const(c))) => {
             table.insert(
                 name.clone(),
                 Attr::Static {
@@ -334,15 +306,18 @@ fn variable_declaration(
     })
 }
 
-fn check_boxed_expr(expression: ast::Expr, table: &mut SymbolTable) -> Result<Box<Expr>, Error> {
+fn check_boxed_expr(
+    expression: labeled::Expr,
+    table: &mut SymbolTable,
+) -> Result<Box<Expr>, Error> {
     typecheck_expression(expression, table).map(Box::new)
 }
 
-fn typecheck_expression(expression: ast::Expr, table: &mut SymbolTable) -> Result<Expr, Error> {
+fn typecheck_expression(expression: labeled::Expr, table: &mut SymbolTable) -> Result<Expr, Error> {
     match expression {
-        ast::Expr::FunctionCall { name, args } => typecheck_fn_call(name, args, table),
-        ast::Expr::Var(name) => typecheck_var(name, table),
-        ast::Expr::Assignment { dst, src } => {
+        labeled::Expr::FunctionCall { name, args } => typecheck_fn_call(name, args, table),
+        labeled::Expr::Var(name) => typecheck_var(name, table),
+        labeled::Expr::Assignment { dst, src } => {
             let dst = check_boxed_expr(*dst, table)?;
             let mut src = check_boxed_expr(*src, table)?;
 
@@ -350,7 +325,7 @@ fn typecheck_expression(expression: ast::Expr, table: &mut SymbolTable) -> Resul
             convert_to(&mut src, &dst.ty());
             Ok(Expr::Assignment { dst, src, ty })
         }
-        ast::Expr::Binary {
+        labeled::Expr::Binary {
             left,
             right,
             operator,
@@ -375,24 +350,26 @@ fn typecheck_expression(expression: ast::Expr, table: &mut SymbolTable) -> Resul
                 },
             })
         }
-        ast::Expr::Nested(exp) => typecheck_expression(*exp, table),
-        ast::Expr::Const(cnst @ Constant::Int(_)) => Ok(Expr::Const {
+        labeled::Expr::Nested(exp) => typecheck_expression(*exp, table),
+        labeled::Expr::Const(cnst @ Constant::Int(_)) => Ok(Expr::Const {
             cnst,
             ty: VarType::Int,
         }),
 
-        ast::Expr::Const(cnst @ Constant::Long(_)) => Ok(Expr::Const {
+        labeled::Expr::Const(cnst @ Constant::Long(_)) => Ok(Expr::Const {
             cnst,
             ty: VarType::Long,
         }),
 
-        ast::Expr::Cast { target, exp } => typecheck_expression(*exp, table).map(|e| Expr::Cast {
-            ty: target,
-            target,
-            exp: Box::new(e),
-        }),
+        labeled::Expr::Cast { target, exp } => {
+            typecheck_expression(*exp, table).map(|e| Expr::Cast {
+                ty: target,
+                target,
+                exp: Box::new(e),
+            })
+        }
 
-        ast::Expr::Unary { operator, operand } => {
+        labeled::Expr::Unary { operator, operand } => {
             use crate::parse::UnOp;
             typecheck_expression(*operand, table)
                 .map(Box::new)
@@ -407,7 +384,7 @@ fn typecheck_expression(expression: ast::Expr, table: &mut SymbolTable) -> Resul
                 })
         }
 
-        ast::Expr::Conditional {
+        labeled::Expr::Conditional {
             condition,
             r#true,
             r#false,
@@ -430,7 +407,7 @@ fn typecheck_expression(expression: ast::Expr, table: &mut SymbolTable) -> Resul
                 r#false,
             })
         }
-        ast::Expr::IncDec { op, exp } => {
+        labeled::Expr::IncDec { op, exp } => {
             //Expression::PostfixIncrement(
             let exp = check_boxed_expr(*exp, table)?;
             Ok(Expr::IncDec {
@@ -453,8 +430,8 @@ fn convert_to(exp: &mut Expr, ty: &VarType) {
 }
 
 fn typecheck_fn_call(
-    name: Identifier,
-    args: Box<[ast::Expr]>,
+    name: Ident,
+    args: Box<[labeled::Expr]>,
     table: &mut SymbolTable,
 ) -> Result<Expr, Error> {
     // cloning for now, need to find a nicer way to do this
@@ -484,7 +461,7 @@ fn typecheck_fn_call(
     }
 }
 
-fn typecheck_var(name: Identifier, table: &mut SymbolTable) -> Result<Expr, Error> {
+fn typecheck_var(name: Ident, table: &mut SymbolTable) -> Result<Expr, Error> {
     let ty = *table
         .get(&name)
         .map(Attr::var_type)
@@ -493,7 +470,7 @@ fn typecheck_var(name: Identifier, table: &mut SymbolTable) -> Result<Expr, Erro
 }
 
 fn check_entry(
-    entry: &Entry<Identifier, Attr>,
+    entry: &Entry<Ident, Attr>,
     new_params: &ParamList,
     has_body: bool,
 ) -> Result<(), Error> {
@@ -530,13 +507,13 @@ fn param_typecheck(new: &ParamList, old: &[VarType]) -> Result<(), Error> {
 }
 
 fn function_declaration(
-    ast::FnDec {
+    labeled::FnDec {
         name,
         body,
         params,
         typ,
         mut sc,
-    }: ast::FnDec,
+    }: labeled::FnDec,
     table: &mut SymbolTable,
     block_scope: bool,
 ) -> Result<FnDec, Error> {
@@ -629,23 +606,23 @@ fn function_declaration(
 }
 
 fn typecheck_blockitem(
-    block_item: ast::BlockItem,
+    block_item: labeled::BlockItem,
     ret: Option<VarType>,
     table: &mut SymbolTable,
 ) -> Result<BlockItem, Error> {
     match block_item {
-        ast::BlockItem::D(dec) => declaration(dec, table).map(BlockItem::D),
-        ast::BlockItem::S(s) => typecheck_statement(s, ret, table).map(BlockItem::S),
+        labeled::BlockItem::D(dec) => declaration(dec, table).map(BlockItem::D),
+        labeled::BlockItem::S(s) => typecheck_statement(s, ret, table).map(BlockItem::S),
     }
 }
 
 fn typecheck_statement(
-    stmt: ast::Stmnt,
+    stmt: labeled::Stmnt,
     return_type: Option<VarType>,
     table: &mut SymbolTable,
 ) -> Result<Stmnt, Error> {
     match stmt {
-        ast::Stmnt::Compound(stmts) => {
+        labeled::Stmnt::Compound(stmts) => {
             let mut statements = Vec::with_capacity(stmts.len());
             for item in stmts {
                 statements.push(typecheck_blockitem(item, return_type, table)?);
@@ -654,8 +631,8 @@ fn typecheck_statement(
 
             Ok(Stmnt::Compound(statements))
         }
-        ast::Stmnt::Exp(e) => typecheck_expression(e, table).map(Stmnt::Exp),
-        ast::Stmnt::If {
+        labeled::Stmnt::Exp(e) => typecheck_expression(e, table).map(Stmnt::Exp),
+        labeled::Stmnt::If {
             condition,
             then,
             r#else,
@@ -675,7 +652,7 @@ fn typecheck_statement(
                         })
                 })
         }),
-        ast::Stmnt::DoWhile {
+        labeled::Stmnt::DoWhile {
             body,
             condition,
             label,
@@ -688,7 +665,7 @@ fn typecheck_statement(
                 label,
             })
         }
-        ast::Stmnt::While {
+        labeled::Stmnt::While {
             body,
             condition,
             label,
@@ -701,11 +678,11 @@ fn typecheck_statement(
                 label,
             })
         }
-        ast::Stmnt::Label { body, name } => Ok(Stmnt::Label {
+        labeled::Stmnt::Label { body, name } => Ok(Stmnt::Label {
             name,
             body: typecheck_statement(*body, return_type, table)?.into(),
         }),
-        ast::Stmnt::For {
+        labeled::Stmnt::For {
             init,
             condition,
             post,
@@ -714,9 +691,9 @@ fn typecheck_statement(
         } => {
             let init = init
                 .map(|init| match *init {
-                    ast::ForInit::D(v) => variable_declaration(v, table).map(ForInit::D),
+                    labeled::ForInit::D(v) => variable_declaration(v, table).map(ForInit::D),
 
-                    ast::ForInit::E(e) => typecheck_expression(e, table).map(ForInit::E),
+                    labeled::ForInit::E(e) => typecheck_expression(e, table).map(ForInit::E),
                 })
                 .transpose()?
                 .map(Box::new);
@@ -735,7 +712,7 @@ fn typecheck_statement(
                 label,
             })
         }
-        ast::Stmnt::Ret(e) => {
+        labeled::Stmnt::Ret(e) => {
             if let Some(return_type) = return_type {
                 let mut r = typecheck_expression(e, table)?;
                 convert_to(&mut r, &return_type);
@@ -744,7 +721,7 @@ fn typecheck_statement(
                 panic!()
             }
         }
-        ast::Stmnt::Switch {
+        labeled::Stmnt::Switch {
             val: v,
             body: b,
             label,
@@ -758,10 +735,10 @@ fn typecheck_statement(
             default,
         }),
 
-        ast::Stmnt::Null => Ok(Stmnt::Null),
-        ast::Stmnt::Goto(g) => Ok(Stmnt::Goto(g)),
-        ast::Stmnt::Break(l) => Ok(Stmnt::Break(l)),
-        ast::Stmnt::Continue(c) => Ok(Stmnt::Continue(c)),
+        labeled::Stmnt::Null => Ok(Stmnt::Null),
+        labeled::Stmnt::Goto(g) => Ok(Stmnt::Goto(g)),
+        labeled::Stmnt::Break(l) => Ok(Stmnt::Break(l)),
+        labeled::Stmnt::Continue(c) => Ok(Stmnt::Continue(c)),
     }
 }
 

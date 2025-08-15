@@ -1,5 +1,10 @@
-use super::ast::type_prelude::*;
-use crate::lex::Identifier;
+use ast::semantics::typed::{BlockItem, Dec, FnDec, Program, Stmnt};
+use ast::semantics::Label;
+use ast::Ident;
+
+//use super::ast::type_prelude::*;
+//
+
 use crate::semantics::SymbolTable;
 use std::collections::HashSet;
 
@@ -23,7 +28,7 @@ fn check_dec(dec: &Dec, vars: &SymbolTable) -> Result<(), Error> {
     }
 }
 
-fn check_body(block: &[BlockItem], vars: &SymbolTable, fn_name: &Identifier) -> Result<(), Error> {
+fn check_body(block: &[BlockItem], vars: &SymbolTable, fn_name: &Ident) -> Result<(), Error> {
     let mut labels = HashSet::new();
     for item in block.iter() {
         if let BlockItem::S(statement) = item {
@@ -40,7 +45,7 @@ fn check_body(block: &[BlockItem], vars: &SymbolTable, fn_name: &Identifier) -> 
     Ok(())
 }
 
-fn name_clashes(label: &Identifier, vars: &SymbolTable, fn_name: &Identifier) -> bool {
+fn name_clashes(label: &Ident, vars: &SymbolTable, fn_name: &Ident) -> bool {
     use super::Attr;
     if label == fn_name {
         false
@@ -53,8 +58,8 @@ fn handle_label(
     label: &Label,
     body: &Stmnt,
     vars: &SymbolTable,
-    labels: &mut HashSet<Identifier>,
-    fn_name: &Identifier,
+    labels: &mut HashSet<Ident>,
+    fn_name: &Ident,
 ) -> Result<(), Error> {
     // we pass along everything else
     let Label::Named(label) = label else {
@@ -74,8 +79,8 @@ fn handle_label(
 fn check_labels(
     statement: &Stmnt,
     vars: &SymbolTable,
-    labels: &mut HashSet<Identifier>,
-    fn_name: &Identifier,
+    labels: &mut HashSet<Ident>,
+    fn_name: &Ident,
 ) -> Result<(), Error> {
     match statement {
         Stmnt::Compound(block) => {
@@ -112,7 +117,7 @@ fn check_labels(
     }
 }
 
-fn check_gotos(statement: &Stmnt, labels: &HashSet<Identifier>) -> Result<(), Error> {
+fn check_gotos(statement: &Stmnt, labels: &HashSet<Ident>) -> Result<(), Error> {
     match statement {
         Stmnt::Goto(goto) => {
             if labels.contains(goto) {

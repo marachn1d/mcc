@@ -4,15 +4,16 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-    util = { path="../util" }
-    ast = { path="../ast" }
+util = { path="../util" }
+ast = { path="../ast" }
+derive_more = {version = "2.0.1", features = ["deref", "deref_mut"]}
 
 
 [profile.release]
 debug = true
 
 [features]
-    default = ["codegen"]
+    default = ["semantics"]
     codegen = ["semantics"]
     semantics = ["parse"]
     parse = ["lex"]

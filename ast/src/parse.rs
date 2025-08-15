@@ -1,7 +1,7 @@
+use crate::Arr;
 use crate::{Constant, Ident, VarType};
 pub use inc_dec::*;
 use std::fmt::{self, Display, Formatter};
-pub type Arr<T> = Box<[T]>;
 
 #[derive(Debug)]
 pub struct Program(pub Box<[Dec]>);
@@ -36,6 +36,27 @@ impl From<VarDec> for Dec {
 pub enum StaticInit {
     Int(i32),
     Long(i64),
+}
+
+impl std::fmt::Display for StaticInit {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::Int(0) => f.write_str(".zero 4"),
+            Self::Long(0) => f.write_str(".zero 8"),
+            Self::Int(i) => write!(f, ".long {i}"),
+            Self::Long(i) => write!(f, ".quad {i}"),
+        }
+    }
+}
+
+impl From<Constant> for StaticInit {
+    fn from(c: Constant) -> Self {
+        match c {
+            Constant::Int(i) => Self::Int(i),
+
+            Constant::Long(i) => Self::Long(i),
+        }
+    }
 }
 pub type Block = Arr<BlockItem>;
 
