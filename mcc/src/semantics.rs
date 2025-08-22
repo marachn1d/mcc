@@ -2,7 +2,6 @@
 mod check_labels;
 mod resolve;
 pub mod typecheck;
-use crate::lex::Identifier;
 use ast::semantics::{labeled, typed};
 
 use ast::parse::Program as AstProgram;

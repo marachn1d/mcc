@@ -310,49 +310,6 @@ fn next_if_word(iter: &mut SliceIter<u8>) -> Option<u8> {
     iter.next_if(word_character)
 }
 
-#[derive(PartialEq, Eq, Clone, Hash)]
-pub struct Identifier(pub Rc<Box<[u8]>>);
-
-impl Identifier {
-    pub fn new(name: &[u8]) -> Self {
-        let mut vec = Vec::new();
-        vec.extend_from_slice(name);
-        Self(Rc::new(vec.into_boxed_slice()))
-    }
-}
-
-impl fmt::Debug for Identifier {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "{}", unsafe { std::str::from_utf8_unchecked(&self.0) })
-    }
-}
-
-impl AsRef<[u8]> for Identifier {
-    fn as_ref(&self) -> &[u8] {
-        &self.0
-    }
-}
-
-impl From<String> for Identifier {
-    fn from(s: String) -> Self {
-        Self(s.into_bytes().into_boxed_slice().into())
-    }
-}
-
-impl From<&str> for Identifier {
-    fn from(s: &str) -> Self {
-        let r#box: Box<[u8]> = s.as_bytes().iter().copied().collect();
-        Self(r#box.into())
-    }
-}
-
-impl From<&[u8]> for Identifier {
-    fn from(s: &[u8]) -> Self {
-        let r#box: Box<[u8]> = s.iter().copied().collect();
-        Self(r#box.into())
-    }
-}
-
 #[derive(Debug)]
 pub enum Error {
     InvalidConstant,
@@ -364,11 +321,4 @@ pub enum Error {
 
 fn error<T>(message: &str) -> Result<T, Error> {
     Err(Error::Other(message.into()))
-}
-
-impl Display for Identifier {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        use std::str::from_utf8_unchecked;
-        write!(f, "{}", unsafe { from_utf8_unchecked(&self.0) })
-    }
 }

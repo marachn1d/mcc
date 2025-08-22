@@ -3,6 +3,14 @@
 version = 4
 
 [[package]]
+name = "asm"
+version = "0.1.0"
+dependencies = [
+ "ast",
+ "util",
+]
+
+[[package]]
 name = "ast"
 version = "0.1.0"
 
@@ -30,6 +38,7 @@ dependencies = [
 name = "mcc"
 version = "0.1.0"
 dependencies = [
+ "asm",
  "ast",
  "derive_more",
  "util",
