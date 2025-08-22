@@ -2,83 +2,11 @@ use ast::parse::StorageClass;
 use ast::parse::{Bop, ParamList};
 use ast::semantics::labeled;
 use ast::semantics::typed::{BlockItem, Dec, Expr, FnDec, ForInit, Program, Stmnt, VarDec};
+use ast::semantics::{Attr, InitialVal, SymbolTable};
 use ast::Constant;
 use ast::{parse::FnType, parse::StaticInit, Ident, VarType};
 
-use std::collections::HashMap;
-
 use std::collections::hash_map::Entry;
-
-pub type SymbolTable = HashMap<Ident, Attr>;
-#[derive(Debug)]
-pub enum Attr {
-    Static {
-        typ: VarType,
-        init: Option<InitialVal>,
-        global: bool,
-    },
-    Automatic(VarType),
-    Fn {
-        defined: bool,
-        global: bool,
-        typ: FnType,
-    },
-}
-
-impl Attr {
-    pub const fn global(&self) -> bool {
-        match self {
-            Self::Static { global, .. } | Self::Fn { global, .. } => *global,
-            Self::Automatic(_) => false,
-        }
-    }
-
-    pub const fn var_type(&self) -> Result<&VarType, Error> {
-        match self {
-            Self::Static { typ, .. } | Self::Automatic(typ) => Ok(typ),
-            Self::Fn { .. } => Err(Error::ExpectedVarType),
-        }
-    }
-
-    pub const fn fn_type(&self) -> Result<&FnType, Error> {
-        match self {
-            Self::Fn { typ, .. } => Ok(typ),
-            Self::Static { .. } | Self::Automatic(_) => Err(Error::ExpectedFnType),
-        }
-    }
-}
-
-#[derive(Debug, Copy, Clone)]
-pub enum InitialVal {
-    Tentative,
-    Initial(StaticInit),
-}
-
-impl InitialVal {
-    pub const fn get_static(&self, ty: VarType) -> StaticInit {
-        match (self, ty) {
-            (InitialVal::Initial(s), _) => *s,
-            (InitialVal::Tentative, VarType::Int) => StaticInit::Int(0),
-            (InitialVal::Tentative, VarType::Long) => StaticInit::Long(0),
-        }
-    }
-
-    pub fn as_long(&self) -> i64 {
-        match self {
-            Self::Initial(StaticInit::Long(i)) => *i,
-            Self::Initial(StaticInit::Int(i)) => (*i).into(),
-            Self::Tentative => 0,
-        }
-    }
-
-    pub const fn as_int(&self) -> i32 {
-        match self {
-            Self::Initial(StaticInit::Int(i)) => *i,
-            Self::Initial(StaticInit::Long(i)) => *i as i32,
-            Self::Tentative => 0,
-        }
-    }
-}
 
 // check FunctionDeclaration, VariableDeclaration,
 
@@ -764,6 +692,11 @@ pub enum Error {
     DeclaredExtern,
     StaticRedec,
     InvalidCast,
-    ExpectedVarType,
-    ExpectedFnType,
+    Expected(ast::semantics::Expected),
+}
+
+impl From<ast::semantics::Expected> for Error {
+    fn from(value: ast::semantics::Expected) -> Self {
+        Self::Expected(value)
+    }
 }

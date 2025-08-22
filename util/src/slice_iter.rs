@@ -151,6 +151,7 @@ impl TokenIter {
         let expected = token.into();
         let got = self.peek_any()?;
         if got == &expected {
+            self.next();
             Ok(())
         } else {
             Err(Expected::Token {

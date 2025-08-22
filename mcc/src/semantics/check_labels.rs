@@ -5,7 +5,7 @@ use ast::Ident;
 //use super::ast::type_prelude::*;
 //
 
-use crate::semantics::SymbolTable;
+use ast::semantics::SymbolTable;
 use std::collections::HashSet;
 
 pub fn check(program: &Program, vars: &SymbolTable) -> Result<(), Error> {

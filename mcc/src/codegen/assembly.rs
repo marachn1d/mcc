@@ -1,4 +1,3 @@
-pub mod tacky;
 pub mod x86;
 use super::Identifier;
 pub use crate::parse::VarType;
@@ -99,66 +98,6 @@ pub struct FunctionDefinition<T: InstructionSet> {
     pub params: Box<[Identifier]>,
     pub global: bool,
     pub body: Box<[T]>,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum Register {
-    Ax,
-    Cx,
-    Dx,
-    Di,
-    Si,
-    R8,
-    R9,
-    R10,
-    R11,
-    Sp,
-}
-
-pub fn emit(program: &Program<X86>) -> Box<[u8]> {
-    let mut bytes = Vec::new();
-    for top_level in &program.0 {
-        if top_level.global() {
-            let _ = writeln!(bytes, "\t.globl _{}", top_level.name());
-        }
-        match top_level {
-            TopLevel::Fn(FunctionDefinition {
-                name,
-                params: _,
-                body,
-                global: _,
-            }) => {
-                let _ = writeln!(
-                    bytes,
-                    "\t.text\n{name}:\n\t{prelude}",
-                    name = format_args!("_{}", name),
-                    prelude = format_args!("pushq %rbp\n\tmovq %rsp, %rbp")
-                );
-                for instruction in body {
-                    let _ = writeln!(bytes, "\t{instruction}");
-                }
-            }
-
-            TopLevel::StaticVar(StaticVar {
-                name,
-                global: _,
-                init,
-                alignment,
-            }) => {
-                let init_is_zero = matches!(*init, StaticInit::Long(0) | StaticInit::Int(0));
-
-                bytes.extend_from_slice(if init_is_zero {
-                    b"\t.bss\n"
-                } else {
-                    b"\t.data\n"
-                });
-                let _ = writeln!(bytes, "\t.balign {}\n", alignment);
-
-                let _ = writeln!(bytes, "_{name}:\n \t {init}");
-            }
-        }
-    }
-    bytes.into()
 }
 
 #[derive(Default, Debug)]

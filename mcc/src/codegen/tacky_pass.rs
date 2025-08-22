@@ -1,14 +1,13 @@
 use crate::parse;
 use asm::tacky::StaticVar;
 use asm::tacky::{FunctionDefinition, Instruction, Program, TackyBinary, TopLevel, Value};
-use ast::Constant;
-use ast::Ident;
-
-use crate::semantics::{Attr, SymbolTable};
 use ast::parse::Fix;
 use ast::semantics::typed::{self, Block, BlockItem, Dec, Expr, FnDec, ForInit, Stmnt, VarDec};
 use ast::semantics::Label;
 use ast::semantics::StatementLabels;
+use ast::semantics::{Attr, SymbolTable};
+use ast::Constant;
+use ast::Ident;
 use parse::inc_dec::*;
 use parse::VarType;
 

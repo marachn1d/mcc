@@ -2,13 +2,11 @@
 mod check_labels;
 mod resolve;
 pub mod typecheck;
-use ast::semantics::{labeled, typed};
+use ast::semantics::{labeled, typed, Attr, SymbolTable};
 
 use ast::parse::Program as AstProgram;
 pub use ast::parse::StaticInit;
 pub use check_labels::check as check_labels;
-pub use typecheck::Attr;
-pub use typecheck::SymbolTable;
 mod resolve_loops;
 pub use resolve::resolve;
 

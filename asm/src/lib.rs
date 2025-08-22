@@ -1,4 +1,5 @@
 pub mod tacky;
+pub mod x86;
 
 // need Tacky, PseudoX86, X86
 //
