@@ -2,6 +2,7 @@ use ast::semantics::labeled;
 use ast::semantics::typed;
 use ast::semantics::{Label, LabelId};
 use ast::Arr;
+use ast::VarType;
 
 use ast::Constant;
 
@@ -265,9 +266,17 @@ fn label_statement(statement: parse::Stmnt, cur: &mut Scope) -> Result<Stmnt, Er
             }
             .unwrap();
             switch_info.cases.sort();
+            // instead of doing this, we should change the cases when we typecheck
+            if let Some(val) = val.const_eval() {
+                for case in &mut switch_info.cases {
+                    const_cast(case, &val.ty());
+                }
+            }
+            // cases is sorted so we can do the same check as before (resolve_loops.rs)
             if switch_info.cases.windows(2).any(|x| x[0] == x[1]) {
                 return Err(Error::DupliCase);
             }
+
             // make sure the cases are unique, hmm.
             //
             Ok(Stmnt::Switch {
@@ -279,6 +288,15 @@ fn label_statement(statement: parse::Stmnt, cur: &mut Scope) -> Result<Stmnt, Er
             })
         }
         parse::Stmnt::Null => Ok(Stmnt::Null),
+    }
+}
+
+fn const_cast(c: &mut Constant, ty: &VarType) {
+    if c.ty() != *ty {
+        match c {
+            Constant::Int(i) => *c = Constant::Long(*i as i64),
+            Constant::Long(l) => *c = Constant::Int(*l as i32),
+        };
     }
 }
 

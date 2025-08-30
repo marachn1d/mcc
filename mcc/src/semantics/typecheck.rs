@@ -279,14 +279,9 @@ fn typecheck_expression(expression: labeled::Expr, table: &mut SymbolTable) -> R
             })
         }
         labeled::Expr::Nested(exp) => typecheck_expression(*exp, table),
-        labeled::Expr::Const(cnst @ Constant::Int(_)) => Ok(Expr::Const {
+        labeled::Expr::Const(cnst) => Ok(Expr::Const {
             cnst,
-            ty: VarType::Int,
-        }),
-
-        labeled::Expr::Const(cnst @ Constant::Long(_)) => Ok(Expr::Const {
-            cnst,
-            ty: VarType::Long,
+            ty: cnst.ty(),
         }),
 
         labeled::Expr::Cast { target, exp } => {
@@ -606,6 +601,17 @@ fn typecheck_statement(
                 label,
             })
         }
+        /*
+         *  need to handle switch statement types here instead of resolve_loops or add another pass
+         *  lowk maybe add another pass just for switch statements
+         */
+        labeled::Stmnt::Label {
+            body,
+            name: ast::semantics::Label::Case { c, id },
+        } => Ok(Stmnt::Label {
+            name,
+            body: typecheck_statement(*body, return_type, table)?.into(),
+        }),
         labeled::Stmnt::Label { body, name } => Ok(Stmnt::Label {
             name,
             body: typecheck_statement(*body, return_type, table)?.into(),
@@ -653,15 +659,19 @@ fn typecheck_statement(
             val: v,
             body: b,
             label,
-            cases,
+            mut cases,
             default,
-        } => Ok(Stmnt::Switch {
-            val: typecheck_expression(v, table)?,
-            body: Box::new(typecheck_statement(*b, return_type, table)?),
-            label,
-            cases,
-            default,
-        }),
+        } => {
+            let val = typecheck_expression(v, table)?;
+
+            Ok(Stmnt::Switch {
+                val,
+                body: Box::new(typecheck_statement(*b, return_type, table)?),
+                label,
+                cases,
+                default,
+            })
+        }
 
         labeled::Stmnt::Null => Ok(Stmnt::Null),
         labeled::Stmnt::Goto(g) => Ok(Stmnt::Goto(g)),
@@ -673,6 +683,7 @@ fn typecheck_statement(
 #[derive(Debug)]
 pub enum Error {
     DuplicateDefinition,
+    DupliCase,
     ConflictingDeclaration,
 
     UndefinedVar,

@@ -27,8 +27,7 @@ fn convert_function(
     table: &BackendTable,
 ) -> FunctionDefinition<X86> {
     let mut stack_frame = StackFrame::new(table);
-    let body_vec: Vec<X86> = Vec::with_capacity(body.len() + 1);
-    let mut body_vec: Vec<X86> = body_vec.into();
+    let mut body_vec: Vec<X86> = Vec::with_capacity(body.len() + 1);
     body_vec.push(X86::allocate_stack(0));
 
     for op in body.into_iter() {

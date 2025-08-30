@@ -129,6 +129,28 @@ pub enum Expr {
 }
 
 impl Expr {
+    pub fn const_eval(&self) -> Option<Constant> {
+        match self {
+            Expr::Const(c) => Some(*c),
+            Expr::IncDec { op, exp } => {
+                let c = exp.const_eval()?;
+                Some(c.with_incdec(*op))
+            }
+            Expr::Unary(Unary { exp, op }) => {
+                let c = exp.const_eval()?;
+                Some(c.with_unop(*op))
+            }
+            /*
+            Expr::Bin(Binary {
+                operator,
+                left,
+                right,
+            }) => todo!(),
+            */
+            _ => None,
+        }
+    }
+
     pub fn pre_inc(e: Self) -> Self {
         Self::IncDec {
             op: PRE_INC,

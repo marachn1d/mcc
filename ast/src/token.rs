@@ -150,6 +150,50 @@ impl Constant {
             Self::Long(l) => *l,
         }
     }
+
+    pub fn ty(&self) -> crate::VarType {
+        match self {
+            Self::Int(_) => crate::VarType::Int,
+            Self::Long(_) => crate::VarType::Long,
+        }
+    }
+
+    pub fn with_unop(&self, op: crate::parse::UnOp) -> Self {
+        use crate::parse::UnOp;
+        match op {
+            UnOp::Complement => match self {
+                Self::Int(i) => Self::Int(!i),
+                Self::Long(l) => Self::Long(!l),
+            },
+
+            UnOp::Negate => match self {
+                Self::Int(i) => Self::Int(-i),
+                Self::Long(l) => Self::Long(-l),
+            },
+
+            UnOp::Not => match self {
+                Self::Int(0) => Self::Int(1),
+                Self::Long(0) => Self::Long(1),
+                Self::Int(_) => Self::Int(0),
+                Self::Long(_) => Self::Long(0),
+            },
+        }
+    }
+
+    pub fn with_incdec(&self, op: crate::parse::IncDec) -> Self {
+        use crate::parse::inc_dec::{POST_DEC, POST_INC, PRE_DEC, PRE_INC};
+        match op {
+            POST_INC | POST_DEC => *self,
+            PRE_INC => match self {
+                Self::Int(i) => Self::Int(i.wrapping_add(1)),
+                Self::Long(l) => Self::Long(l.wrapping_add(1)),
+            },
+            PRE_DEC => match self {
+                Self::Int(i) => Self::Int(i.wrapping_sub(1)),
+                Self::Long(l) => Self::Long(l.wrapping_sub(1)),
+            },
+        }
+    }
 }
 
 impl<Ident> DebugToken<Ident> {

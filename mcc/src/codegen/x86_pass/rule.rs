@@ -38,7 +38,7 @@ pub const RULES: RuleTable = RuleTable {
     sub: RuleTable::ADD_SUB_CMP,
     mul: pair_set(MemRule::One, MAX_DWORD, NO_MEM),
     cmp: RuleTable::ADD_SUB_CMP,
-    bitwise: pair_set(MemRule::One, NORULE, NO_IMM),
+    bitwise: pair_set(MemRule::One, MAX_DWORD, NO_IMM),
     unop: NO_IMM,
     div: NO_IMM,
     shift: pair_set(MemRule::One, NO_MEM, NO_IMM),
