@@ -62,7 +62,7 @@ pub type Block = Arr<BlockItem>;
 
 pub type ParamList = Arr<Param>;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct Param {
     pub typ: VarType,
     pub name: Ident,
@@ -76,13 +76,13 @@ pub struct VarDec {
     pub typ: VarType,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Hash)]
 pub enum StorageClass {
     Static,
     Extern,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FnType {
     pub ret: Option<VarType>,
     pub params: Box<[VarType]>,
@@ -94,7 +94,39 @@ pub enum BlockItem {
     D(Dec),
 }
 
-#[derive(Debug, Clone)]
+impl BlockItem {
+    pub const fn as_inner(&self) -> (Option<&Stmnt>, Option<&Dec>) {
+        match self {
+            Self::S(s) => (Some(s), None),
+            Self::D(d) => (None, Some(d)),
+        }
+    }
+
+    pub fn into_inner(self) -> (Option<Stmnt>, Option<Dec>) {
+        match self {
+            Self::S(s) => (Some(s), None),
+            Self::D(d) => (None, Some(d)),
+        }
+    }
+
+    pub const fn as_stmnt(&self) -> Option<&Stmnt> {
+        self.as_inner().0
+    }
+
+    pub fn into_stmnt(self) -> Option<Stmnt> {
+        self.into_inner().0
+    }
+
+    pub fn into_dec(self) -> Option<Dec> {
+        self.into_inner().1
+    }
+
+    pub const fn as_dec(&self) -> Option<&Dec> {
+        self.as_inner().1
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Expr {
     Assignment {
         dst: Box<Self>,
@@ -205,27 +237,27 @@ impl Expr {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct Unary {
     pub exp: Box<Expr>,
     pub op: UnOp,
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum UnOp {
     Complement,
     Negate,
     Not,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Binary {
     pub operator: Bop,
     pub left: Box<Expr>,
     pub right: Box<Expr>,
 }
 
-#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+#[derive(Debug, Eq, PartialEq, Copy, Clone, Hash)]
 pub enum Bop {
     Add,
     Subtract,
@@ -355,10 +387,69 @@ pub enum Stmnt {
     },
     Goto(Ident),
     Null,
+    // breaking from the grammar here for ease of use later
     Switch {
         val: Expr,
-        body: Box<Self>,
+        cases: Arr<SwitchCase>,
+        default: Option<Stmnt>,
     },
+}
+
+impl Stmnt {
+    pub const fn secondary(&self) -> bool {
+        !self.primary()
+    }
+
+    pub const fn primary(&self) -> bool {
+        matches!(
+            self,
+            Self::Compound(_)
+                | Self::If { .. }
+                | Self::Switch { .. }
+                | Self::While { .. }
+                | Self::DoWhile { .. }
+                | Self::For { .. }
+        )
+    }
+}
+
+#[derive(Debug)]
+pub struct SwitchCase {
+    pub case: Expr,
+    pub body: Stmnt,
+}
+
+impl SwitchCase {
+    pub const fn new(case: Expr, body: Stmnt) -> Self {
+        Self {
+            case: Some(Case::Case(case)),
+            body,
+        }
+    }
+
+    pub const fn default(body: Stmnt) -> Self {
+        Self {
+            case: Some(Case::Default),
+            body,
+        }
+    }
+
+    pub const fn case(c: &Constant, body: Stmnt) -> Self {
+        Self {
+            case: Some(Case::Case(Expr::Const(*c))),
+            body,
+        }
+    }
+
+    pub const fn block(body: Stmnt) -> Self {
+        Self { case: None, body }
+    }
+}
+
+impl From<Constant> for Case {
+    fn from(value: Constant) -> Self {
+        Self::Case(Expr::Const(value))
+    }
 }
 
 #[derive(Debug)]
@@ -414,7 +505,7 @@ impl Display for Label {
 
 pub mod inc_dec {
 
-    #[derive(Copy, Clone, Eq, PartialEq)]
+    #[derive(Copy, Clone, Eq, PartialEq, Hash)]
     pub struct IncDec {
         pub inc: IncOp,
         pub fix: Fix,
@@ -442,12 +533,12 @@ pub mod inc_dec {
         }
     }
 
-    #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+    #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
     pub enum IncOp {
         Inc,
         Dec,
     }
-    #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+    #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
     pub enum Fix {
         Pre,
         Post,
@@ -481,6 +572,8 @@ impl PartialEq for StorageClass {
         )
     }
 }
+
+impl Eq for StorageClass {}
 
 #[derive(Debug)]
 pub struct Function {

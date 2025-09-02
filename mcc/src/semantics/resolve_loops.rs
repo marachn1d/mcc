@@ -1,12 +1,11 @@
 use ast::semantics::labeled;
-use ast::semantics::typed;
 use ast::semantics::{Label, LabelId};
 use ast::Arr;
 use ast::VarType;
 
 use ast::Constant;
 
-use labeled::{Block, BlockItem, Dec, Expr, FnDec, ForInit, Program, Stmnt, VarDec};
+use labeled::{Block, BlockItem, Dec, Expr, FnDec, ForInit, Program, Stmnt, SwitchCase, VarDec};
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 static LOOPS: AtomicUsize = AtomicUsize::new(0);
@@ -209,86 +208,48 @@ fn label_statement(statement: parse::Stmnt, cur: &mut Scope) -> Result<Stmnt, Er
                 body: Box::new(body),
             })
         })?,
-        // current plan is to pass a struct called scope which keeps the loop id for switch
-        // statements and other Loops seperately, cur checks labelids and uses the lesser one,
-        // and handles continue targets
         parse::Stmnt::Label {
-            label: parse::Label::Default,
-            body,
-        } => {
-            // borrowck is evil and won't let me copy the lable id properly so instead i'm doing
-            // this evil thing
-            let label = match cur.switch.as_mut() {
-                // this means we got default in an env with an alreadu defined default. Illegal.
-                Some(SwitchState { default: true, .. }) => Err(Error::DoubleDefault),
+            label: parse::Label::Default | parse::Label::Case(_),
+            ..
+        } => Err(Error::Switch),
 
-                // this means we got
-                Some(SwitchState {
-                    default,
-                    cases: _,
-                    label,
-                }) => {
-                    *default = true;
-                    Ok(*label)
-                }
-                None => Err(Error::Switch),
-            }?;
-            let body = label_statement(*body, cur)?.into();
-            Ok(Stmnt::Label {
-                name: Label::Default(label),
-                body,
-            })
-        }
-        parse::Stmnt::Label {
-            label: AstLabel::Case(c),
-            body,
-        } => {
-            let Some(switch) = &mut cur.switch else {
-                return Err(Error::Switch);
-            };
-            switch.cases.push(c);
-            let body = label_statement(*body, cur)?.into();
-            let id = cur.switch.as_ref().unwrap().label;
-            Ok(Stmnt::Label {
-                name: Label::Case { c, id },
-                body,
-            })
-        }
-
-        parse::Stmnt::Switch { val, body } => {
-            let label = new_label();
-            let prev_switch = cur.switch.replace(SwitchState::new(label));
-            let body = label_statement(*body, cur)?.into();
-            let mut switch_info = if let Some(prev) = prev_switch {
-                cur.switch.replace(prev)
-            } else {
-                cur.switch.take()
-            }
-            .unwrap();
-            switch_info.cases.sort();
-            // instead of doing this, we should change the cases when we typecheck
-            if let Some(val) = val.const_eval() {
-                for case in &mut switch_info.cases {
-                    const_cast(case, &val.ty());
-                }
-            }
-            // cases is sorted so we can do the same check as before (resolve_loops.rs)
-            if switch_info.cases.windows(2).any(|x| x[0] == x[1]) {
-                return Err(Error::DupliCase);
-            }
-
-            // make sure the cases are unique, hmm.
-            //
+        parse::Stmnt::Switch { val, cases } => {
+            let (val, cases) = resolve_switch(cur, val, cases)?;
             Ok(Stmnt::Switch {
-                val: val.into(),
-                body,
-                cases: switch_info.cases.into(),
-                default: switch_info.default,
-                label,
+                val,
+                cases,
+                label: new_label(),
             })
         }
         parse::Stmnt::Null => Ok(Stmnt::Null),
     }
+}
+
+fn resolve_switch(
+    scope: &mut Scope,
+    val: parse::Expr,
+    cases: Box<[parse::SwitchCase]>,
+) -> Result<(Expr, Box<[SwitchCase]>), Error> {
+    use std::collections::HashSet;
+    let mut seen_cases = HashSet::new();
+    let mut new_cases: Vec<SwitchCase> = Vec::with_capacity(cases.len());
+    use ast::parse::Case;
+    for parse::SwitchCase { case, body } in cases {
+        let case = if let Some(c) = case {
+            let c = match c {
+                Case::Case(c) => labeled::Case::Case(exp(Some(c)).unwrap()),
+                Case::Default => labeled::Case::Default,
+            };
+            if !seen_cases.insert(c.clone()) {
+                return Err(Error::DupliCase);
+            }
+            Some(c)
+        } else {
+            None
+        };
+        new_cases.push(SwitchCase::new(case, label_statement(body, scope)?))
+    }
+    Ok((val.into(), new_cases.into()))
 }
 
 fn const_cast(c: &mut Constant, ty: &VarType) {
@@ -328,7 +289,7 @@ struct Scope {
 #[derive(Clone)]
 struct SwitchState {
     default: bool,
-    cases: Vec<Constant>,
+    cases: Vec<Expr>,
     label: LabelId,
 }
 

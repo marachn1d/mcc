@@ -1,6 +1,6 @@
 use ast::parse::{
-    Binary, Block, BlockItem, Dec, Expr, FnDec, ForInit, ParamList, Program, Stmnt, StorageClass,
-    VarDec,
+    Binary, Block, BlockItem, Case, Dec, Expr, FnDec, ForInit, ParamList, Program, Stmnt,
+    StorageClass, SwitchCase, VarDec,
 };
 use ast::Ident;
 
@@ -40,12 +40,11 @@ fn insert_local_var(
     name: &mut Ident,
     storage_class: &mut Option<StorageClass>,
 ) -> Result<(), Error> {
-    if let Some(prev_decl) = map.get(name) {
-        if prev_decl.from_current_block
-            && !(prev_decl.has_external_linkage && *storage_class == Some(StorageClass::Extern))
-        {
-            return Err(Error::ConflictingDec);
-        }
+    if let Some(prev_decl) = map.get(name)
+        && prev_decl.from_current_block
+        && !(prev_decl.has_external_linkage && *storage_class == Some(StorageClass::Extern))
+    {
+        return Err(Error::ConflictingDec);
     }
 
     if *storage_class == Some(StorageClass::Extern) {
@@ -58,7 +57,7 @@ fn insert_local_var(
             },
         );
     } else {
-        let unique: Ident = map.new_var(&name);
+        let unique: Ident = map.new_var(name);
         map.insert(
             name.clone(),
             Var {
@@ -241,9 +240,15 @@ fn resolve_statement(statement: &mut Stmnt, map: &mut VarMap) -> Result<(), Erro
             resolve_statement(body, &mut new_map)
         }
 
-        Stmnt::Switch { val, body } => {
+        Stmnt::Switch { val, cases } => {
             resolve_expression(val, map)?;
-            resolve_statement(body, map)
+            for SwitchCase { body, case } in cases {
+                if let Some(Case::Case(c)) = case {
+                    resolve_expression(c, map)?;
+                }
+                resolve_statement(body, map)?;
+            }
+            Ok(())
         }
 
         Stmnt::Goto(_) | Stmnt::Break | Stmnt::Continue => Ok(()),

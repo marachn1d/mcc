@@ -87,7 +87,7 @@ impl<T: fmt::Debug + Display> Display for Token<T> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Copy, Clone, Ord, PartialOrd)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone, Ord, PartialOrd, Hash)]
 pub enum Constant {
     Int(i32),
     Long(i64),

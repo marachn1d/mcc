@@ -1,12 +1,14 @@
 use ast::parse::StorageClass;
 use ast::parse::{Bop, ParamList};
 use ast::semantics::labeled;
-use ast::semantics::typed::{BlockItem, Dec, Expr, FnDec, ForInit, Program, Stmnt, VarDec};
+use ast::semantics::typed::{
+    BlockItem, Case, Dec, Expr, FnDec, ForInit, Program, Stmnt, SwitchCase, VarDec,
+};
 use ast::semantics::{Attr, InitialVal, SymbolTable};
 use ast::Constant;
 use ast::{parse::FnType, parse::StaticInit, Ident, VarType};
 
-use std::collections::hash_map::Entry;
+use std::collections::{hash_map::Entry, HashSet};
 
 // check FunctionDeclaration, VariableDeclaration,
 
@@ -601,17 +603,6 @@ fn typecheck_statement(
                 label,
             })
         }
-        /*
-         *  need to handle switch statement types here instead of resolve_loops or add another pass
-         *  lowk maybe add another pass just for switch statements
-         */
-        labeled::Stmnt::Label {
-            body,
-            name: ast::semantics::Label::Case { c, id },
-        } => Ok(Stmnt::Label {
-            name,
-            body: typecheck_statement(*body, return_type, table)?.into(),
-        }),
         labeled::Stmnt::Label { body, name } => Ok(Stmnt::Label {
             name,
             body: typecheck_statement(*body, return_type, table)?.into(),
@@ -657,19 +648,26 @@ fn typecheck_statement(
         }
         labeled::Stmnt::Switch {
             val: v,
-            body: b,
             label,
-            mut cases,
-            default,
+            cases,
         } => {
+            use std::collections::HashSet;
+            let mut visited = HashSet::new();
+            let mut typed_cases = Vec::with_capacity(cases.len());
             let val = typecheck_expression(v, table)?;
+            let case_ty = val.ty();
+            for labeled::SwitchCase { case, body } in cases {
+                let case = typecheck_case(case, table, &mut visited, &case_ty)?;
+                typed_cases.push(SwitchCase::new(
+                    case,
+                    typecheck_statement(body, None, table)?,
+                ));
+            }
 
             Ok(Stmnt::Switch {
                 val,
-                body: Box::new(typecheck_statement(*b, return_type, table)?),
                 label,
-                cases,
-                default,
+                cases: typed_cases.into(),
             })
         }
 
@@ -677,6 +675,32 @@ fn typecheck_statement(
         labeled::Stmnt::Goto(g) => Ok(Stmnt::Goto(g)),
         labeled::Stmnt::Break(l) => Ok(Stmnt::Break(l)),
         labeled::Stmnt::Continue(c) => Ok(Stmnt::Continue(c)),
+    }
+}
+
+fn typecheck_case(
+    case: Option<labeled::Case>,
+    table: &mut SymbolTable,
+    visited: &mut HashSet<Case>,
+    ty: &VarType,
+) -> Result<Option<Case>, Error> {
+    match case {
+        None => Ok(None),
+        Some(c) => {
+            let c = match c {
+                labeled::Case::Default => Case::Default,
+                labeled::Case::Case(c) => {
+                    let mut c = typecheck_expression(c, table)?;
+                    convert_to(&mut c, ty);
+                    Case::Case(c)
+                }
+            };
+            if visited.insert(c.clone()) {
+                Ok(Some(c))
+            } else {
+                Err(Error::DupliCase)
+            }
+        }
     }
 }
 

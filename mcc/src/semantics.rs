@@ -1,4 +1,3 @@
-//pub mod ast;
 mod check_labels;
 mod resolve;
 pub mod typecheck;

@@ -2,7 +2,9 @@ use crate::parse;
 use asm::tacky::StaticVar;
 use asm::tacky::{FunctionDefinition, Instruction, Program, TackyBinary, TopLevel, Value};
 use ast::parse::Fix;
-use ast::semantics::typed::{self, Block, BlockItem, Dec, Expr, FnDec, ForInit, Stmnt, VarDec};
+use ast::semantics::typed::{
+    self, Block, BlockItem, Case, Dec, Expr, FnDec, ForInit, Stmnt, SwitchCase, VarDec,
+};
 use ast::semantics::Label;
 use ast::semantics::StatementLabels;
 use ast::semantics::{Attr, SymbolTable};
@@ -249,12 +251,8 @@ fn convert_statement(
             instructions.push(Instruction::Label(named_label(&name, fn_name)));
             convert_statement(*body, instructions, fn_name, table);
         }
-        Stmnt::Label {
-            name: Label::Case { c, id },
-            body,
-        } => {
-            instructions.push(Instruction::Label(id.case(c)));
-            convert_statement(*body, instructions, fn_name, table);
+        Stmnt::Label { name, body } => {
+            panic!("got case label {name:?}");
         }
         Stmnt::Label {
             name: Label::Default(id),
@@ -263,40 +261,54 @@ fn convert_statement(
             instructions.push(Instruction::Label(id.default()));
             convert_statement(*body, instructions, fn_name, table);
         }
-        Stmnt::Switch {
-            val,
-            label,
-            cases,
-            body,
-            default,
-        } => {
+        Stmnt::Switch { val, label, cases } => {
             let end_label = label.labels().r#break;
+            let ty = val.ty();
             let switch_val = convert_expression(val, instructions, table);
-            for case in cases {
-                let target_var = new_var(VarType::Int, table);
-                instructions.extend([
-                    // if val == case
-                    Instruction::Binary {
-                        operator: TackyBinary::EqualTo,
-                        source_1: switch_val.clone(),
-                        source_2: Value::Constant(case),
-                        dst: Value::Var(target_var.clone()),
-                    },
-                    // jump to its label
-                    Instruction::JumpIfNotZero {
-                        condition: Value::Var(target_var),
-                        target: label.case(case),
-                    },
-                ]);
+            let mut found_default = false;
+            for SwitchCase { case, .. } in &cases {
+                match case {
+                    Some(c) => {
+                        match c {
+                            Case::Case(exp) => {
+                                let target_var = new_var(ty, table);
+                                instructions.extend([
+                                    // if val == case
+                                    Instruction::Binary {
+                                        operator: TackyBinary::EqualTo,
+                                        source_1: switch_val.clone(),
+                                        source_2: Value::Constant(exp.const_val().unwrap()),
+                                        dst: Value::Var(target_var.clone()),
+                                    },
+                                    // jump to its label
+                                    Instruction::JumpIfNotZero {
+                                        condition: Value::Var(target_var),
+                                        target: label.case(&Case::Case(exp)),
+                                    },
+                                ]);
+                            }
+                            Case::Default => {
+                                found_default = true;
+                            }
+                        }
+                    }
+                    None => (),
+                };
             }
+
             instructions.push(Instruction::Jump {
-                target: if default {
+                target: if found_default {
                     label.default()
                 } else {
                     end_label.clone()
                 },
             });
-            convert_statement(*body, instructions, fn_name, table);
+            for SwitchCase { case, body } in cases {
+                if let Some(case) = case {
+                    instructions.push(Instruction::Label(label.case(&case)));
+                }
+                convert_statement(body, instructions, fn_name, table);
+            }
             instructions.push(Instruction::Label(end_label));
         }
         Stmnt::Goto(label) => instructions.push(Instruction::Jump {

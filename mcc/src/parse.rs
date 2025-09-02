@@ -2,7 +2,7 @@ mod specifier_list;
 
 pub use ast::parse::{
     Binary, Block, BlockItem, Bop, Dec, Expr, FnDec, FnType, ForInit, Label, Param, ParamList,
-    Program, Stmnt, StorageClass, UnOp, Unary, VarDec,
+    Program, Stmnt, StorageClass, SwitchCase, UnOp, Unary, VarDec,
 };
 pub use ast::{Arr, VarType};
 
@@ -220,11 +220,8 @@ fn statement(tokens: &mut TokenIter) -> Result<Stmnt, Error> {
         }
         Token::Switch => {
             tokens.next();
-            tokens.consume(Token::OpenParen)?;
-            let expr = expression(tokens, None)?;
-            tokens.consume(Token::CloseParen)?;
-            let body = Box::new(statement(tokens)?);
-            Stmnt::Switch { val: expr, body }
+            let (val, cases) = switch(tokens)?;
+            Stmnt::Switch { val, cases }
         }
         Token::Goto => {
             tokens.next();
@@ -322,6 +319,39 @@ fn statement(tokens: &mut TokenIter) -> Result<Stmnt, Error> {
             Stmnt::Exp(e)
         }
     })
+}
+
+fn switch(tokens: &mut TokenIter) -> Result<(Expr, Arr<SwitchCase>), Error> {
+    tokens.consume(Token::OpenParen)?;
+    let val = expression(tokens, None)?;
+    let mut switch_cases = vec![];
+    // at the top level block
+    match statement(tokens)? {
+        Stmnt::Compound(s) => {
+            for s in s.into_iter().filter_map(BlockItem::into_stmnt) {
+                switch_cases.push(switch_stmnt(s)?);
+            }
+        }
+        s => {
+            switch_stmnt(s);
+        }
+    };
+    Ok((val, switch_cases.into()))
+}
+
+fn switch_stmnt(stmnt: Stmnt) -> Result<SwitchCase, Error> {
+    match stmnt {
+        Stmnt::Label {
+            label: Label::Case(c),
+            body,
+        } => Ok(SwitchCase::case(&c, *body)),
+        Stmnt::Label {
+            label: Label::Default,
+            body,
+        } => Ok(SwitchCase::default(*body)),
+        body if body.secondary() => Ok(SwitchCase::block(body)),
+        _ => Err(Error::Catchall("expected secondary statement")),
+    }
 }
 
 fn optional_expr(tokens: &mut TokenIter, delim: Token) -> Result<Option<Expr>, Error> {

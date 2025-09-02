@@ -1,4 +1,4 @@
-use ast::semantics::typed::{BlockItem, Dec, FnDec, Program, Stmnt};
+use ast::semantics::typed::{BlockItem, Dec, FnDec, Program, Stmnt, SwitchCase};
 use ast::semantics::Label;
 use ast::Ident;
 
@@ -107,7 +107,12 @@ fn check_labels(
             };
             Ok(())
         }
-        Stmnt::Switch { body, .. } => check_labels(body, vars, labels, fn_name),
+        Stmnt::Switch { cases, .. } => {
+            for SwitchCase { body, .. } in cases {
+                check_labels(body, vars, labels, fn_name)?;
+            }
+            Ok(())
+        }
         Stmnt::Ret(_)
         | Stmnt::Exp(_)
         | Stmnt::Null
@@ -148,8 +153,14 @@ fn check_gotos(statement: &Stmnt, labels: &HashSet<Ident>) -> Result<(), Error> 
         Stmnt::While { body, .. }
         | Stmnt::DoWhile { body, .. }
         | Stmnt::Label { body, .. }
-        | Stmnt::Switch { body, .. }
         | Stmnt::For { body, .. } => check_gotos(body, labels),
+
+        Stmnt::Switch { cases, .. } => {
+            for SwitchCase { body, .. } in cases {
+                check_gotos(body, labels)?;
+            }
+            Ok(())
+        }
 
         Stmnt::Ret(_) | Stmnt::Exp(_) | Stmnt::Null | Stmnt::Break(_) | Stmnt::Continue(_) => {
             Ok(())
