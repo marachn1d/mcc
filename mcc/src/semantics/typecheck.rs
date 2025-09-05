@@ -263,9 +263,12 @@ fn typecheck_expression(expression: labeled::Expr, table: &mut SymbolTable) -> R
             // if it's relational or logical and or logical or then it's gonna be int
             let mut left = typecheck_expression(*left, table).map(Box::from)?;
             let mut right = typecheck_expression(*right, table).map(Box::from)?;
-            // result of this expression is an int
-            let Some(ty) = left.ty().common_type(&right.ty()) else {
-                return Err(Error::InvalidCast);
+            let ty = if operator.bitshift() {
+                left.ty()
+            } else {
+                left.ty()
+                    .common_type(&right.ty())
+                    .ok_or(Error::InvalidCast)?
             };
             convert_to(&mut left, &ty);
             convert_to(&mut right, &ty);
@@ -660,7 +663,7 @@ fn typecheck_statement(
                 let case = typecheck_case(case, table, &mut visited, &case_ty)?;
                 typed_cases.push(SwitchCase::new(
                     case,
-                    typecheck_statement(body, None, table)?,
+                    typecheck_statement(body, return_type, table)?,
                 ));
             }
 
@@ -692,7 +695,10 @@ fn typecheck_case(
                 labeled::Case::Case(c) => {
                     let mut c = typecheck_expression(c, table)?;
                     convert_to(&mut c, ty);
-                    Case::Case(c)
+                    Case::Case(Expr::Const {
+                        cnst: c.const_val().unwrap(),
+                        ty: *ty,
+                    })
                 }
             };
             if visited.insert(c.clone()) {

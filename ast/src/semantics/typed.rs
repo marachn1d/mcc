@@ -214,10 +214,14 @@ impl Expr {
         }
     }
 
-    pub const fn const_val(&self) -> Option<Constant> {
+    pub fn const_val(&self) -> Option<Constant> {
         match self {
             Expr::Const { cnst, .. } => Some(*cnst),
             Expr::Nested { inner: e, .. } => e.const_val(),
+            Expr::Cast { target, exp, .. } => match exp.const_val() {
+                Some(c) => Some(c.const_cast(target)),
+                None => None,
+            },
             _ => None,
         }
     }

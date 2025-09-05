@@ -11,6 +11,7 @@ pub use resolve::resolve;
 
 pub fn check(mut program: AstProgram) -> Result<(typed::Program, SymbolTable), Error> {
     resolve(&mut program).map_err(Error::Resolve)?;
+    dbg!(&program);
 
     let labeled = resolve_loops::label(program).map_err(Error::Loops)?;
 

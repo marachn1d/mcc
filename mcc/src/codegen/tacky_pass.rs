@@ -251,9 +251,6 @@ fn convert_statement(
             instructions.push(Instruction::Label(named_label(&name, fn_name)));
             convert_statement(*body, instructions, fn_name, table);
         }
-        Stmnt::Label { name, body } => {
-            panic!("got case label {name:?}");
-        }
         Stmnt::Label {
             name: Label::Default(id),
             body,
@@ -261,11 +258,16 @@ fn convert_statement(
             instructions.push(Instruction::Label(id.default()));
             convert_statement(*body, instructions, fn_name, table);
         }
+        Stmnt::Label { name, body } => {
+            panic!("got case label {name:?}");
+        }
+
         Stmnt::Switch { val, label, cases } => {
             let end_label = label.labels().r#break;
             let ty = val.ty();
             let switch_val = convert_expression(val, instructions, table);
             let mut found_default = false;
+            // one day soon this will be a jump table
             for SwitchCase { case, .. } in &cases {
                 match case {
                     Some(c) => {
@@ -283,7 +285,7 @@ fn convert_statement(
                                     // jump to its label
                                     Instruction::JumpIfNotZero {
                                         condition: Value::Var(target_var),
-                                        target: label.case(&Case::Case(exp)),
+                                        target: label.case(&Case::Case(exp.clone())),
                                     },
                                 ]);
                             }
@@ -337,15 +339,14 @@ fn convert_cast(
     instructions: &mut Vec<Instruction>,
     table: &mut SymbolTable,
 ) -> Value {
-    match (target, exp, ty) {
-        (target, exp, _) if target == exp.ty() => convert_expression(exp, instructions, table),
-        (_, exp, ty) => {
-            let src = convert_expression(exp, instructions, table);
-            let dst = Value::Var(new_var(ty, r#table));
-            // add dst to symbol table
-            //
-            convert_cast_op(ty, src, dst, instructions)
-        }
+    if target == exp.ty() {
+        convert_expression(exp, instructions, table)
+    } else {
+        let src = convert_expression(exp, instructions, table);
+        let dst = Value::Var(new_var(ty, r#table));
+        // add dst to symbol table
+        //
+        convert_cast_op(ty, src, dst, instructions)
     }
 }
 
@@ -404,7 +405,7 @@ fn convert_expression(
             left,
             right,
             ty,
-        } => match process_binop(operator) {
+        } => match process_binop(&operator) {
             ProcessedBinop::LogAnd => {
                 let source_1 = convert_expression(*left, instructions, table);
                 let false_label = and_label();
@@ -483,6 +484,8 @@ fn convert_expression(
                 dst
             }
             ProcessedBinop::Compound(op) => {
+                // mmm how do we handle compound operators
+                //dbg!(&left, &op, &right);
                 let dst = convert_expression(*left, instructions, table);
                 let modifier = convert_expression(*right, instructions, table);
                 let binary = Instruction::Binary {
@@ -609,6 +612,7 @@ enum ProcessedBinop {
     Compound(CompoundOp),
 }
 
+#[derive(Debug)]
 enum CompoundOp {
     Plus,
     Minus,
@@ -639,7 +643,7 @@ impl From<CompoundOp> for TackyBinary {
     }
 }
 
-const fn process_binop(binop: parse::Bop) -> ProcessedBinop {
+const fn process_binop(binop: &parse::Bop) -> ProcessedBinop {
     use parse::Bop as Pre;
     use ProcessedBinop as Post;
     match binop {

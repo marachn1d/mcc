@@ -322,6 +322,20 @@ impl Bop {
         }
     }
 
+    pub const fn bitwise(&self) -> bool {
+        matches!(
+            self,
+            Self::BitAndEqual | Self::BitOrEqual | Self::BitXorEqual | Self::BitAnd | Self::BitOr
+        ) || self.bitshift()
+    }
+
+    pub const fn bitshift(&self) -> bool {
+        matches!(
+            self,
+            Self::LeftShift | Self::LeftShiftEqual | Self::RightShift | Self::RightShiftEqual
+        )
+    }
+
     pub const fn assignment_operator(&self) -> bool {
         matches!(self, Self::Equals) || self.compound()
     }
@@ -390,8 +404,8 @@ pub enum Stmnt {
     // breaking from the grammar here for ease of use later
     Switch {
         val: Expr,
+
         cases: Arr<SwitchCase>,
-        default: Option<Stmnt>,
     },
 }
 
@@ -415,7 +429,7 @@ impl Stmnt {
 
 #[derive(Debug)]
 pub struct SwitchCase {
-    pub case: Expr,
+    pub case: Option<Case>,
     pub body: Stmnt,
 }
 
@@ -434,7 +448,14 @@ impl SwitchCase {
         }
     }
 
-    pub const fn case(c: &Constant, body: Stmnt) -> Self {
+    pub const fn case(e: Expr, body: Stmnt) -> Self {
+        Self {
+            case: Some(Case::Case(e)),
+            body,
+        }
+    }
+
+    pub const fn constant(c: &Constant, body: Stmnt) -> Self {
         Self {
             case: Some(Case::Case(Expr::Const(*c))),
             body,
@@ -444,6 +465,19 @@ impl SwitchCase {
     pub const fn block(body: Stmnt) -> Self {
         Self { case: None, body }
     }
+
+    pub const fn full_block(block: Block) -> Self {
+        Self {
+            case: None,
+            body: Stmnt::Compound(block),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub enum Case {
+    Default,
+    Case(Expr),
 }
 
 impl From<Constant> for Case {
@@ -461,7 +495,7 @@ pub enum ForInit {
 #[derive(Debug, Clone)]
 pub enum Label {
     Named(Ident),
-    Case(Constant),
+    Case(Expr),
     Default,
 }
 

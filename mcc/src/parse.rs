@@ -220,8 +220,9 @@ fn statement(tokens: &mut TokenIter) -> Result<Stmnt, Error> {
         }
         Token::Switch => {
             tokens.next();
-            let (val, cases) = switch(tokens)?;
-            Stmnt::Switch { val, cases }
+            let expr = expression(tokens, None)?;
+            let stmnt = statement(tokens)?;
+            fixup_switch(expr, stmnt)?
         }
         Token::Goto => {
             tokens.next();
@@ -265,7 +266,7 @@ fn statement(tokens: &mut TokenIter) -> Result<Stmnt, Error> {
             };
 
             tokens.consume(Token::Colon)?;
-            let label = Label::Case(con);
+            let label = Label::Case(Expr::Const(con));
             let body = statement(tokens)?.into();
             Stmnt::Label { label, body }
         }
@@ -321,30 +322,36 @@ fn statement(tokens: &mut TokenIter) -> Result<Stmnt, Error> {
     })
 }
 
-fn switch(tokens: &mut TokenIter) -> Result<(Expr, Arr<SwitchCase>), Error> {
-    tokens.consume(Token::OpenParen)?;
-    let val = expression(tokens, None)?;
-    let mut switch_cases = vec![];
-    // at the top level block
-    match statement(tokens)? {
-        Stmnt::Compound(s) => {
-            for s in s.into_iter().filter_map(BlockItem::into_stmnt) {
-                switch_cases.push(switch_stmnt(s)?);
+fn fixup_switch(val: Expr, stmnt: Stmnt) -> Result<Stmnt, Error> {
+    let mut cases = vec![];
+    match stmnt {
+        Stmnt::Compound(b) => {
+            cases.reserve(b.len());
+            for item in b {
+                match item {
+                    BlockItem::S(stmnt) => cases.push(switch_case(stmnt)?),
+                    b @ BlockItem::D(Dec::Var(_)) => {
+                        cases.push(switch_case(Stmnt::Compound(Box::new([b])))?)
+                    }
+                    BlockItem::D(Dec::Fn(_)) => todo!(),
+                }
             }
         }
-        s => {
-            switch_stmnt(s);
-        }
+        other => cases.push(switch_case(other)?),
     };
-    Ok((val, switch_cases.into()))
+
+    Ok(Stmnt::Switch {
+        val,
+        cases: cases.into(),
+    })
 }
 
-fn switch_stmnt(stmnt: Stmnt) -> Result<SwitchCase, Error> {
+fn switch_case(stmnt: Stmnt) -> Result<SwitchCase, Error> {
     match stmnt {
         Stmnt::Label {
             label: Label::Case(c),
             body,
-        } => Ok(SwitchCase::case(&c, *body)),
+        } => Ok(SwitchCase::case(c, *body)),
         Stmnt::Label {
             label: Label::Default,
             body,

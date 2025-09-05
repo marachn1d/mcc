@@ -252,15 +252,6 @@ fn resolve_switch(
     Ok((val.into(), new_cases.into()))
 }
 
-fn const_cast(c: &mut Constant, ty: &VarType) {
-    if c.ty() != *ty {
-        match c {
-            Constant::Int(i) => *c = Constant::Long(*i as i64),
-            Constant::Long(l) => *c = Constant::Int(*l as i32),
-        };
-    }
-}
-
 fn if_stmnt(
     c: parse::Expr,
     then: parse::Stmnt,
