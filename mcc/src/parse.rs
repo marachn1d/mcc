@@ -392,10 +392,10 @@ fn expression(tokens: &mut TokenIter, min_precedence: Option<u8>) -> Result<Expr
 
     let mut left = factor(tokens)?;
 
-    while let Some(operator) = binary_operator(tokens, precedence) {
-        match operator {
+    while let Some(maybe_compound) = binary_operator(tokens, precedence) {
+        match maybe_compound.bop {
             Bop::Equals => {
-                let right = Box::from(expression(tokens, Some(operator.precedence()))?);
+                let right = Box::from(expression(tokens, Some(maybe_compound.precedence()))?);
                 left = Expr::Assignment {
                     dst: left.into(),
                     src: right,
@@ -404,20 +404,24 @@ fn expression(tokens: &mut TokenIter, min_precedence: Option<u8>) -> Result<Expr
             Bop::Ternary => {
                 let middle = expression(tokens, None)?;
                 tokens.consume(Token::Colon)?;
-                let right = expression(tokens, Some(operator.precedence()))?;
+                let right = expression(tokens, Some(maybe_compound.precedence()))?;
                 left = Expr::Conditional {
                     condition: left.into(),
                     r#true: middle.into(),
                     r#false: right.into(),
                 }
             }
-            operator if operator.compound() => {
+            operator if maybe_compound.is_compound => {
                 let right = expression(tokens, Some(operator.precedence()))?;
-                left = Expr::Bin(Binary {
-                    left: Box::new(left),
+                let inner = Expr::Bin(Binary {
+                    left: Box::new(left.clone()),
                     right: Box::new(right),
                     operator,
                 });
+                left = Expr::Assignment {
+                    dst: left.into(),
+                    src: inner.into(),
+                }
             }
             operator => {
                 let right = expression(tokens, Some(operator.precedence() + 1))?;
@@ -432,49 +436,100 @@ fn expression(tokens: &mut TokenIter, min_precedence: Option<u8>) -> Result<Expr
     Ok(left)
 }
 
-fn binary_operator(tokens: &mut TokenIter, min_precedence: u8) -> Option<Bop> {
-    let token = match tokens.peek()? {
-        Token::Plus => Some(Bop::Add),
-        Token::Minus => Some(Bop::Subtract),
-        Token::Asterisk => Some(Bop::Multiply),
-        Token::Slash => Some(Bop::Divide),
-        Token::Percent => Some(Bop::Remainder),
+/*
+fn desugared_binary(tokens:&mut TokenIter, min_precedence:u8) -> (Bop,Option<Bop>){
+    match binary_operator(tokens, min_precedence){
+        Some(bop) => {
+            match bop.split_compound(){
+                Some(split)
+            }
+        },
+        None => None,
+    }
+    if let Some(bop) = binary_operator(tokens, min_precedence){
+    }else{
+        None
+    }
+}
+*/
 
-        Token::LeftShift => Some(Bop::LeftShift),
-        Token::RightShift => Some(Bop::RightShift),
-        Token::Ampersand => Some(Bop::BitAnd),
-        Token::Bar => Some(Bop::BitOr),
-        Token::Caret => Some(Bop::Xor),
+struct MaybeCompound {
+    bop: Bop,
+    is_compound: bool,
+}
 
-        Token::LogicalAnd => Some(Bop::LogAnd),
-        Token::LogicalOr => Some(Bop::LogOr),
+impl MaybeCompound {
+    const fn atom(bop: Bop) -> Self {
+        Self {
+            bop,
+            is_compound: false,
+        }
+    }
 
-        Token::EqualTo => Some(Bop::EqualTo),
-        Token::NotEqual => Some(Bop::NotEqual),
-        Token::LessThan => Some(Bop::LessThan),
-        Token::GreaterThan => Some(Bop::GreaterThan),
-        Token::Leq => Some(Bop::Leq),
-        Token::Geq => Some(Bop::Geq),
+    const fn compound(bop: Bop) -> Self {
+        Self {
+            bop,
+            is_compound: true,
+        }
+    }
 
-        Token::Equals => Some(Bop::Equals),
-        Token::PlusEqual => Some(Bop::PlusEquals),
-        Token::MinusEqual => Some(Bop::MinusEquals),
-        Token::TimesEqual => Some(Bop::TimesEqual),
-        Token::DivEqual => Some(Bop::DivEqual),
-        Token::PercentEqual => Some(Bop::RemEqual),
+    const fn precedence(&self) -> u8 {
+        if self.is_compound {
+            Bop::Equals.precedence()
+        } else {
+            self.bop.precedence()
+        }
+    }
 
-        Token::BitAndEqual => Some(Bop::BitAndEqual),
+    fn new(token: &Token) -> Option<Self> {
+        let bop = match token {
+            Token::Plus | Token::PlusEqual => Some(Bop::Add),
+            Token::Minus | Token::MinusEqual => Some(Bop::Subtract),
+            Token::Asterisk | Token::TimesEqual => Some(Bop::Multiply),
+            Token::Slash | Token::DivEqual => Some(Bop::Divide),
+            Token::Percent | Token::PercentEqual => Some(Bop::Remainder),
 
-        Token::BitOrEqual => Some(Bop::BitOrEqual),
+            Token::LeftShift | Token::LeftShiftEqual => Some(Bop::LeftShift),
+            Token::RightShift | Token::RightShiftEqual => Some(Bop::RightShift),
+            Token::Ampersand | Token::BitAndEqual => Some(Bop::BitAnd),
+            Token::Bar | Token::BitOrEqual => Some(Bop::BitOr),
+            Token::Caret | Token::BitXorEqual => Some(Bop::Xor),
 
-        Token::BitXorEqual => Some(Bop::BitXorEqual),
-        Token::LeftShiftEqual => Some(Bop::LeftShiftEqual),
-        Token::RightShiftEqual => Some(Bop::RightShiftEqual),
+            Token::LogicalAnd => Some(Bop::LogAnd),
+            Token::LogicalOr => Some(Bop::LogOr),
 
-        Token::QuestionMark => Some(Bop::Ternary),
+            Token::EqualTo => Some(Bop::EqualTo),
+            Token::NotEqual => Some(Bop::NotEqual),
+            Token::LessThan => Some(Bop::LessThan),
+            Token::GreaterThan => Some(Bop::GreaterThan),
+            Token::Leq => Some(Bop::Leq),
+            Token::Geq => Some(Bop::Geq),
 
-        _ => None,
-    }?;
+            Token::Equals => Some(Bop::Equals),
+
+            Token::QuestionMark => Some(Bop::Ternary),
+
+            _ => None,
+        }?;
+        let constructor: fn(Bop) -> Self = match token {
+            Token::PlusEqual
+            | Token::MinusEqual
+            | Token::TimesEqual
+            | Token::DivEqual
+            | Token::PercentEqual
+            | Token::LeftShiftEqual
+            | Token::RightShiftEqual
+            | Token::BitAndEqual
+            | Token::BitOrEqual
+            | Token::BitXorEqual => Self::compound,
+            _ => Self::atom,
+        };
+        Some(constructor(bop))
+    }
+}
+
+fn binary_operator(tokens: &mut TokenIter, min_precedence: u8) -> Option<MaybeCompound> {
+    let token = MaybeCompound::new(tokens.peek()?)?;
     if token.precedence() >= min_precedence {
         tokens.next();
         Some(token)

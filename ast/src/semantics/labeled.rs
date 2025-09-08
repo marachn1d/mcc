@@ -208,4 +208,12 @@ impl Expr {
             _ => None,
         }
     }
+
+    pub const fn as_lvalue(&self) -> Option<&Ident> {
+        match self {
+            Self::Var(l) => Some(l),
+            Self::Nested(inner) | Self::Assignment { dst: inner, .. } => inner.as_lvalue(),
+            _ => None,
+        }
+    }
 }

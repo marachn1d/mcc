@@ -211,11 +211,11 @@ impl Expr {
         }
     }
 
-    pub const fn lvalue(&self) -> bool {
+    pub const fn as_lvalue(&self) -> Option<&Ident> {
         match self {
-            Self::Var(_) => true,
-            Self::Nested(e) => e.lvalue(),
-            _ => false,
+            Self::Var(l) => Some(l),
+            Self::Nested(inner) | Self::Assignment { dst: inner, .. } => inner.as_lvalue(),
+            _ => None,
         }
     }
 
@@ -280,34 +280,13 @@ pub enum Bop {
 
     Equals,
 
-    PlusEquals,
-    MinusEquals,
-    TimesEqual,
-    DivEqual,
-    RemEqual,
-    BitAndEqual,
-    BitOrEqual,
-    BitXorEqual,
-    LeftShiftEqual,
-    RightShiftEqual,
-
     Ternary,
 }
 
 impl Bop {
     pub const fn precedence(&self) -> u8 {
         match self {
-            Self::Equals
-            | Self::PlusEquals
-            | Self::MinusEquals
-            | Self::TimesEqual
-            | Self::DivEqual
-            | Self::RemEqual
-            | Self::BitAndEqual
-            | Self::BitOrEqual
-            | Self::BitXorEqual
-            | Self::LeftShiftEqual
-            | Self::RightShiftEqual => 1,
+            Self::Equals => 1,
             Self::Ternary => 3,
             Self::LogOr => 5,
             Self::LogAnd => 10,
@@ -323,37 +302,11 @@ impl Bop {
     }
 
     pub const fn bitwise(&self) -> bool {
-        matches!(
-            self,
-            Self::BitAndEqual | Self::BitOrEqual | Self::BitXorEqual | Self::BitAnd | Self::BitOr
-        ) || self.bitshift()
+        matches!(self, Self::BitAnd | Self::BitOr) || self.bitshift()
     }
 
     pub const fn bitshift(&self) -> bool {
-        matches!(
-            self,
-            Self::LeftShift | Self::LeftShiftEqual | Self::RightShift | Self::RightShiftEqual
-        )
-    }
-
-    pub const fn assignment_operator(&self) -> bool {
-        matches!(self, Self::Equals) || self.compound()
-    }
-
-    pub const fn compound(&self) -> bool {
-        matches!(
-            self,
-            Self::PlusEquals
-                | Self::MinusEquals
-                | Self::TimesEqual
-                | Self::DivEqual
-                | Self::RemEqual
-                | Self::BitAndEqual
-                | Self::BitOrEqual
-                | Self::BitXorEqual
-                | Self::LeftShiftEqual
-                | Self::RightShiftEqual
-        )
+        matches!(self, Self::LeftShift | Self::RightShift)
     }
 
     pub const fn relational(&self) -> bool {

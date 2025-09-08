@@ -258,7 +258,7 @@ fn convert_statement(
             instructions.push(Instruction::Label(id.default()));
             convert_statement(*body, instructions, fn_name, table);
         }
-        Stmnt::Label { name, body } => {
+        Stmnt::Label { name, body: _ } => {
             panic!("got case label {name:?}");
         }
 
@@ -389,11 +389,11 @@ fn convert_expression(
             result
         }
         Expr::Assignment { dst, src, ty: _ } => {
-            let Expr::Var { name: v, .. } = *dst else {
-                unreachable!()
-            };
+            let (name, _) = dst
+                .to_lvalue()
+                .expect("Expected Lvalue, should've been caught");
             let result = convert_expression(*src, instructions, table);
-            let var = Value::Var(v);
+            let var = Value::Var(name);
             instructions.push(Instruction::Copy {
                 src: result,
                 dst: var.clone(),
@@ -478,20 +478,6 @@ fn convert_expression(
                     operator,
                     source_1,
                     source_2,
-                    dst: dst.clone(),
-                };
-                instructions.push(binary);
-                dst
-            }
-            ProcessedBinop::Compound(op) => {
-                // mmm how do we handle compound operators
-                //dbg!(&left, &op, &right);
-                let dst = convert_expression(*left, instructions, table);
-                let modifier = convert_expression(*right, instructions, table);
-                let binary = Instruction::Binary {
-                    operator: op.into(),
-                    source_1: dst.clone(),
-                    source_2: modifier,
                     dst: dst.clone(),
                 };
                 instructions.push(binary);
@@ -605,42 +591,26 @@ fn convert_expression(
     }
 }
 
+fn inner_var(exp: Expr) -> Option<(Value, VarType)> {
+    match exp {
+        Expr::Var { name, ty } => Some((Value::Var(name), ty)),
+        Expr::Assignment { dst: inner, .. }
+        | Expr::Binary { left: inner, .. }
+        | Expr::Cast { exp: inner, .. }
+        | Expr::IncDec { exp: inner, .. }
+        | Expr::Conditional {
+            condition: inner, ..
+        }
+        | Expr::Unary { operand: inner, .. }
+        | Expr::Nested { inner, .. } => inner_var(*inner),
+        Expr::Const { .. } | Expr::FunctionCall { .. } => None,
+    }
+}
+
 enum ProcessedBinop {
     LogAnd,
     LogOr,
     Normal(TackyBinary),
-    Compound(CompoundOp),
-}
-
-#[derive(Debug)]
-enum CompoundOp {
-    Plus,
-    Minus,
-    Times,
-    Div,
-    Rem,
-    And,
-    Or,
-    Xor,
-    LeftShift,
-    RightShift,
-}
-
-impl From<CompoundOp> for TackyBinary {
-    fn from(other: CompoundOp) -> Self {
-        match other {
-            CompoundOp::Plus => Self::Add,
-            CompoundOp::Minus => Self::Subtract,
-            CompoundOp::Times => Self::Multiply,
-            CompoundOp::Div => Self::Divide,
-            CompoundOp::Rem => Self::Remainder,
-            CompoundOp::And => Self::BitAnd,
-            CompoundOp::Or => Self::BitOr,
-            CompoundOp::Xor => Self::Xor,
-            CompoundOp::LeftShift => Self::LeftShift,
-            CompoundOp::RightShift => Self::RightShift,
-        }
-    }
 }
 
 const fn process_binop(binop: &parse::Bop) -> ProcessedBinop {
@@ -667,17 +637,12 @@ const fn process_binop(binop: &parse::Bop) -> ProcessedBinop {
         Pre::Geq => Post::Normal(TackyBinary::Geq),
         Pre::Divide => Post::Normal(TackyBinary::Divide),
         Pre::Remainder => Post::Normal(TackyBinary::Remainder),
-        Pre::PlusEquals => Post::Compound(CompoundOp::Plus),
-        Pre::MinusEquals => Post::Compound(CompoundOp::Minus),
-        Pre::TimesEqual => Post::Compound(CompoundOp::Times),
-        Pre::DivEqual => Post::Compound(CompoundOp::Div),
+    }
+}
 
-        Pre::RemEqual => Post::Compound(CompoundOp::Rem),
-        Pre::BitAndEqual => Post::Compound(CompoundOp::And),
-        Pre::BitOrEqual => Post::Compound(CompoundOp::Or),
-        Pre::BitXorEqual => Post::Compound(CompoundOp::Xor),
-        Pre::LeftShiftEqual => Post::Compound(CompoundOp::LeftShift),
-        Pre::RightShiftEqual => Post::Compound(CompoundOp::RightShift),
+impl From<parse::Bop> for ProcessedBinop {
+    fn from(bop: parse::Bop) -> Self {
+        process_binop(&bop)
     }
 }
 

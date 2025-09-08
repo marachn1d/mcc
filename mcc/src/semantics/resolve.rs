@@ -274,23 +274,12 @@ fn resolve_init(init: &mut Option<ForInit>, map: &mut VarMap) -> Result<(), Erro
 fn resolve_expression(exp: &mut Expr, map: &mut VarMap) -> Result<(), Error> {
     match exp {
         Expr::Assignment { dst, src } => {
-            if dst.lvalue() {
+            if dst.as_lvalue().is_some() {
                 resolve_expression(dst, map)?;
                 resolve_expression(src, map)
             } else {
                 Err(Error::InvalidLval)
             }
-        }
-        Expr::Bin(Binary {
-            left,
-            right,
-            operator,
-        }) if operator.compound() => {
-            if !left.lvalue() {
-                return Err(Error::InvalidLval);
-            }
-            resolve_expression(left, map)?;
-            resolve_expression(right, map)
         }
 
         Expr::Conditional {
@@ -309,7 +298,7 @@ fn resolve_expression(exp: &mut Expr, map: &mut VarMap) -> Result<(), Error> {
         }
         Expr::IncDec { op: _, exp } => {
             resolve_expression(exp, map)?;
-            if exp.lvalue() {
+            if exp.as_lvalue().is_some() {
                 Ok(())
             } else {
                 Err(Error::InvalidLval)

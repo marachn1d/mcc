@@ -225,4 +225,20 @@ impl Expr {
             _ => None,
         }
     }
+
+    pub fn to_lvalue(self) -> Option<(Ident, VarType)> {
+        match self {
+            Self::Var { name, ty } => Some((name, ty)),
+            Self::Nested { inner, .. } | Self::Assignment { dst: inner, .. } => inner.to_lvalue(),
+            _ => None,
+        }
+    }
+
+    pub const fn as_lvalue(&self) -> Option<(&Ident, VarType)> {
+        match self {
+            Self::Var { name, ty } => Some((name, *ty)),
+            Self::Nested { inner, .. } | Self::Assignment { dst: inner, .. } => inner.as_lvalue(),
+            _ => None,
+        }
+    }
 }
