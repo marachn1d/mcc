@@ -274,14 +274,10 @@ fn resolve_init(init: &mut Option<ForInit>, map: &mut VarMap) -> Result<(), Erro
 fn resolve_expression(exp: &mut Expr, map: &mut VarMap) -> Result<(), Error> {
     match exp {
         Expr::Assignment { dst, src } => {
-            if dst.as_lvalue().is_some() {
-                resolve_expression(dst, map)?;
-                resolve_expression(src, map)
-            } else {
-                Err(Error::InvalidLval)
-            }
+            dst.check_lvalue()?;
+            resolve_expression(dst, map)?;
+            resolve_expression(src, map)
         }
-
         Expr::Conditional {
             condition,
             r#true,
@@ -298,11 +294,7 @@ fn resolve_expression(exp: &mut Expr, map: &mut VarMap) -> Result<(), Error> {
         }
         Expr::IncDec { op: _, exp } => {
             resolve_expression(exp, map)?;
-            if exp.as_lvalue().is_some() {
-                Ok(())
-            } else {
-                Err(Error::InvalidLval)
-            }
+            Ok(exp.check_lvalue()?)
         }
 
         Expr::Nested(inner) => resolve_expression(inner, map),
@@ -333,10 +325,16 @@ fn resolve_expression(exp: &mut Expr, map: &mut VarMap) -> Result<(), Error> {
 #[derive(Debug)]
 pub enum Error {
     DuplicateDec,
-    InvalidLval,
+    Lval(ast::parse::InvalidLVal),
     UndeclaredVar,
     UndeclaredFn,
     LocalFnDecBody,
     ConflictingDec,
     StaticBlockScopeFn,
+}
+
+impl From<ast::parse::InvalidLVal> for Error {
+    fn from(value: ast::parse::InvalidLVal) -> Self {
+        Self::Lval(value)
+    }
 }

@@ -160,6 +160,9 @@ pub enum Expr {
     },
 }
 
+#[derive(Debug)]
+pub struct InvalidLVal(Expr);
+
 impl Expr {
     pub fn const_eval(&self) -> Option<Constant> {
         match self {
@@ -211,10 +214,18 @@ impl Expr {
         }
     }
 
+    pub fn check_lvalue(&self) -> Result<(), InvalidLVal> {
+        match self {
+            Self::Var(_) => Ok(()),
+            Self::Nested(inner) => inner.check_lvalue(),
+            _ => Err(InvalidLVal(self.clone())),
+        }
+    }
+
     pub const fn as_lvalue(&self) -> Option<&Ident> {
         match self {
             Self::Var(l) => Some(l),
-            Self::Nested(inner) | Self::Assignment { dst: inner, .. } => inner.as_lvalue(),
+            Self::Nested(inner) => inner.as_lvalue(),
             _ => None,
         }
     }
