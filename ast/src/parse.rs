@@ -1,24 +1,106 @@
+use crate::stmnt_path::LookupError;
 use crate::Arr;
+use crate::StatementPath;
 use crate::{Constant, Ident, VarType};
 pub use inc_dec::*;
-use std::fmt::{self, Display, Formatter};
+use std::fmt::{self, Debug, Display, Formatter};
 
 #[derive(Debug)]
 pub struct Program(pub Box<[Dec]>);
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Dec {
     Fn(FnDec),
     Var(VarDec),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FnDec {
     pub name: Ident,
     pub params: ParamList,
     pub body: Option<Block>,
     pub sc: Option<StorageClass>,
     pub typ: FnType,
+}
+
+#[derive(Debug, Clone)]
+pub struct VarDec {
+    pub name: Ident,
+    pub init: Option<Expr>,
+    pub sc: Option<StorageClass>,
+    pub typ: VarType,
+}
+
+pub type Block = Arr<BlockItem>;
+pub type ParamList = Arr<Param>;
+
+#[derive(Debug, Copy, Clone, Hash)]
+pub enum StorageClass {
+    Static,
+    Extern,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FnType {
+    pub ret: Option<VarType>,
+    pub params: Box<[VarType]>,
+}
+
+#[derive(Debug, Clone)]
+pub enum BlockItem {
+    S(Stmnt),
+    D(Dec),
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub struct Param {
+    pub typ: VarType,
+    pub name: Ident,
+}
+
+#[derive(Debug, Clone)]
+pub enum Stmnt {
+    Ret(Expr),
+    Exp(Expr),
+    If {
+        condition: Expr,
+        then: Box<Self>,
+        r#else: Option<Box<Self>>,
+    },
+    Break,
+    Continue,
+    While {
+        condition: Expr,
+        body: Box<Self>,
+    },
+    DoWhile {
+        body: Box<Self>,
+        condition: Expr,
+    },
+    For {
+        init: Option<ForInit>,
+        condition: Option<Expr>,
+        post: Option<Expr>,
+        body: Box<Self>,
+    },
+    Compound(Block),
+    Label {
+        label: Label,
+        body: Box<Self>,
+    },
+    Goto(Ident),
+    Null,
+    Switch {
+        val: Expr,
+        body: Box<Self>,
+    },
+}
+
+impl std::ops::Index<&StatementPath> for Stmnt {
+    type Output = Self;
+    fn index(&self, index: &StatementPath) -> &Self::Output {
+        self.lookup(index).expect("invalid index")
+    }
 }
 
 impl From<FnDec> for Dec {
@@ -36,94 +118,6 @@ impl From<VarDec> for Dec {
 pub enum StaticInit {
     Int(i32),
     Long(i64),
-}
-
-impl std::fmt::Display for StaticInit {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            Self::Int(0) => f.write_str(".zero 4"),
-            Self::Long(0) => f.write_str(".zero 8"),
-            Self::Int(i) => write!(f, ".long {i}"),
-            Self::Long(i) => write!(f, ".quad {i}"),
-        }
-    }
-}
-
-impl From<Constant> for StaticInit {
-    fn from(c: Constant) -> Self {
-        match c {
-            Constant::Int(i) => Self::Int(i),
-
-            Constant::Long(i) => Self::Long(i),
-        }
-    }
-}
-pub type Block = Arr<BlockItem>;
-
-pub type ParamList = Arr<Param>;
-
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
-pub struct Param {
-    pub typ: VarType,
-    pub name: Ident,
-}
-
-#[derive(Debug)]
-pub struct VarDec {
-    pub name: Ident,
-    pub init: Option<Expr>,
-    pub sc: Option<StorageClass>,
-    pub typ: VarType,
-}
-
-#[derive(Debug, Copy, Clone, Hash)]
-pub enum StorageClass {
-    Static,
-    Extern,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct FnType {
-    pub ret: Option<VarType>,
-    pub params: Box<[VarType]>,
-}
-
-#[derive(Debug)]
-pub enum BlockItem {
-    S(Stmnt),
-    D(Dec),
-}
-
-impl BlockItem {
-    pub const fn as_inner(&self) -> (Option<&Stmnt>, Option<&Dec>) {
-        match self {
-            Self::S(s) => (Some(s), None),
-            Self::D(d) => (None, Some(d)),
-        }
-    }
-
-    pub fn into_inner(self) -> (Option<Stmnt>, Option<Dec>) {
-        match self {
-            Self::S(s) => (Some(s), None),
-            Self::D(d) => (None, Some(d)),
-        }
-    }
-
-    pub const fn as_stmnt(&self) -> Option<&Stmnt> {
-        self.as_inner().0
-    }
-
-    pub fn into_stmnt(self) -> Option<Stmnt> {
-        self.into_inner().0
-    }
-
-    pub fn into_dec(self) -> Option<Dec> {
-        self.into_inner().1
-    }
-
-    pub const fn as_dec(&self) -> Option<&Dec> {
-        self.as_inner().1
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -158,6 +152,70 @@ pub enum Expr {
         name: Ident,
         args: Box<[Self]>,
     },
+}
+
+impl std::fmt::Display for StaticInit {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::Int(0) => f.write_str(".zero 4"),
+            Self::Long(0) => f.write_str(".zero 8"),
+            Self::Int(i) => write!(f, ".long {i}"),
+            Self::Long(i) => write!(f, ".quad {i}"),
+        }
+    }
+}
+
+impl From<Constant> for StaticInit {
+    fn from(c: Constant) -> Self {
+        match c {
+            Constant::Int(i) => Self::Int(i),
+
+            Constant::Long(i) => Self::Long(i),
+        }
+    }
+}
+
+impl BlockItem {
+    pub const fn as_inner(&self) -> (Option<&Stmnt>, Option<&Dec>) {
+        match self {
+            Self::S(s) => (Some(s), None),
+            Self::D(d) => (None, Some(d)),
+        }
+    }
+
+    pub const fn as_inner_mut(&mut self) -> (Option<&mut Stmnt>, Option<&mut Dec>) {
+        match self {
+            Self::S(s) => (Some(s), None),
+            Self::D(d) => (None, Some(d)),
+        }
+    }
+
+    pub fn into_inner(self) -> (Option<Stmnt>, Option<Dec>) {
+        match self {
+            Self::S(s) => (Some(s), None),
+            Self::D(d) => (None, Some(d)),
+        }
+    }
+
+    pub const fn as_stmnt(&self) -> Option<&Stmnt> {
+        self.as_inner().0
+    }
+
+    pub const fn as_stmnt_mut(&mut self) -> Option<&mut Stmnt> {
+        self.as_inner_mut().0
+    }
+
+    pub fn into_stmnt(self) -> Option<Stmnt> {
+        self.into_inner().0
+    }
+
+    pub fn into_dec(self) -> Option<Dec> {
+        self.into_inner().1
+    }
+
+    pub const fn as_dec(&self) -> Option<&Dec> {
+        self.as_inner().1
+    }
 }
 
 #[derive(Debug)]
@@ -248,6 +306,17 @@ impl Expr {
     }
 }
 
+// use later
+fn _debug_depth(f: &mut Formatter, depth: Option<usize>, t: impl Debug) -> fmt::Result {
+    if let Some(depth) = depth {
+        write!(f, "|")?;
+        for _ in 0..depth {
+            write!(f, "-")?;
+        }
+    }
+    write!(f, "{:?}", t)
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct Unary {
     pub exp: Box<Expr>,
@@ -333,47 +402,184 @@ impl Bop {
     }
 }
 
-#[derive(Debug)]
-pub enum Stmnt {
-    Ret(Expr),
-    Exp(Expr),
-    If {
-        condition: Expr,
-        then: Box<Self>,
-        r#else: Option<Box<Self>>,
-    },
-    Break,
-    Continue,
-    While {
-        condition: Expr,
-        body: Box<Self>,
-    },
-    DoWhile {
-        body: Box<Self>,
-        condition: Expr,
-    },
-    For {
-        init: Option<ForInit>,
-        condition: Option<Expr>,
-        post: Option<Expr>,
-        body: Box<Self>,
-    },
-    Compound(Block),
-    Label {
-        label: Label,
-        body: Box<Self>,
-    },
-    Goto(Ident),
-    Null,
-    // breaking from the grammar here for ease of use later
-    Switch {
-        val: Expr,
+use std::collections::VecDeque;
 
-        cases: Arr<SwitchCase>,
-    },
+struct Cases<'a>(VecDeque<&'a Stmnt>);
+
+pub enum CaseRef<'a> {
+    Case(&'a Expr),
+    Default,
+}
+
+pub enum CaseRefMut<'a> {
+    Case(&'a Expr),
+    Default,
+}
+
+impl<'a> Iterator for Cases<'a> {
+    type Item = (CaseRef<'a>, &'a Stmnt);
+    fn next(&mut self) -> Option<Self::Item> {
+        fn extract_case<'a>(s: &'a Stmnt) -> Option<(CaseRef<'a>, &'a Stmnt)> {
+            match s {
+                Stmnt::Label {
+                    label: Label::Case(c),
+                    body,
+                } => Some((CaseRef::Case(c), body)),
+                Stmnt::Label {
+                    label: Label::Default,
+                    body,
+                } => Some((CaseRef::Default, body)),
+                _ => None,
+            }
+        }
+
+        let next = self.0.pop_front()?;
+        if let Some(case) = extract_case(next) {
+            self.0.push_back(case.1);
+            Some(case)
+        } else {
+            match next {
+                Stmnt::Label { body, .. }
+                | Stmnt::While { body, .. }
+                | Stmnt::DoWhile { body, .. }
+                | Stmnt::For { body, .. } => {
+                    self.0.push_back(body);
+                }
+                Stmnt::If { then, r#else, .. } => {
+                    self.0.push_back(then);
+                    if let Some(e) = r#else {
+                        self.0.push_back(e);
+                    }
+                }
+
+                Stmnt::Compound(block_items) => {
+                    self.0
+                        .extend(block_items.iter().filter_map(BlockItem::as_stmnt));
+                }
+
+                _ => (),
+            };
+            self.next()
+        }
+    }
+}
+
+impl<'a> CasesMut<'a> {
+    fn next(&mut self) -> Option<(CaseRefMut<'a>, NonNull<Stmnt>)> {
+        let mut next = self.stack.pop_front()?;
+        let next = unsafe { next.as_mut() };
+        match next {
+            Stmnt::Label {
+                label: Label::Case(c),
+                body,
+            } => Some((CaseRefMut::Case(c), NonNull::from_mut(body))),
+            Stmnt::Label {
+                label: Label::Default,
+                body,
+            } => Some((CaseRefMut::Default, NonNull::from_mut(body))),
+            Stmnt::Label { body, .. }
+            | Stmnt::While { body, .. }
+            | Stmnt::DoWhile { body, .. }
+            | Stmnt::For { body, .. } => {
+                self.stack.push_back(NonNull::from_mut(body));
+                self.next()
+            }
+            Stmnt::If { then, r#else, .. } => {
+                self.stack.push_back(NonNull::from_mut(then));
+                if let Some(e) = r#else {
+                    self.stack.push_back(NonNull::from_mut(e));
+                }
+                self.next()
+            }
+
+            Stmnt::Compound(block_items) => {
+                self.stack.extend(
+                    block_items
+                        .iter_mut()
+                        .filter_map(BlockItem::as_stmnt_mut)
+                        .map(NonNull::from_mut),
+                );
+                self.next()
+            }
+
+            _ => self.next(),
+        }
+    }
+}
+
+use std::marker::PhantomData;
+use std::ptr::NonNull;
+struct CasesMut<'a> {
+    stack: VecDeque<NonNull<Stmnt>>,
+    _marker: PhantomData<&'a Stmnt>,
 }
 
 impl Stmnt {
+    pub fn lookup(&self, path: &StatementPath) -> Result<&Self, LookupError<Self>> {
+        let mut cur = self;
+        //let mut history = vec![];
+        //let mut final_idx = 0;
+        for idx in path.into_iter().copied() {
+            let err = || LookupError {
+                last: cur.clone(),
+                invalid_idx: idx,
+                path: path.clone(),
+                top_level: self.clone(),
+            };
+
+            match self {
+                Stmnt::If {
+                    then: zero,
+                    r#else: Some(one),
+                    ..
+                } => match idx {
+                    0 => cur = zero,
+                    1 => cur = one,
+                    _ => return Err(err()),
+                },
+
+                Stmnt::While { body, .. }
+                | Stmnt::For { body, .. }
+                | Stmnt::If {
+                    then: body,
+                    r#else: None,
+                    ..
+                }
+                | Stmnt::DoWhile { body, .. }
+                | Stmnt::Label { body, .. }
+                | Stmnt::Switch { body, .. } => {
+                    if idx == 0 {
+                        cur = body;
+                    } else {
+                        return Err(err());
+                    }
+                }
+
+                Stmnt::Compound(block_items) => match block_items.get(idx as usize) {
+                    Some(BlockItem::S(s)) => cur = s,
+                    None | Some(BlockItem::D(_)) => return Err(err()),
+                },
+                Stmnt::Ret(_)
+                | Stmnt::Exp(_)
+                | Stmnt::Break
+                | Stmnt::Continue
+                | Stmnt::Goto(_)
+                | Stmnt::Null => return Err(err()),
+            }
+        }
+        Ok(cur)
+        /*
+        let last: Self = *cur.clone();
+        let top_level: Self = self.clone();
+        Err(LookupError {
+            last,
+            invalid_idx: final_idx,
+            path: path.clone(),
+            top_level,
+        })
+            */
+    }
+
     pub const fn secondary(&self) -> bool {
         !self.primary()
     }
@@ -388,6 +594,17 @@ impl Stmnt {
                 | Self::DoWhile { .. }
                 | Self::For { .. }
         )
+    }
+
+    fn cases<'a>(&'a self) -> Cases<'a> {
+        Cases(VecDeque::from_iter([self]))
+    }
+
+    fn cases_mut<'a>(&'a mut self) -> CasesMut<'a> {
+        CasesMut {
+            stack: VecDeque::from_iter([NonNull::from_mut(self)]),
+            _marker: PhantomData,
+        }
     }
 }
 
@@ -450,7 +667,7 @@ impl From<Constant> for Case {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ForInit {
     D(VarDec),
     E(Expr),
@@ -507,6 +724,24 @@ pub mod inc_dec {
     pub struct IncDec {
         pub inc: IncOp,
         pub fix: Fix,
+    }
+
+    impl IncDec {
+        pub const fn pre(&self) -> bool {
+            matches!(self.fix, Fix::Pre)
+        }
+
+        pub const fn post(&self) -> bool {
+            !self.pre()
+        }
+
+        pub const fn inc(&self) -> bool {
+            matches!(self.inc, IncOp::Inc)
+        }
+
+        pub const fn dec(&self) -> bool {
+            !self.inc()
+        }
     }
 
     impl std::fmt::Display for IncDec {
@@ -582,5 +817,21 @@ pub struct Function {
 impl Display for Function {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "Function(\nname={},\nbody={:?}\n)", self.name, self.body)
+    }
+}
+
+fn fmt_depth(f: &mut Formatter, depth: usize) -> fmt::Result {
+    write!(f, "|-")?;
+    for _ in 0..depth {
+        write!(f, "-")?;
+    }
+
+    Ok(())
+}
+
+impl Unary {
+    fn debug(&self, f: &mut Formatter, depth: usize) -> fmt::Result {
+        fmt_depth(f, depth)?;
+        write!(f, " {:?}{:?}", self.op, self.exp)
     }
 }

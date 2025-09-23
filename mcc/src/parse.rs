@@ -203,9 +203,7 @@ fn statement(tokens: &mut TokenIter) -> Result<Stmnt, Error> {
         }
         Token::If => {
             tokens.next();
-            tokens.consume(Token::OpenParen)?;
-            let condition = expression(tokens, None)?;
-            tokens.consume(Token::CloseParen)?;
+            let condition = bracket_expression(tokens, None)?;
             let stmnt = statement(tokens)?;
             let r#else = if tokens.consume(Token::Else).is_ok() {
                 Some(Box::new(statement(tokens)?))
@@ -220,9 +218,9 @@ fn statement(tokens: &mut TokenIter) -> Result<Stmnt, Error> {
         }
         Token::Switch => {
             tokens.next();
-            let expr = expression(tokens, None)?;
-            let stmnt = statement(tokens)?;
-            fixup_switch(expr, stmnt)?
+            let val = bracket_expression(tokens, None)?;
+            let body = Box::new(statement(tokens)?);
+            Stmnt::Switch { val, body }
         }
         Token::Goto => {
             tokens.next();
@@ -277,10 +275,7 @@ fn statement(tokens: &mut TokenIter) -> Result<Stmnt, Error> {
         }
         Token::While => {
             tokens.next();
-            tokens.consume(Token::OpenParen)?;
-            let condition = expression(tokens, None)?;
-
-            tokens.consume(Token::CloseParen)?;
+            let condition = bracket_expression(tokens, None)?;
             Stmnt::While {
                 condition,
                 body: Box::new(statement(tokens)?),
@@ -289,9 +284,9 @@ fn statement(tokens: &mut TokenIter) -> Result<Stmnt, Error> {
         Token::Do => {
             tokens.next();
             let body = Box::new(statement(tokens)?);
-            tokens.consume_arr([Token::While, Token::OpenParen])?;
-            let condition = expression(tokens, None)?;
-            tokens.consume_arr([Token::CloseParen, Token::Semicolon])?;
+            tokens.consume(Token::While)?;
+            let condition = bracket_expression(tokens, None)?;
+            tokens.consume(Token::Semicolon)?;
             Stmnt::DoWhile { body, condition }
         }
         Token::For => {
@@ -322,6 +317,7 @@ fn statement(tokens: &mut TokenIter) -> Result<Stmnt, Error> {
     })
 }
 
+// TODO: move this out of here
 fn fixup_switch(val: Expr, stmnt: Stmnt) -> Result<Stmnt, Error> {
     let mut cases = vec![];
     match stmnt {
@@ -387,16 +383,30 @@ pub struct DebugStmnt {
     line: usize,
 }
 
+fn bracketed<T, F: FnMut(&mut TokenIter) -> Result<T, Error>>(
+    tokens: &mut TokenIter,
+    inner: &mut F,
+) -> Result<T, Error> {
+    tokens.consume(Token::OpenParen)?;
+    let res = inner(tokens)?;
+    tokens.consume(Token::CloseParen)?;
+    Ok(res)
+}
+
+fn bracket_expression(tokens: &mut TokenIter, min_precedence: Option<u8>) -> Result<Expr, Error> {
+    bracketed(tokens, &mut |tokens| expression(tokens, min_precedence))
+}
+
 fn expression(tokens: &mut TokenIter, min_precedence: Option<u8>) -> Result<Expr, Error> {
     let precedence = min_precedence.unwrap_or(0);
 
     let mut left = factor(tokens)?;
 
     while let Some(maybe_compound) = binary_operator(tokens, precedence) {
-        match maybe_compound.bop {
+        left = match maybe_compound.bop {
             Bop::Equals => {
                 let right = Box::from(expression(tokens, Some(maybe_compound.precedence()))?);
-                left = Expr::Assignment {
+                Expr::Assignment {
                     dst: left.into(),
                     src: right,
                 }
@@ -405,31 +415,32 @@ fn expression(tokens: &mut TokenIter, min_precedence: Option<u8>) -> Result<Expr
                 let middle = expression(tokens, None)?;
                 tokens.consume(Token::Colon)?;
                 let right = expression(tokens, Some(maybe_compound.precedence()))?;
-                left = Expr::Conditional {
+                Expr::Conditional {
                     condition: left.into(),
                     r#true: middle.into(),
                     r#false: right.into(),
                 }
             }
             operator if maybe_compound.is_compound => {
-                let right = expression(tokens, Some(operator.precedence()))?;
+                // this doesn't associate properly
+                let right = expression(tokens, Some(maybe_compound.precedence()))?;
                 let inner = Expr::Bin(Binary {
                     left: Box::new(left.clone()),
                     right: Box::new(right),
                     operator,
                 });
-                left = Expr::Assignment {
+                Expr::Assignment {
                     dst: left.into(),
                     src: inner.into(),
                 }
             }
             operator => {
-                let right = expression(tokens, Some(operator.precedence() + 1))?;
-                left = Expr::Bin(Binary {
+                let right = expression(tokens, Some(maybe_compound.precedence() + 1))?;
+                Expr::Bin(Binary {
                     left: Box::new(left),
                     right: Box::new(right),
                     operator,
-                });
+                })
             }
         }
     }
@@ -529,10 +540,10 @@ impl MaybeCompound {
 }
 
 fn binary_operator(tokens: &mut TokenIter, min_precedence: u8) -> Option<MaybeCompound> {
-    let token = MaybeCompound::new(tokens.peek()?)?;
-    if token.precedence() >= min_precedence {
+    let maybe_compound = MaybeCompound::new(tokens.peek()?)?;
+    if maybe_compound.precedence() >= min_precedence {
         tokens.next();
-        Some(token)
+        Some(maybe_compound)
     } else {
         None
     }

@@ -170,6 +170,18 @@ fn for_stmnt(
 }
 
 fn label_statement(statement: parse::Stmnt, cur: &mut Scope) -> Result<Stmnt, Error> {
+    handle_statement(statement, cur, false)
+}
+
+fn label_switch_body_statement(statement: parse::Stmnt, cur: &mut Scope) -> Result<Stmnt, Error> {
+    handle_statement(statement, cur, true)
+}
+
+fn handle_statement(
+    statement: parse::Stmnt,
+    cur: &mut Scope,
+    in_switch: bool,
+) -> Result<Stmnt, Error> {
     //use parse::Stmnt;
     match statement {
         parse::Stmnt::DoWhile { body, condition } => do_while(*body, condition, cur),
@@ -202,7 +214,7 @@ fn label_statement(statement: parse::Stmnt, cur: &mut Scope) -> Result<Stmnt, Er
         parse::Stmnt::Label {
             label: AstLabel::Named(name),
             body,
-        } => label_statement(*body, cur).map(|body| {
+        } => handle_statement(*body, cur, in_switch).map(|body| {
             Ok(Stmnt::Label {
                 name: Label::Named(name),
                 body: Box::new(body),
@@ -211,17 +223,27 @@ fn label_statement(statement: parse::Stmnt, cur: &mut Scope) -> Result<Stmnt, Er
         parse::Stmnt::Label {
             label: parse::Label::Default | parse::Label::Case(_),
             ..
-        } => Err(Error::Switch),
+        } if !in_switch => Err(Error::Switch),
 
-        parse::Stmnt::Switch { val, cases } => {
-            let (val, cases) = resolve_switch(cur, val, cases)?;
-            Ok(Stmnt::Switch {
-                val,
-                cases,
-                label: new_label(),
-            })
+        parse::Stmnt::Label {
+            label: label @ (parse::Label::Default | parse::Label::Case(_)),
+            body,
+        } => {
+            let case = resolve_switch_label(label);
+            let body = handle_statement(*body, cur, in_switch)?;
+            //Ok(Stmnt::Label{})
+            todo!()
         }
+        parse::Stmnt::Switch { val, cases } => resolve_switch(cur, val, cases),
         parse::Stmnt::Null => Ok(Stmnt::Null),
+    }
+}
+
+fn resolve_switch_label(case: AstLabel) -> labeled::Case {
+    match case {
+        AstLabel::Case(case) => labeled::Case::Case(exp(Some(case)).unwrap()),
+        AstLabel::Default => labeled::Case::Default,
+        AstLabel::Named(_) => unreachable!(),
     }
 }
 
@@ -229,7 +251,9 @@ fn resolve_switch(
     scope: &mut Scope,
     val: parse::Expr,
     cases: Box<[parse::SwitchCase]>,
-) -> Result<(Expr, Box<[SwitchCase]>), Error> {
+) -> Result<Stmnt, Error> {
+    let label = new_label();
+    let prev_switch = scope.switch.replace(label);
     use std::collections::HashSet;
     let mut seen_cases = HashSet::new();
     let mut new_cases: Vec<SwitchCase> = Vec::with_capacity(cases.len());
@@ -249,7 +273,12 @@ fn resolve_switch(
         };
         new_cases.push(SwitchCase::new(case, label_statement(body, scope)?))
     }
-    Ok((val.into(), new_cases.into()))
+    scope.switch = prev_switch;
+    Ok(Stmnt::Switch {
+        val: val.into(),
+        cases: new_cases.into(),
+        label,
+    })
 }
 
 fn if_stmnt(
@@ -271,30 +300,17 @@ fn if_stmnt(
     })
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 struct Scope {
     normal: Option<LabelId>,
-    switch: Option<SwitchState>,
-}
-
-#[derive(Clone)]
-struct SwitchState {
-    default: bool,
-    cases: Vec<Expr>,
-    label: LabelId,
-}
-
-impl SwitchState {
-    const fn new(id: LabelId) -> Self {
-        Self {
-            default: false,
-            cases: Vec::new(),
-            label: id,
-        }
-    }
+    switch: Option<LabelId>,
 }
 
 impl Scope {
+    fn in_switch(&self) -> bool {
+        self.switch.is_some()
+    }
+
     const fn default() -> Self {
         Scope {
             normal: None,
@@ -303,8 +319,7 @@ impl Scope {
     }
 
     fn cur(&self) -> Option<LabelId> {
-        let switch_label = self.switch.as_ref().map(|x| x.label);
-        match (self.normal, switch_label) {
+        match (self.normal, self.switch) {
             (Some(s), None) | (None, Some(s)) => Some(s),
             (None, None) => None,
 

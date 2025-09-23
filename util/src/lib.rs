@@ -1,6 +1,4 @@
-pub mod identifier;
 mod slice_iter;
-pub mod symbol_table;
 mod var_map;
 
 pub use slice_iter::Expected;

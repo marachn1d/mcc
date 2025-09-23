@@ -240,14 +240,10 @@ fn resolve_statement(statement: &mut Stmnt, map: &mut VarMap) -> Result<(), Erro
             resolve_statement(body, &mut new_map)
         }
 
-        Stmnt::Switch { val, cases } => {
-            resolve_expression(val, map)?;
-            for SwitchCase { body, case } in cases {
-                if let Some(Case::Case(c)) = case {
-                    resolve_expression(c, map)?;
-                }
-                resolve_statement(body, map)?;
-            }
+        Stmnt::Switch { val, body } => {
+            let mut scope = new_scope(map);
+            resolve_expression(val, &mut scope)?;
+            resolve_statement(body, &mut scope)?;
             Ok(())
         }
 
