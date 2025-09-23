@@ -2,7 +2,7 @@ mod specifier_list;
 
 pub use ast::parse::{
     Binary, Block, BlockItem, Bop, Dec, Expr, FnDec, FnType, ForInit, Label, Param, ParamList,
-    Program, Stmnt, StorageClass, SwitchCase, UnOp, Unary, VarDec,
+    Program, Stmnt, StorageClass, UnOp, Unary, VarDec,
 };
 pub use ast::{Arr, VarType};
 
@@ -203,7 +203,9 @@ fn statement(tokens: &mut TokenIter) -> Result<Stmnt, Error> {
         }
         Token::If => {
             tokens.next();
-            let condition = bracket_expression(tokens, None)?;
+            tokens.consume(Token::OpenParen)?;
+            let condition = expression(tokens, None)?;
+            tokens.consume(Token::CloseParen)?;
             let stmnt = statement(tokens)?;
             let r#else = if tokens.consume(Token::Else).is_ok() {
                 Some(Box::new(statement(tokens)?))
@@ -218,9 +220,11 @@ fn statement(tokens: &mut TokenIter) -> Result<Stmnt, Error> {
         }
         Token::Switch => {
             tokens.next();
-            let val = bracket_expression(tokens, None)?;
+            tokens.consume(Token::OpenParen)?;
+            let expr = expression(tokens, None)?;
+            tokens.consume(Token::CloseParen)?;
             let body = Box::new(statement(tokens)?);
-            Stmnt::Switch { val, body }
+            Stmnt::Switch { val: expr, body }
         }
         Token::Goto => {
             tokens.next();
@@ -264,7 +268,7 @@ fn statement(tokens: &mut TokenIter) -> Result<Stmnt, Error> {
             };
 
             tokens.consume(Token::Colon)?;
-            let label = Label::Case(Expr::Const(con));
+            let label = Label::Case(con);
             let body = statement(tokens)?.into();
             Stmnt::Label { label, body }
         }
@@ -275,7 +279,10 @@ fn statement(tokens: &mut TokenIter) -> Result<Stmnt, Error> {
         }
         Token::While => {
             tokens.next();
-            let condition = bracket_expression(tokens, None)?;
+            tokens.consume(Token::OpenParen)?;
+            let condition = expression(tokens, None)?;
+
+            tokens.consume(Token::CloseParen)?;
             Stmnt::While {
                 condition,
                 body: Box::new(statement(tokens)?),
@@ -284,9 +291,9 @@ fn statement(tokens: &mut TokenIter) -> Result<Stmnt, Error> {
         Token::Do => {
             tokens.next();
             let body = Box::new(statement(tokens)?);
-            tokens.consume(Token::While)?;
-            let condition = bracket_expression(tokens, None)?;
-            tokens.consume(Token::Semicolon)?;
+            tokens.consume_arr([Token::While, Token::OpenParen])?;
+            let condition = expression(tokens, None)?;
+            tokens.consume_arr([Token::CloseParen, Token::Semicolon])?;
             Stmnt::DoWhile { body, condition }
         }
         Token::For => {
@@ -317,46 +324,6 @@ fn statement(tokens: &mut TokenIter) -> Result<Stmnt, Error> {
     })
 }
 
-// TODO: move this out of here
-fn fixup_switch(val: Expr, stmnt: Stmnt) -> Result<Stmnt, Error> {
-    let mut cases = vec![];
-    match stmnt {
-        Stmnt::Compound(b) => {
-            cases.reserve(b.len());
-            for item in b {
-                match item {
-                    BlockItem::S(stmnt) => cases.push(switch_case(stmnt)?),
-                    b @ BlockItem::D(Dec::Var(_)) => {
-                        cases.push(switch_case(Stmnt::Compound(Box::new([b])))?)
-                    }
-                    BlockItem::D(Dec::Fn(_)) => todo!(),
-                }
-            }
-        }
-        other => cases.push(switch_case(other)?),
-    };
-
-    Ok(Stmnt::Switch {
-        val,
-        cases: cases.into(),
-    })
-}
-
-fn switch_case(stmnt: Stmnt) -> Result<SwitchCase, Error> {
-    match stmnt {
-        Stmnt::Label {
-            label: Label::Case(c),
-            body,
-        } => Ok(SwitchCase::case(c, *body)),
-        Stmnt::Label {
-            label: Label::Default,
-            body,
-        } => Ok(SwitchCase::default(*body)),
-        body if body.secondary() => Ok(SwitchCase::block(body)),
-        _ => Err(Error::Catchall("expected secondary statement")),
-    }
-}
-
 fn optional_expr(tokens: &mut TokenIter, delim: Token) -> Result<Option<Expr>, Error> {
     if tokens.consume(delim.clone()).is_ok() {
         Ok(None)
@@ -383,30 +350,16 @@ pub struct DebugStmnt {
     line: usize,
 }
 
-fn bracketed<T, F: FnMut(&mut TokenIter) -> Result<T, Error>>(
-    tokens: &mut TokenIter,
-    inner: &mut F,
-) -> Result<T, Error> {
-    tokens.consume(Token::OpenParen)?;
-    let res = inner(tokens)?;
-    tokens.consume(Token::CloseParen)?;
-    Ok(res)
-}
-
-fn bracket_expression(tokens: &mut TokenIter, min_precedence: Option<u8>) -> Result<Expr, Error> {
-    bracketed(tokens, &mut |tokens| expression(tokens, min_precedence))
-}
-
 fn expression(tokens: &mut TokenIter, min_precedence: Option<u8>) -> Result<Expr, Error> {
     let precedence = min_precedence.unwrap_or(0);
 
     let mut left = factor(tokens)?;
 
-    while let Some(maybe_compound) = binary_operator(tokens, precedence) {
-        left = match maybe_compound.bop {
+    while let Some(operator) = binary_operator(tokens, precedence) {
+        match operator {
             Bop::Equals => {
-                let right = Box::from(expression(tokens, Some(maybe_compound.precedence()))?);
-                Expr::Assignment {
+                let right = Box::from(expression(tokens, Some(operator.precedence()))?);
+                left = Expr::Assignment {
                     dst: left.into(),
                     src: right,
                 }
@@ -414,136 +367,80 @@ fn expression(tokens: &mut TokenIter, min_precedence: Option<u8>) -> Result<Expr
             Bop::Ternary => {
                 let middle = expression(tokens, None)?;
                 tokens.consume(Token::Colon)?;
-                let right = expression(tokens, Some(maybe_compound.precedence()))?;
-                Expr::Conditional {
+                let right = expression(tokens, Some(operator.precedence()))?;
+                left = Expr::Conditional {
                     condition: left.into(),
                     r#true: middle.into(),
                     r#false: right.into(),
                 }
             }
-            operator if maybe_compound.is_compound => {
-                // this doesn't associate properly
-                let right = expression(tokens, Some(maybe_compound.precedence()))?;
-                let inner = Expr::Bin(Binary {
-                    left: Box::new(left.clone()),
-                    right: Box::new(right),
-                    operator,
-                });
-                Expr::Assignment {
-                    dst: left.into(),
-                    src: inner.into(),
-                }
-            }
-            operator => {
-                let right = expression(tokens, Some(maybe_compound.precedence() + 1))?;
-                Expr::Bin(Binary {
+            operator if operator.compound() => {
+                let right = expression(tokens, Some(operator.precedence()))?;
+                left = Expr::Bin(Binary {
                     left: Box::new(left),
                     right: Box::new(right),
                     operator,
-                })
+                });
+            }
+            operator => {
+                let right = expression(tokens, Some(operator.precedence() + 1))?;
+                left = Expr::Bin(Binary {
+                    left: Box::new(left),
+                    right: Box::new(right),
+                    operator,
+                });
             }
         }
     }
     Ok(left)
 }
 
-/*
-fn desugared_binary(tokens:&mut TokenIter, min_precedence:u8) -> (Bop,Option<Bop>){
-    match binary_operator(tokens, min_precedence){
-        Some(bop) => {
-            match bop.split_compound(){
-                Some(split)
-            }
-        },
-        None => None,
-    }
-    if let Some(bop) = binary_operator(tokens, min_precedence){
-    }else{
-        None
-    }
-}
-*/
+fn binary_operator(tokens: &mut TokenIter, min_precedence: u8) -> Option<Bop> {
+    let token = match tokens.peek()? {
+        Token::Plus => Some(Bop::Add),
+        Token::Minus => Some(Bop::Subtract),
+        Token::Asterisk => Some(Bop::Multiply),
+        Token::Slash => Some(Bop::Divide),
+        Token::Percent => Some(Bop::Remainder),
 
-struct MaybeCompound {
-    bop: Bop,
-    is_compound: bool,
-}
+        Token::LeftShift => Some(Bop::LeftShift),
+        Token::RightShift => Some(Bop::RightShift),
+        Token::Ampersand => Some(Bop::BitAnd),
+        Token::Bar => Some(Bop::BitOr),
+        Token::Caret => Some(Bop::Xor),
 
-impl MaybeCompound {
-    const fn atom(bop: Bop) -> Self {
-        Self {
-            bop,
-            is_compound: false,
-        }
-    }
+        Token::LogicalAnd => Some(Bop::LogAnd),
+        Token::LogicalOr => Some(Bop::LogOr),
 
-    const fn compound(bop: Bop) -> Self {
-        Self {
-            bop,
-            is_compound: true,
-        }
-    }
+        Token::EqualTo => Some(Bop::EqualTo),
+        Token::NotEqual => Some(Bop::NotEqual),
+        Token::LessThan => Some(Bop::LessThan),
+        Token::GreaterThan => Some(Bop::GreaterThan),
+        Token::Leq => Some(Bop::Leq),
+        Token::Geq => Some(Bop::Geq),
 
-    const fn precedence(&self) -> u8 {
-        if self.is_compound {
-            Bop::Equals.precedence()
-        } else {
-            self.bop.precedence()
-        }
-    }
+        Token::Equals => Some(Bop::Equals),
+        Token::PlusEqual => Some(Bop::PlusEquals),
+        Token::MinusEqual => Some(Bop::MinusEquals),
+        Token::TimesEqual => Some(Bop::TimesEqual),
+        Token::DivEqual => Some(Bop::DivEqual),
+        Token::PercentEqual => Some(Bop::RemEqual),
 
-    fn new(token: &Token) -> Option<Self> {
-        let bop = match token {
-            Token::Plus | Token::PlusEqual => Some(Bop::Add),
-            Token::Minus | Token::MinusEqual => Some(Bop::Subtract),
-            Token::Asterisk | Token::TimesEqual => Some(Bop::Multiply),
-            Token::Slash | Token::DivEqual => Some(Bop::Divide),
-            Token::Percent | Token::PercentEqual => Some(Bop::Remainder),
+        Token::BitAndEqual => Some(Bop::BitAndEqual),
 
-            Token::LeftShift | Token::LeftShiftEqual => Some(Bop::LeftShift),
-            Token::RightShift | Token::RightShiftEqual => Some(Bop::RightShift),
-            Token::Ampersand | Token::BitAndEqual => Some(Bop::BitAnd),
-            Token::Bar | Token::BitOrEqual => Some(Bop::BitOr),
-            Token::Caret | Token::BitXorEqual => Some(Bop::Xor),
+        Token::BitOrEqual => Some(Bop::BitOrEqual),
 
-            Token::LogicalAnd => Some(Bop::LogAnd),
-            Token::LogicalOr => Some(Bop::LogOr),
+        Token::BitXorEqual => Some(Bop::BitXorEqual),
+        Token::LeftShiftEqual => Some(Bop::LeftShiftEqual),
+        Token::RightShiftEqual => Some(Bop::RightShiftEqual),
 
-            Token::EqualTo => Some(Bop::EqualTo),
-            Token::NotEqual => Some(Bop::NotEqual),
-            Token::LessThan => Some(Bop::LessThan),
-            Token::GreaterThan => Some(Bop::GreaterThan),
-            Token::Leq => Some(Bop::Leq),
-            Token::Geq => Some(Bop::Geq),
+        Token::QuestionMark => Some(Bop::Ternary),
 
-            Token::Equals => Some(Bop::Equals),
-
-            Token::QuestionMark => Some(Bop::Ternary),
-
-            _ => None,
-        }?;
-        let constructor: fn(Bop) -> Self = match token {
-            Token::PlusEqual
-            | Token::MinusEqual
-            | Token::TimesEqual
-            | Token::DivEqual
-            | Token::PercentEqual
-            | Token::LeftShiftEqual
-            | Token::RightShiftEqual
-            | Token::BitAndEqual
-            | Token::BitOrEqual
-            | Token::BitXorEqual => Self::compound,
-            _ => Self::atom,
-        };
-        Some(constructor(bop))
-    }
-}
-
-fn binary_operator(tokens: &mut TokenIter, min_precedence: u8) -> Option<MaybeCompound> {
-    let maybe_compound = MaybeCompound::new(tokens.peek()?)?;
-    if maybe_compound.precedence() >= min_precedence {
+        _ => None,
+    }?;
+    if token.precedence() >= min_precedence {
         tokens.next();
-        Some(maybe_compound)
+        Some(token)
     } else {
         None
     }

@@ -1,106 +1,24 @@
-use crate::stmnt_path::LookupError;
 use crate::Arr;
-use crate::StatementPath;
 use crate::{Constant, Ident, VarType};
 pub use inc_dec::*;
-use std::fmt::{self, Debug, Display, Formatter};
+use std::fmt::{self, Display, Formatter};
 
 #[derive(Debug)]
 pub struct Program(pub Box<[Dec]>);
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum Dec {
     Fn(FnDec),
     Var(VarDec),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct FnDec {
     pub name: Ident,
     pub params: ParamList,
     pub body: Option<Block>,
     pub sc: Option<StorageClass>,
     pub typ: FnType,
-}
-
-#[derive(Debug, Clone)]
-pub struct VarDec {
-    pub name: Ident,
-    pub init: Option<Expr>,
-    pub sc: Option<StorageClass>,
-    pub typ: VarType,
-}
-
-pub type Block = Arr<BlockItem>;
-pub type ParamList = Arr<Param>;
-
-#[derive(Debug, Copy, Clone, Hash)]
-pub enum StorageClass {
-    Static,
-    Extern,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct FnType {
-    pub ret: Option<VarType>,
-    pub params: Box<[VarType]>,
-}
-
-#[derive(Debug, Clone)]
-pub enum BlockItem {
-    S(Stmnt),
-    D(Dec),
-}
-
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
-pub struct Param {
-    pub typ: VarType,
-    pub name: Ident,
-}
-
-#[derive(Debug, Clone)]
-pub enum Stmnt {
-    Ret(Expr),
-    Exp(Expr),
-    If {
-        condition: Expr,
-        then: Box<Self>,
-        r#else: Option<Box<Self>>,
-    },
-    Break,
-    Continue,
-    While {
-        condition: Expr,
-        body: Box<Self>,
-    },
-    DoWhile {
-        body: Box<Self>,
-        condition: Expr,
-    },
-    For {
-        init: Option<ForInit>,
-        condition: Option<Expr>,
-        post: Option<Expr>,
-        body: Box<Self>,
-    },
-    Compound(Block),
-    Label {
-        label: Label,
-        body: Box<Self>,
-    },
-    Goto(Ident),
-    Null,
-    Switch {
-        val: Expr,
-        body: Box<Self>,
-    },
-}
-
-impl std::ops::Index<&StatementPath> for Stmnt {
-    type Output = Self;
-    fn index(&self, index: &StatementPath) -> &Self::Output {
-        self.lookup(index).expect("invalid index")
-    }
 }
 
 impl From<FnDec> for Dec {
@@ -120,7 +38,63 @@ pub enum StaticInit {
     Long(i64),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+impl std::fmt::Display for StaticInit {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::Int(0) => f.write_str(".zero 4"),
+            Self::Long(0) => f.write_str(".zero 8"),
+            Self::Int(i) => write!(f, ".long {i}"),
+            Self::Long(i) => write!(f, ".quad {i}"),
+        }
+    }
+}
+
+impl From<Constant> for StaticInit {
+    fn from(c: Constant) -> Self {
+        match c {
+            Constant::Int(i) => Self::Int(i),
+
+            Constant::Long(i) => Self::Long(i),
+        }
+    }
+}
+pub type Block = Arr<BlockItem>;
+
+pub type ParamList = Arr<Param>;
+
+#[derive(Debug, Clone)]
+pub struct Param {
+    pub typ: VarType,
+    pub name: Ident,
+}
+
+#[derive(Debug)]
+pub struct VarDec {
+    pub name: Ident,
+    pub init: Option<Expr>,
+    pub sc: Option<StorageClass>,
+    pub typ: VarType,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum StorageClass {
+    Static,
+    Extern,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FnType {
+    pub ret: Option<VarType>,
+    pub params: Box<[VarType]>,
+}
+
+#[derive(Debug)]
+pub enum BlockItem {
+    S(Stmnt),
+    D(Dec),
+}
+
+#[derive(Debug, Clone)]
 pub enum Expr {
     Assignment {
         dst: Box<Self>,
@@ -153,73 +127,6 @@ pub enum Expr {
         args: Box<[Self]>,
     },
 }
-
-impl std::fmt::Display for StaticInit {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            Self::Int(0) => f.write_str(".zero 4"),
-            Self::Long(0) => f.write_str(".zero 8"),
-            Self::Int(i) => write!(f, ".long {i}"),
-            Self::Long(i) => write!(f, ".quad {i}"),
-        }
-    }
-}
-
-impl From<Constant> for StaticInit {
-    fn from(c: Constant) -> Self {
-        match c {
-            Constant::Int(i) => Self::Int(i),
-
-            Constant::Long(i) => Self::Long(i),
-        }
-    }
-}
-
-impl BlockItem {
-    pub const fn as_inner(&self) -> (Option<&Stmnt>, Option<&Dec>) {
-        match self {
-            Self::S(s) => (Some(s), None),
-            Self::D(d) => (None, Some(d)),
-        }
-    }
-
-    pub const fn as_inner_mut(&mut self) -> (Option<&mut Stmnt>, Option<&mut Dec>) {
-        match self {
-            Self::S(s) => (Some(s), None),
-            Self::D(d) => (None, Some(d)),
-        }
-    }
-
-    pub fn into_inner(self) -> (Option<Stmnt>, Option<Dec>) {
-        match self {
-            Self::S(s) => (Some(s), None),
-            Self::D(d) => (None, Some(d)),
-        }
-    }
-
-    pub const fn as_stmnt(&self) -> Option<&Stmnt> {
-        self.as_inner().0
-    }
-
-    pub const fn as_stmnt_mut(&mut self) -> Option<&mut Stmnt> {
-        self.as_inner_mut().0
-    }
-
-    pub fn into_stmnt(self) -> Option<Stmnt> {
-        self.into_inner().0
-    }
-
-    pub fn into_dec(self) -> Option<Dec> {
-        self.into_inner().1
-    }
-
-    pub const fn as_dec(&self) -> Option<&Dec> {
-        self.as_inner().1
-    }
-}
-
-#[derive(Debug)]
-pub struct InvalidLVal(Expr);
 
 impl Expr {
     pub fn const_eval(&self) -> Option<Constant> {
@@ -272,19 +179,11 @@ impl Expr {
         }
     }
 
-    pub fn check_lvalue(&self) -> Result<(), InvalidLVal> {
+    pub const fn lvalue(&self) -> bool {
         match self {
-            Self::Var(_) => Ok(()),
-            Self::Nested(inner) => inner.check_lvalue(),
-            _ => Err(InvalidLVal(self.clone())),
-        }
-    }
-
-    pub const fn as_lvalue(&self) -> Option<&Ident> {
-        match self {
-            Self::Var(l) => Some(l),
-            Self::Nested(inner) => inner.as_lvalue(),
-            _ => None,
+            Self::Var(_) => true,
+            Self::Nested(e) => e.lvalue(),
+            _ => false,
         }
     }
 
@@ -306,38 +205,27 @@ impl Expr {
     }
 }
 
-// use later
-fn _debug_depth(f: &mut Formatter, depth: Option<usize>, t: impl Debug) -> fmt::Result {
-    if let Some(depth) = depth {
-        write!(f, "|")?;
-        for _ in 0..depth {
-            write!(f, "-")?;
-        }
-    }
-    write!(f, "{:?}", t)
-}
-
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone)]
 pub struct Unary {
     pub exp: Box<Expr>,
     pub op: UnOp,
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum UnOp {
     Complement,
     Negate,
     Not,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone)]
 pub struct Binary {
     pub operator: Bop,
     pub left: Box<Expr>,
     pub right: Box<Expr>,
 }
 
-#[derive(Debug, Eq, PartialEq, Copy, Clone, Hash)]
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum Bop {
     Add,
     Subtract,
@@ -360,13 +248,34 @@ pub enum Bop {
 
     Equals,
 
+    PlusEquals,
+    MinusEquals,
+    TimesEqual,
+    DivEqual,
+    RemEqual,
+    BitAndEqual,
+    BitOrEqual,
+    BitXorEqual,
+    LeftShiftEqual,
+    RightShiftEqual,
+
     Ternary,
 }
 
 impl Bop {
     pub const fn precedence(&self) -> u8 {
         match self {
-            Self::Equals => 1,
+            Self::Equals
+            | Self::PlusEquals
+            | Self::MinusEquals
+            | Self::TimesEqual
+            | Self::DivEqual
+            | Self::RemEqual
+            | Self::BitAndEqual
+            | Self::BitOrEqual
+            | Self::BitXorEqual
+            | Self::LeftShiftEqual
+            | Self::RightShiftEqual => 1,
             Self::Ternary => 3,
             Self::LogOr => 5,
             Self::LogAnd => 10,
@@ -381,12 +290,24 @@ impl Bop {
         }
     }
 
-    pub const fn bitwise(&self) -> bool {
-        matches!(self, Self::BitAnd | Self::BitOr) || self.bitshift()
+    pub const fn assignment_operator(&self) -> bool {
+        matches!(self, Self::Equals) || self.compound()
     }
 
-    pub const fn bitshift(&self) -> bool {
-        matches!(self, Self::LeftShift | Self::RightShift)
+    pub const fn compound(&self) -> bool {
+        matches!(
+            self,
+            Self::PlusEquals
+                | Self::MinusEquals
+                | Self::TimesEqual
+                | Self::DivEqual
+                | Self::RemEqual
+                | Self::BitAndEqual
+                | Self::BitOrEqual
+                | Self::BitXorEqual
+                | Self::LeftShiftEqual
+                | Self::RightShiftEqual
+        )
     }
 
     pub const fn relational(&self) -> bool {
@@ -402,272 +323,45 @@ impl Bop {
     }
 }
 
-use std::collections::VecDeque;
-
-struct Cases<'a>(VecDeque<&'a Stmnt>);
-
-pub enum CaseRef<'a> {
-    Case(&'a Expr),
-    Default,
-}
-
-pub enum CaseRefMut<'a> {
-    Case(&'a Expr),
-    Default,
-}
-
-impl<'a> Iterator for Cases<'a> {
-    type Item = (CaseRef<'a>, &'a Stmnt);
-    fn next(&mut self) -> Option<Self::Item> {
-        fn extract_case<'a>(s: &'a Stmnt) -> Option<(CaseRef<'a>, &'a Stmnt)> {
-            match s {
-                Stmnt::Label {
-                    label: Label::Case(c),
-                    body,
-                } => Some((CaseRef::Case(c), body)),
-                Stmnt::Label {
-                    label: Label::Default,
-                    body,
-                } => Some((CaseRef::Default, body)),
-                _ => None,
-            }
-        }
-
-        let next = self.0.pop_front()?;
-        if let Some(case) = extract_case(next) {
-            self.0.push_back(case.1);
-            Some(case)
-        } else {
-            match next {
-                Stmnt::Label { body, .. }
-                | Stmnt::While { body, .. }
-                | Stmnt::DoWhile { body, .. }
-                | Stmnt::For { body, .. } => {
-                    self.0.push_back(body);
-                }
-                Stmnt::If { then, r#else, .. } => {
-                    self.0.push_back(then);
-                    if let Some(e) = r#else {
-                        self.0.push_back(e);
-                    }
-                }
-
-                Stmnt::Compound(block_items) => {
-                    self.0
-                        .extend(block_items.iter().filter_map(BlockItem::as_stmnt));
-                }
-
-                _ => (),
-            };
-            self.next()
-        }
-    }
-}
-
-impl<'a> CasesMut<'a> {
-    fn next(&mut self) -> Option<(CaseRefMut<'a>, NonNull<Stmnt>)> {
-        let mut next = self.stack.pop_front()?;
-        let next = unsafe { next.as_mut() };
-        match next {
-            Stmnt::Label {
-                label: Label::Case(c),
-                body,
-            } => Some((CaseRefMut::Case(c), NonNull::from_mut(body))),
-            Stmnt::Label {
-                label: Label::Default,
-                body,
-            } => Some((CaseRefMut::Default, NonNull::from_mut(body))),
-            Stmnt::Label { body, .. }
-            | Stmnt::While { body, .. }
-            | Stmnt::DoWhile { body, .. }
-            | Stmnt::For { body, .. } => {
-                self.stack.push_back(NonNull::from_mut(body));
-                self.next()
-            }
-            Stmnt::If { then, r#else, .. } => {
-                self.stack.push_back(NonNull::from_mut(then));
-                if let Some(e) = r#else {
-                    self.stack.push_back(NonNull::from_mut(e));
-                }
-                self.next()
-            }
-
-            Stmnt::Compound(block_items) => {
-                self.stack.extend(
-                    block_items
-                        .iter_mut()
-                        .filter_map(BlockItem::as_stmnt_mut)
-                        .map(NonNull::from_mut),
-                );
-                self.next()
-            }
-
-            _ => self.next(),
-        }
-    }
-}
-
-use std::marker::PhantomData;
-use std::ptr::NonNull;
-struct CasesMut<'a> {
-    stack: VecDeque<NonNull<Stmnt>>,
-    _marker: PhantomData<&'a Stmnt>,
-}
-
-impl Stmnt {
-    pub fn lookup(&self, path: &StatementPath) -> Result<&Self, LookupError<Self>> {
-        let mut cur = self;
-        //let mut history = vec![];
-        //let mut final_idx = 0;
-        for idx in path.into_iter().copied() {
-            let err = || LookupError {
-                last: cur.clone(),
-                invalid_idx: idx,
-                path: path.clone(),
-                top_level: self.clone(),
-            };
-
-            match self {
-                Stmnt::If {
-                    then: zero,
-                    r#else: Some(one),
-                    ..
-                } => match idx {
-                    0 => cur = zero,
-                    1 => cur = one,
-                    _ => return Err(err()),
-                },
-
-                Stmnt::While { body, .. }
-                | Stmnt::For { body, .. }
-                | Stmnt::If {
-                    then: body,
-                    r#else: None,
-                    ..
-                }
-                | Stmnt::DoWhile { body, .. }
-                | Stmnt::Label { body, .. }
-                | Stmnt::Switch { body, .. } => {
-                    if idx == 0 {
-                        cur = body;
-                    } else {
-                        return Err(err());
-                    }
-                }
-
-                Stmnt::Compound(block_items) => match block_items.get(idx as usize) {
-                    Some(BlockItem::S(s)) => cur = s,
-                    None | Some(BlockItem::D(_)) => return Err(err()),
-                },
-                Stmnt::Ret(_)
-                | Stmnt::Exp(_)
-                | Stmnt::Break
-                | Stmnt::Continue
-                | Stmnt::Goto(_)
-                | Stmnt::Null => return Err(err()),
-            }
-        }
-        Ok(cur)
-        /*
-        let last: Self = *cur.clone();
-        let top_level: Self = self.clone();
-        Err(LookupError {
-            last,
-            invalid_idx: final_idx,
-            path: path.clone(),
-            top_level,
-        })
-            */
-    }
-
-    pub const fn secondary(&self) -> bool {
-        !self.primary()
-    }
-
-    pub const fn primary(&self) -> bool {
-        matches!(
-            self,
-            Self::Compound(_)
-                | Self::If { .. }
-                | Self::Switch { .. }
-                | Self::While { .. }
-                | Self::DoWhile { .. }
-                | Self::For { .. }
-        )
-    }
-
-    fn cases<'a>(&'a self) -> Cases<'a> {
-        Cases(VecDeque::from_iter([self]))
-    }
-
-    fn cases_mut<'a>(&'a mut self) -> CasesMut<'a> {
-        CasesMut {
-            stack: VecDeque::from_iter([NonNull::from_mut(self)]),
-            _marker: PhantomData,
-        }
-    }
+#[derive(Debug)]
+pub enum Stmnt {
+    Ret(Expr),
+    Exp(Expr),
+    If {
+        condition: Expr,
+        then: Box<Self>,
+        r#else: Option<Box<Self>>,
+    },
+    Break,
+    Continue,
+    While {
+        condition: Expr,
+        body: Box<Self>,
+    },
+    DoWhile {
+        body: Box<Self>,
+        condition: Expr,
+    },
+    For {
+        init: Option<ForInit>,
+        condition: Option<Expr>,
+        post: Option<Expr>,
+        body: Box<Self>,
+    },
+    Compound(Block),
+    Label {
+        label: Label,
+        body: Box<Self>,
+    },
+    Goto(Ident),
+    Null,
+    Switch {
+        val: Expr,
+        body: Box<Self>,
+    },
 }
 
 #[derive(Debug)]
-pub struct SwitchCase {
-    pub case: Option<Case>,
-    pub body: Stmnt,
-}
-
-impl SwitchCase {
-    pub const fn new(case: Expr, body: Stmnt) -> Self {
-        Self {
-            case: Some(Case::Case(case)),
-            body,
-        }
-    }
-
-    pub const fn default(body: Stmnt) -> Self {
-        Self {
-            case: Some(Case::Default),
-            body,
-        }
-    }
-
-    pub const fn case(e: Expr, body: Stmnt) -> Self {
-        Self {
-            case: Some(Case::Case(e)),
-            body,
-        }
-    }
-
-    pub const fn constant(c: &Constant, body: Stmnt) -> Self {
-        Self {
-            case: Some(Case::Case(Expr::Const(*c))),
-            body,
-        }
-    }
-
-    pub const fn block(body: Stmnt) -> Self {
-        Self { case: None, body }
-    }
-
-    pub const fn full_block(block: Block) -> Self {
-        Self {
-            case: None,
-            body: Stmnt::Compound(block),
-        }
-    }
-}
-
-#[derive(Debug, PartialEq, Eq, Hash)]
-pub enum Case {
-    Default,
-    Case(Expr),
-}
-
-impl From<Constant> for Case {
-    fn from(value: Constant) -> Self {
-        Self::Case(Expr::Const(value))
-    }
-}
-
-#[derive(Debug, Clone)]
 pub enum ForInit {
     D(VarDec),
     E(Expr),
@@ -676,7 +370,7 @@ pub enum ForInit {
 #[derive(Debug, Clone)]
 pub enum Label {
     Named(Ident),
-    Case(Expr),
+    Case(Constant),
     Default,
 }
 
@@ -720,28 +414,10 @@ impl Display for Label {
 
 pub mod inc_dec {
 
-    #[derive(Copy, Clone, Eq, PartialEq, Hash)]
+    #[derive(Copy, Clone, Eq, PartialEq)]
     pub struct IncDec {
         pub inc: IncOp,
         pub fix: Fix,
-    }
-
-    impl IncDec {
-        pub const fn pre(&self) -> bool {
-            matches!(self.fix, Fix::Pre)
-        }
-
-        pub const fn post(&self) -> bool {
-            !self.pre()
-        }
-
-        pub const fn inc(&self) -> bool {
-            matches!(self.inc, IncOp::Inc)
-        }
-
-        pub const fn dec(&self) -> bool {
-            !self.inc()
-        }
     }
 
     impl std::fmt::Display for IncDec {
@@ -766,12 +442,12 @@ pub mod inc_dec {
         }
     }
 
-    #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+    #[derive(Debug, Copy, Clone, Eq, PartialEq)]
     pub enum IncOp {
         Inc,
         Dec,
     }
-    #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+    #[derive(Debug, Copy, Clone, Eq, PartialEq)]
     pub enum Fix {
         Pre,
         Post,
@@ -806,8 +482,6 @@ impl PartialEq for StorageClass {
     }
 }
 
-impl Eq for StorageClass {}
-
 #[derive(Debug)]
 pub struct Function {
     pub name: Ident,
@@ -817,21 +491,5 @@ pub struct Function {
 impl Display for Function {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "Function(\nname={},\nbody={:?}\n)", self.name, self.body)
-    }
-}
-
-fn fmt_depth(f: &mut Formatter, depth: usize) -> fmt::Result {
-    write!(f, "|-")?;
-    for _ in 0..depth {
-        write!(f, "-")?;
-    }
-
-    Ok(())
-}
-
-impl Unary {
-    fn debug(&self, f: &mut Formatter, depth: usize) -> fmt::Result {
-        fmt_depth(f, depth)?;
-        write!(f, " {:?}{:?}", self.op, self.exp)
     }
 }

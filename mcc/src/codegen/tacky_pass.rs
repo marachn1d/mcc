@@ -2,9 +2,7 @@ use crate::parse;
 use asm::tacky::StaticVar;
 use asm::tacky::{FunctionDefinition, Instruction, Program, TackyBinary, TopLevel, Value};
 use ast::parse::Fix;
-use ast::semantics::typed::{
-    self, Block, BlockItem, Case, Dec, Expr, FnDec, ForInit, Stmnt, SwitchCase, VarDec,
-};
+use ast::semantics::typed::{self, Block, BlockItem, Dec, Expr, FnDec, ForInit, Stmnt, VarDec};
 use ast::semantics::Label;
 use ast::semantics::StatementLabels;
 use ast::semantics::{Attr, SymbolTable};
@@ -252,65 +250,53 @@ fn convert_statement(
             convert_statement(*body, instructions, fn_name, table);
         }
         Stmnt::Label {
+            name: Label::Case { c, id },
+            body,
+        } => {
+            instructions.push(Instruction::Label(id.case(c)));
+            convert_statement(*body, instructions, fn_name, table);
+        }
+        Stmnt::Label {
             name: Label::Default(id),
             body,
         } => {
             instructions.push(Instruction::Label(id.default()));
             convert_statement(*body, instructions, fn_name, table);
         }
-        Stmnt::Label { name, body: _ } => {
-            panic!("got case label {name:?}");
-        }
-
-        Stmnt::Switch { val, label, cases } => {
+        Stmnt::Switch {
+            val,
+            label,
+            cases,
+            body,
+            default,
+        } => {
             let end_label = label.labels().r#break;
-            let ty = val.ty();
             let switch_val = convert_expression(val, instructions, table);
-            let mut found_default = false;
-            // one day soon this will be a jump table
-            for SwitchCase { case, .. } in &cases {
-                match case {
-                    Some(c) => {
-                        match c {
-                            Case::Case(exp) => {
-                                let target_var = new_var(ty, table);
-                                instructions.extend([
-                                    // if val == case
-                                    Instruction::Binary {
-                                        operator: TackyBinary::EqualTo,
-                                        source_1: switch_val.clone(),
-                                        source_2: Value::Constant(exp.const_val().unwrap()),
-                                        dst: Value::Var(target_var.clone()),
-                                    },
-                                    // jump to its label
-                                    Instruction::JumpIfNotZero {
-                                        condition: Value::Var(target_var),
-                                        target: label.case(&Case::Case(exp.clone())),
-                                    },
-                                ]);
-                            }
-                            Case::Default => {
-                                found_default = true;
-                            }
-                        }
-                    }
-                    None => (),
-                };
+            for case in cases {
+                let target_var = new_var(VarType::Int, table);
+                instructions.extend([
+                    // if val == case
+                    Instruction::Binary {
+                        operator: TackyBinary::EqualTo,
+                        source_1: switch_val.clone(),
+                        source_2: Value::Constant(case),
+                        dst: Value::Var(target_var.clone()),
+                    },
+                    // jump to its label
+                    Instruction::JumpIfNotZero {
+                        condition: Value::Var(target_var),
+                        target: label.case(case),
+                    },
+                ]);
             }
-
             instructions.push(Instruction::Jump {
-                target: if found_default {
+                target: if default {
                     label.default()
                 } else {
                     end_label.clone()
                 },
             });
-            for SwitchCase { case, body } in cases {
-                if let Some(case) = case {
-                    instructions.push(Instruction::Label(label.case(&case)));
-                }
-                convert_statement(body, instructions, fn_name, table);
-            }
+            convert_statement(*body, instructions, fn_name, table);
             instructions.push(Instruction::Label(end_label));
         }
         Stmnt::Goto(label) => instructions.push(Instruction::Jump {
@@ -339,14 +325,15 @@ fn convert_cast(
     instructions: &mut Vec<Instruction>,
     table: &mut SymbolTable,
 ) -> Value {
-    if target == exp.ty() {
-        convert_expression(exp, instructions, table)
-    } else {
-        let src = convert_expression(exp, instructions, table);
-        let dst = Value::Var(new_var(ty, r#table));
-        // add dst to symbol table
-        //
-        convert_cast_op(ty, src, dst, instructions)
+    match (target, exp, ty) {
+        (target, exp, _) if target == exp.ty() => convert_expression(exp, instructions, table),
+        (_, exp, ty) => {
+            let src = convert_expression(exp, instructions, table);
+            let dst = Value::Var(new_var(ty, r#table));
+            // add dst to symbol table
+            //
+            convert_cast_op(ty, src, dst, instructions)
+        }
     }
 }
 
@@ -389,11 +376,11 @@ fn convert_expression(
             result
         }
         Expr::Assignment { dst, src, ty: _ } => {
-            let (name, _) = dst
-                .to_lvalue()
-                .expect("Expected Lvalue, should've been caught");
+            let Expr::Var { name: v, .. } = *dst else {
+                unreachable!()
+            };
             let result = convert_expression(*src, instructions, table);
-            let var = Value::Var(name);
+            let var = Value::Var(v);
             instructions.push(Instruction::Copy {
                 src: result,
                 dst: var.clone(),
@@ -405,7 +392,7 @@ fn convert_expression(
             left,
             right,
             ty,
-        } => match process_binop(&operator) {
+        } => match process_binop(operator) {
             ProcessedBinop::LogAnd => {
                 let source_1 = convert_expression(*left, instructions, table);
                 let false_label = and_label();
@@ -478,6 +465,18 @@ fn convert_expression(
                     operator,
                     source_1,
                     source_2,
+                    dst: dst.clone(),
+                };
+                instructions.push(binary);
+                dst
+            }
+            ProcessedBinop::Compound(op) => {
+                let dst = convert_expression(*left, instructions, table);
+                let modifier = convert_expression(*right, instructions, table);
+                let binary = Instruction::Binary {
+                    operator: op.into(),
+                    source_1: dst.clone(),
+                    source_2: modifier,
                     dst: dst.clone(),
                 };
                 instructions.push(binary);
@@ -591,29 +590,44 @@ fn convert_expression(
     }
 }
 
-fn inner_var(exp: Expr) -> Option<(Value, VarType)> {
-    match exp {
-        Expr::Var { name, ty } => Some((Value::Var(name), ty)),
-        Expr::Assignment { dst: inner, .. }
-        | Expr::Binary { left: inner, .. }
-        | Expr::Cast { exp: inner, .. }
-        | Expr::IncDec { exp: inner, .. }
-        | Expr::Conditional {
-            condition: inner, ..
-        }
-        | Expr::Unary { operand: inner, .. }
-        | Expr::Nested { inner, .. } => inner_var(*inner),
-        Expr::Const { .. } | Expr::FunctionCall { .. } => None,
-    }
-}
-
 enum ProcessedBinop {
     LogAnd,
     LogOr,
     Normal(TackyBinary),
+    Compound(CompoundOp),
 }
 
-const fn process_binop(binop: &parse::Bop) -> ProcessedBinop {
+enum CompoundOp {
+    Plus,
+    Minus,
+    Times,
+    Div,
+    Rem,
+    And,
+    Or,
+    Xor,
+    LeftShift,
+    RightShift,
+}
+
+impl From<CompoundOp> for TackyBinary {
+    fn from(other: CompoundOp) -> Self {
+        match other {
+            CompoundOp::Plus => Self::Add,
+            CompoundOp::Minus => Self::Subtract,
+            CompoundOp::Times => Self::Multiply,
+            CompoundOp::Div => Self::Divide,
+            CompoundOp::Rem => Self::Remainder,
+            CompoundOp::And => Self::BitAnd,
+            CompoundOp::Or => Self::BitOr,
+            CompoundOp::Xor => Self::Xor,
+            CompoundOp::LeftShift => Self::LeftShift,
+            CompoundOp::RightShift => Self::RightShift,
+        }
+    }
+}
+
+const fn process_binop(binop: parse::Bop) -> ProcessedBinop {
     use parse::Bop as Pre;
     use ProcessedBinop as Post;
     match binop {
@@ -637,12 +651,17 @@ const fn process_binop(binop: &parse::Bop) -> ProcessedBinop {
         Pre::Geq => Post::Normal(TackyBinary::Geq),
         Pre::Divide => Post::Normal(TackyBinary::Divide),
         Pre::Remainder => Post::Normal(TackyBinary::Remainder),
-    }
-}
+        Pre::PlusEquals => Post::Compound(CompoundOp::Plus),
+        Pre::MinusEquals => Post::Compound(CompoundOp::Minus),
+        Pre::TimesEqual => Post::Compound(CompoundOp::Times),
+        Pre::DivEqual => Post::Compound(CompoundOp::Div),
 
-impl From<parse::Bop> for ProcessedBinop {
-    fn from(bop: parse::Bop) -> Self {
-        process_binop(&bop)
+        Pre::RemEqual => Post::Compound(CompoundOp::Rem),
+        Pre::BitAndEqual => Post::Compound(CompoundOp::And),
+        Pre::BitOrEqual => Post::Compound(CompoundOp::Or),
+        Pre::BitXorEqual => Post::Compound(CompoundOp::Xor),
+        Pre::LeftShiftEqual => Post::Compound(CompoundOp::LeftShift),
+        Pre::RightShiftEqual => Post::Compound(CompoundOp::RightShift),
     }
 }
 

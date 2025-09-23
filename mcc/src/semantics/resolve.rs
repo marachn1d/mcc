@@ -1,6 +1,6 @@
 use ast::parse::{
-    Binary, Block, BlockItem, Case, Dec, Expr, FnDec, ForInit, ParamList, Program, Stmnt,
-    StorageClass, SwitchCase, VarDec,
+    Binary, Block, BlockItem, Dec, Expr, FnDec, ForInit, ParamList, Program, Stmnt, StorageClass,
+    VarDec,
 };
 use ast::Ident;
 
@@ -40,11 +40,12 @@ fn insert_local_var(
     name: &mut Ident,
     storage_class: &mut Option<StorageClass>,
 ) -> Result<(), Error> {
-    if let Some(prev_decl) = map.get(name)
-        && prev_decl.from_current_block
-        && !(prev_decl.has_external_linkage && *storage_class == Some(StorageClass::Extern))
-    {
-        return Err(Error::ConflictingDec);
+    if let Some(prev_decl) = map.get(name) {
+        if prev_decl.from_current_block
+            && !(prev_decl.has_external_linkage && *storage_class == Some(StorageClass::Extern))
+        {
+            return Err(Error::ConflictingDec);
+        }
     }
 
     if *storage_class == Some(StorageClass::Extern) {
@@ -57,7 +58,7 @@ fn insert_local_var(
             },
         );
     } else {
-        let unique: Ident = map.new_var(name);
+        let unique: Ident = map.new_var(&name);
         map.insert(
             name.clone(),
             Var {
@@ -241,10 +242,8 @@ fn resolve_statement(statement: &mut Stmnt, map: &mut VarMap) -> Result<(), Erro
         }
 
         Stmnt::Switch { val, body } => {
-            let mut scope = new_scope(map);
-            resolve_expression(val, &mut scope)?;
-            resolve_statement(body, &mut scope)?;
-            Ok(())
+            resolve_expression(val, map)?;
+            resolve_statement(body, map)
         }
 
         Stmnt::Goto(_) | Stmnt::Break | Stmnt::Continue => Ok(()),
@@ -270,10 +269,25 @@ fn resolve_init(init: &mut Option<ForInit>, map: &mut VarMap) -> Result<(), Erro
 fn resolve_expression(exp: &mut Expr, map: &mut VarMap) -> Result<(), Error> {
     match exp {
         Expr::Assignment { dst, src } => {
-            dst.check_lvalue()?;
-            resolve_expression(dst, map)?;
-            resolve_expression(src, map)
+            if dst.lvalue() {
+                resolve_expression(dst, map)?;
+                resolve_expression(src, map)
+            } else {
+                Err(Error::InvalidLval)
+            }
         }
+        Expr::Bin(Binary {
+            left,
+            right,
+            operator,
+        }) if operator.compound() => {
+            if !left.lvalue() {
+                return Err(Error::InvalidLval);
+            }
+            resolve_expression(left, map)?;
+            resolve_expression(right, map)
+        }
+
         Expr::Conditional {
             condition,
             r#true,
@@ -290,7 +304,11 @@ fn resolve_expression(exp: &mut Expr, map: &mut VarMap) -> Result<(), Error> {
         }
         Expr::IncDec { op: _, exp } => {
             resolve_expression(exp, map)?;
-            Ok(exp.check_lvalue()?)
+            if exp.lvalue() {
+                Ok(())
+            } else {
+                Err(Error::InvalidLval)
+            }
         }
 
         Expr::Nested(inner) => resolve_expression(inner, map),
@@ -321,16 +339,10 @@ fn resolve_expression(exp: &mut Expr, map: &mut VarMap) -> Result<(), Error> {
 #[derive(Debug)]
 pub enum Error {
     DuplicateDec,
-    Lval(ast::parse::InvalidLVal),
+    InvalidLval,
     UndeclaredVar,
     UndeclaredFn,
     LocalFnDecBody,
     ConflictingDec,
     StaticBlockScopeFn,
-}
-
-impl From<ast::parse::InvalidLVal> for Error {
-    fn from(value: ast::parse::InvalidLVal) -> Self {
-        Self::Lval(value)
-    }
 }

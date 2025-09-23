@@ -87,7 +87,7 @@ impl<T: fmt::Debug + Display> Display for Token<T> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Copy, Clone, Ord, PartialOrd, Hash)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone, Ord, PartialOrd)]
 pub enum Constant {
     Int(i32),
     Long(i64),
@@ -95,11 +95,7 @@ pub enum Constant {
 
 impl std::fmt::Display for Constant {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        if self.is_negative() {
-            write!(f, "neg")?;
-        }
-        let abs_value = self.abs();
-        match abs_value {
+        match self {
             Self::Int(i) => i.fmt(f),
             Self::Long(l) => l.fmt(f),
         }
@@ -141,38 +137,14 @@ impl From<i64> for Constant {
 }
 
 impl Constant {
-    pub fn const_cast(&self, ty: &crate::VarType) -> Self {
-        if self.ty() != *ty {
-            match self {
-                Constant::Int(_) => self.cast_long(),
-                Constant::Long(_) => self.cast_int(),
-            }
-        } else {
-            *self
-        }
-    }
-
-    pub const fn cast_int(&self) -> Self {
-        match self {
-            Self::Int(_) => *self,
-            Self::Long(_) => Self::Int(self.int()),
-        }
-    }
-
-    pub const fn cast_long(&self) -> Self {
-        match self {
-            Self::Long(_) => *self,
-            Self::Int(_) => Self::Long(self.long()),
-        }
-    }
-    pub const fn int(&self) -> i32 {
+    pub fn int(&self) -> i32 {
         match self {
             Self::Int(i) => *i,
             Self::Long(l) => *l as i32,
         }
     }
 
-    pub const fn long(&self) -> i64 {
+    pub fn long(&self) -> i64 {
         match self {
             Self::Int(i) => *i as i64,
             Self::Long(l) => *l,
@@ -220,20 +192,6 @@ impl Constant {
                 Self::Int(i) => Self::Int(i.wrapping_sub(1)),
                 Self::Long(l) => Self::Long(l.wrapping_sub(1)),
             },
-        }
-    }
-
-    pub const fn is_negative(&self) -> bool {
-        match self {
-            Self::Int(i) => i.is_negative(),
-            Self::Long(l) => l.is_negative(),
-        }
-    }
-
-    pub const fn abs(&self) -> Constant {
-        match self {
-            Self::Int(i) => Self::Int(i.abs()),
-            Self::Long(l) => Self::Long(l.abs()),
         }
     }
 }

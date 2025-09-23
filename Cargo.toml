@@ -3,8 +3,4 @@ resolver = "3"
 members = [ "asm", "ast", "mcc", "util"]
 #members = [ "asm", "ast", "mcc", "symtab","util"]
 
-[profile.release]
-debug = true
-
-
 
