@@ -1,3 +1,5 @@
+use crate::parse::StaticInit;
+
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub enum Token<Ident> {
     Int,
@@ -87,7 +89,7 @@ impl<T: fmt::Debug + Display> Display for Token<T> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Copy, Clone, Ord, PartialOrd)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone, Ord, PartialOrd, Hash)]
 pub enum Constant {
     Int(i32),
     Long(i64),
@@ -95,7 +97,11 @@ pub enum Constant {
 
 impl std::fmt::Display for Constant {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
+        if self.is_negative() {
+            f.write_str("n")?
+        }
+
+        match self.abs() {
             Self::Int(i) => i.fmt(f),
             Self::Long(l) => l.fmt(f),
         }
@@ -158,6 +164,24 @@ impl Constant {
         }
     }
 
+    pub const fn abs(&self) -> Self {
+        match self {
+            Constant::Int(i) => Self::Int(i.abs()),
+            Constant::Long(i) => Self::Long(i.abs()),
+        }
+    }
+
+    pub const fn is_positive(&self) -> bool {
+        match self {
+            Constant::Int(i) => i.is_positive(),
+            Constant::Long(l) => l.is_positive(),
+        }
+    }
+
+    pub const fn is_negative(&self) -> bool {
+        !self.is_positive()
+    }
+
     pub fn with_unop(&self, op: crate::parse::UnOp) -> Self {
         use crate::parse::UnOp;
         match op {
@@ -192,6 +216,26 @@ impl Constant {
                 Self::Int(i) => Self::Int(i.wrapping_sub(1)),
                 Self::Long(l) => Self::Long(l.wrapping_sub(1)),
             },
+        }
+    }
+
+    pub const fn static_init(&self) -> StaticInit {
+        match self {
+            Self::Long(c) => StaticInit::Long(*c),
+            Self::Int(c) => StaticInit::Int(*c),
+        }
+    }
+
+    pub const fn is_zero(&self) -> bool {
+        matches!(self, Self::Long(0) | Self::Int(0))
+    }
+}
+
+impl From<StaticInit> for Constant {
+    fn from(value: StaticInit) -> Self {
+        match value {
+            StaticInit::Int(i) => Self::Int(i),
+            StaticInit::Long(l) => Self::Long(l),
         }
     }
 }

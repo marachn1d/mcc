@@ -38,6 +38,56 @@ pub enum StaticInit {
     Long(i64),
 }
 
+impl StaticInit {
+    pub const fn ty(&self) -> VarType {
+        match self {
+            Self::Int(_) => VarType::Int,
+            Self::Long(_) => VarType::Long,
+        }
+    }
+
+    pub const fn common_type(&self, other: &Self) -> VarType {
+        use VarType::{Int, Long};
+        match (self.ty(), other.ty()) {
+            (Long, _) | (_, Long) => Long,
+            (Int, Int) => Int,
+        }
+    }
+
+    pub const fn to_int(&mut self) -> &i32 {
+        *self = Self::Int(self.as_int());
+        let Self::Int(i) = self else { unreachable!() };
+        i
+    }
+
+    pub const fn to_long(&mut self) -> &i64 {
+        *self = Self::Long(self.as_long());
+        let Self::Long(l) = self else { unreachable!() };
+        l
+    }
+
+    pub const fn as_int(&self) -> i32 {
+        match self {
+            StaticInit::Long(l) => *l as i32,
+            StaticInit::Int(i) => *i,
+        }
+    }
+
+    pub const fn as_long(&self) -> i64 {
+        match self {
+            StaticInit::Long(l) => *l,
+            StaticInit::Int(i) => *i as i64,
+        }
+    }
+
+    pub const fn convert_to(&self, ty: &VarType) -> Self {
+        match ty {
+            VarType::Int => Self::Int(self.as_int()),
+            VarType::Long => Self::Long(self.as_long()),
+        }
+    }
+}
+
 impl std::fmt::Display for StaticInit {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
@@ -198,8 +248,7 @@ impl Expr {
     pub const fn static_init(&self) -> Option<StaticInit> {
         match self {
             Self::Nested(e) => e.static_init(),
-            Self::Const(Constant::Long(c)) => Some(StaticInit::Long(*c)),
-            Self::Const(Constant::Int(c)) => Some(StaticInit::Int(*c)),
+            Self::Const(c) => Some(c.static_init()),
             _ => None,
         }
     }
@@ -295,19 +344,23 @@ impl Bop {
     }
 
     pub const fn compound(&self) -> bool {
-        matches!(
-            self,
-            Self::PlusEquals
-                | Self::MinusEquals
-                | Self::TimesEqual
-                | Self::DivEqual
-                | Self::RemEqual
-                | Self::BitAndEqual
-                | Self::BitOrEqual
-                | Self::BitXorEqual
-                | Self::LeftShiftEqual
-                | Self::RightShiftEqual
-        )
+        matches!(self.de_compound(), Some(_))
+    }
+
+    pub const fn de_compound(&self) -> Option<Self> {
+        match self {
+            Self::PlusEquals => Some(Self::Add),
+            Self::MinusEquals => Some(Self::Subtract),
+            Self::TimesEqual => Some(Self::Multiply),
+            Self::DivEqual => Some(Self::Divide),
+            Self::RemEqual => Some(Self::Remainder),
+            Self::BitAndEqual => Some(Self::BitAnd),
+            Self::BitOrEqual => Some(Self::BitOr),
+            Self::BitXorEqual => Some(Self::Xor),
+            Self::LeftShiftEqual => Some(Self::LeftShift),
+            Self::RightShiftEqual => Some(Self::RightShift),
+            _ => None,
+        }
     }
 
     pub const fn relational(&self) -> bool {
@@ -319,6 +372,13 @@ impl Bop {
                 | Self::GreaterThan
                 | Self::Leq
                 | Self::Geq
+        )
+    }
+
+    pub const fn bitshift(&self) -> bool {
+        matches!(
+            self,
+            Self::LeftShift | Self::RightShift | Self::LeftShiftEqual | Self::RightShiftEqual
         )
     }
 }

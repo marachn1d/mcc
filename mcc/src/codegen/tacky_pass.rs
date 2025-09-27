@@ -479,7 +479,7 @@ fn convert_expression(
                     source_2: modifier,
                     dst: dst.clone(),
                 };
-                instructions.push(binary);
+                instructions.push(dbg!(binary));
                 dst
             }
         },

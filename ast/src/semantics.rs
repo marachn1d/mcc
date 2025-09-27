@@ -29,10 +29,10 @@ impl LabelId {
     }
 
     pub fn case(&self, value: Constant) -> Ident {
-        Ident::from(format!("sc{}{}", self.0, value,))
+        Ident::from(format!("sw{}c{}", self.0, value,))
     }
     pub fn default(&self) -> Ident {
-        Ident::from(format!("sc{}d", self.0))
+        Ident::from(format!("sw{}cd", self.0))
     }
     pub fn r#continue(&self) -> Ident {
         Ident::from(format!("s{}c", self.0))

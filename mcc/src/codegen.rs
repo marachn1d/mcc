@@ -1,14 +1,25 @@
 mod pseudo_pass;
+mod tacky_opt;
 mod tacky_pass;
 mod x86_pass;
 
 use ast::semantics::SymbolTable;
 //pub use assembly::Binary;
 //use assembly::Program;
+use crate::Optimizations;
 use ast::semantics::typed;
 
-pub fn generate(program: typed::Program, emit_asm: bool, mut table: SymbolTable) -> Box<[u8]> {
-    let tacky = tacky_pass::emit(program, &mut table);
+pub fn generate(
+    program: typed::Program,
+    emit_asm: bool,
+    opt: &Optimizations,
+    mut table: SymbolTable,
+) -> Box<[u8]> {
+    let tacky = {
+        let mut tacky = tacky_pass::emit(program, &mut table);
+        tacky_opt::opt(&mut tacky, opt, &table);
+        tacky
+    };
 
     if emit_asm {
         let (pseudo, table) = pseudo_pass::emit(tacky, table);

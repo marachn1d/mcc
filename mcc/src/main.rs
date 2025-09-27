@@ -4,6 +4,7 @@ use std::io;
 
 use mcc::CVersion;
 use mcc::Config;
+use mcc::Optimizations;
 use mcc::CONFIG;
 use std::path::Path;
 use std::path::PathBuf;
@@ -17,7 +18,9 @@ fn main() -> Result<(), MCCError> {
     let _ = CONFIG.set(Config {
         stage: args.stage,
         version: CVersion::C23,
+        opt: args.opts,
     });
+
     let output = args.file.with_extension("i");
     let preprocessed_file = preprocess(&args.file, output).map_err(MCCError::Preprocess)?;
     let object_file = mcc::compile(preprocessed_file).map_err(MCCError::Compile)?;
@@ -32,6 +35,7 @@ struct Args {
     file: PathBuf,
     stage: Option<CompileStage>,
     compile: bool,
+    opts: Optimizations,
 }
 
 impl Args {
@@ -40,6 +44,7 @@ impl Args {
         let mut stage: Option<CompileStage> = None;
         let mut keep_asm = false;
         let mut compile: bool = false;
+        let mut opts = Optimizations::default();
 
         let mut args = std::env::args();
         args.next();
@@ -71,6 +76,20 @@ impl Args {
                         return None;
                     }
                 }
+                "--fold-constants" => {
+                    opts.constant_folding = true;
+                }
+                "--propogate-copies" => {
+                    opts.copy_propogation = true;
+                }
+                "--eliminate-unreachable-code" => {
+                    opts.unreachable_code = true;
+                }
+
+                "--eliminate-dead-stores" => {
+                    opts.dead_store = true;
+                }
+                "--optimize" => opts = Optimizations::all(),
 
                 "-S" => {
                     if keep_asm {
@@ -95,6 +114,7 @@ impl Args {
             file,
             stage,
             compile,
+            opts,
         })
     }
 

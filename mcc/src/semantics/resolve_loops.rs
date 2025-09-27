@@ -17,6 +17,7 @@ use parse::BlockItem as AstBlockItem;
 #[derive(Debug)]
 pub enum Error {
     Break,
+    OObContinue,
     Continue,
     Switch,
     Case,
@@ -93,19 +94,27 @@ fn label_blocks(block: Arr<parse::BlockItem>, cur_loop: &mut Scope) -> Result<Bl
     Ok(vec.into())
 }
 
-fn do_while(body: parse::Stmnt, condition: parse::Expr, cur: &mut Scope) -> Result<Stmnt, Error> {
-    let condition = condition.into();
-    let prev_normal = cur.normal;
-    let label = new_label();
-
-    cur.normal = Some(label);
-    let body = Box::new(label_statement(body, cur)?);
-    cur.normal = prev_normal;
+fn do_while(body: parse::Stmnt, c: parse::Expr, cur: &mut Scope) -> Result<Stmnt, Error> {
+    let (body, label) = loop_stmt(body, cur)?;
     Ok(Stmnt::DoWhile {
         body,
-        condition,
+        condition: c.into(),
         label,
     })
+}
+
+fn loop_stmt(s: parse::Stmnt, scope: &mut Scope) -> Result<(Box<Stmnt>, LabelId), Error> {
+    let (old, label) = scope.new_loop();
+    let s = Box::new(label_statement(s, scope)?);
+    scope.reset(old);
+    Ok((s, label))
+}
+
+fn loop_switch(s: parse::Stmnt, scope: &mut Scope) -> Result<(Box<Stmnt>, LabelId), Error> {
+    let (old, label) = scope.new_switch();
+    let s = Box::new(label_statement(s, scope)?);
+    scope.reset(old);
+    Ok((s, label))
 }
 
 fn while_stmnt(
@@ -113,13 +122,7 @@ fn while_stmnt(
     condition: parse::Expr,
     cur: &mut Scope,
 ) -> Result<Stmnt, Error> {
-    let prev_normal = cur.normal;
-    let label = new_label();
-
-    cur.normal = Some(label);
-    let body = label_statement(body, cur)?.into();
-
-    cur.normal = prev_normal;
+    let (body, label) = loop_stmt(body, cur)?;
     Ok(Stmnt::While {
         condition: condition.into(),
         body,
@@ -138,12 +141,7 @@ fn for_stmnt(
     condition: Option<parse::Expr>,
     cur: &mut Scope,
 ) -> Result<Stmnt, Error> {
-    let prev_normal = cur.normal;
-    let label = new_label();
-
-    cur.normal = Some(label);
-    let body = Box::new(label_statement(body, cur)?);
-    cur.normal = prev_normal;
+    let (body, label) = loop_stmt(body, cur)?;
 
     let init = init
         .map(|init| match init {
@@ -191,112 +189,44 @@ fn label_statement(statement: parse::Stmnt, cur: &mut Scope) -> Result<Stmnt, Er
             Some(cur) => Ok(Stmnt::Break(cur)),
             None => Err(Error::Break),
         },
-        parse::Stmnt::Continue => match cur.normal {
+
+        parse::Stmnt::Continue if cur.in_loop() => match cur.loop_id {
             Some(cur) => Ok(Stmnt::Continue(cur)),
             None => Err(Error::Continue),
         },
+
+        parse::Stmnt::Continue => Err(Error::OObContinue),
 
         parse::Stmnt::Compound(block) => label_blocks(block, cur).map(Stmnt::Compound),
         parse::Stmnt::Ret(e) => Ok(Stmnt::Ret(e.into())),
         parse::Stmnt::Exp(e) => Ok(Stmnt::Exp(e.into())),
         parse::Stmnt::Goto(g) => Ok(Stmnt::Goto(g)),
-        parse::Stmnt::Label {
-            label: AstLabel::Named(name),
-            body,
-        } => label_statement(*body, cur).map(|body| {
-            Ok(Stmnt::Label {
-                name: Label::Named(name),
+        parse::Stmnt::Label { label, body } => {
+            let name = match label {
+                AstLabel::Named(name) => Label::Named(name),
+                AstLabel::Case(c) => Label::Case {
+                    c,
+                    id: cur.switch.ok_or(Error::Switch)?,
+                },
+                AstLabel::Default => Label::Default(cur.switch.ok_or(Error::Switch)?),
+            };
+            label_statement(*body, cur).map(|body| Stmnt::Label {
+                name,
                 body: Box::new(body),
             })
-        })?,
-        // current plan is to pass a struct called scope which keeps the loop id for switch
-        // statements and other Loops seperately, cur checks labelids and uses the lesser one,
-        // and handles continue targets
-        parse::Stmnt::Label {
-            label: parse::Label::Default,
-            body,
-        } => {
-            // borrowck is evil and won't let me copy the lable id properly so instead i'm doing
-            // this evil thing
-            let label = match cur.switch.as_mut() {
-                // this means we got default in an env with an alreadu defined default. Illegal.
-                Some(SwitchState { default: true, .. }) => Err(Error::DoubleDefault),
-
-                // this means we got
-                Some(SwitchState {
-                    default,
-                    cases: _,
-                    label,
-                }) => {
-                    *default = true;
-                    Ok(*label)
-                }
-                None => Err(Error::Switch),
-            }?;
-            let body = label_statement(*body, cur)?.into();
-            Ok(Stmnt::Label {
-                name: Label::Default(label),
-                body,
-            })
         }
-        parse::Stmnt::Label {
-            label: AstLabel::Case(c),
-            body,
-        } => {
-            let Some(switch) = &mut cur.switch else {
-                return Err(Error::Switch);
-            };
-            switch.cases.push(c);
-            let body = label_statement(*body, cur)?.into();
-            let id = cur.switch.as_ref().unwrap().label;
-            Ok(Stmnt::Label {
-                name: Label::Case { c, id },
-                body,
-            })
-        }
-
+        // we're gonna handle this in it's own pass since we wanna do it after type conversions
         parse::Stmnt::Switch { val, body } => {
-            let label = new_label();
-            let prev_switch = cur.switch.replace(SwitchState::new(label));
-            let body = label_statement(*body, cur)?.into();
-            let mut switch_info = if let Some(prev) = prev_switch {
-                cur.switch.replace(prev)
-            } else {
-                cur.switch.take()
-            }
-            .unwrap();
-            switch_info.cases.sort();
-            // instead of doing this, we should change the cases when we typecheck
-            if let Some(val) = val.const_eval() {
-                for case in &mut switch_info.cases {
-                    const_cast(case, &val.ty());
-                }
-            }
-            // cases is sorted so we can do the same check as before (resolve_loops.rs)
-            if switch_info.cases.windows(2).any(|x| x[0] == x[1]) {
-                return Err(Error::DupliCase);
-            }
-
-            // make sure the cases are unique, hmm.
-            //
+            let (body, label) = loop_switch(*body, cur)?;
             Ok(Stmnt::Switch {
                 val: val.into(),
                 body,
-                cases: switch_info.cases.into(),
-                default: switch_info.default,
+                cases: Box::new([]),
+                default: false,
                 label,
             })
         }
         parse::Stmnt::Null => Ok(Stmnt::Null),
-    }
-}
-
-fn const_cast(c: &mut Constant, ty: &VarType) {
-    if c.ty() != *ty {
-        match c {
-            Constant::Int(i) => *c = Constant::Long(*i as i64),
-            Constant::Long(l) => *c = Constant::Int(*l as i32),
-        };
     }
 }
 
@@ -319,50 +249,51 @@ fn if_stmnt(
     })
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 struct Scope {
-    normal: Option<LabelId>,
-    switch: Option<SwitchState>,
-}
-
-#[derive(Clone)]
-struct SwitchState {
-    default: bool,
-    cases: Vec<Constant>,
-    label: LabelId,
-}
-
-impl SwitchState {
-    const fn new(id: LabelId) -> Self {
-        Self {
-            default: false,
-            cases: Vec::new(),
-            label: id,
-        }
-    }
+    loop_id: Option<LabelId>,
+    switch: Option<LabelId>,
 }
 
 impl Scope {
     const fn default() -> Self {
         Scope {
-            normal: None,
+            loop_id: None,
             switch: None,
         }
     }
 
-    fn cur(&self) -> Option<LabelId> {
-        let switch_label = self.switch.as_ref().map(|x| x.label);
-        match (self.normal, switch_label) {
-            (Some(s), None) | (None, Some(s)) => Some(s),
-            (None, None) => None,
+    fn reset(&mut self, old: Self) {
+        *self = old;
+    }
 
-            (Some(normal), Some(switch)) => {
-                if normal.0 > switch.0 {
-                    Some(normal)
-                } else {
-                    Some(switch)
-                }
+    fn new_switch(&mut self) -> (Self, LabelId) {
+        let old = *self;
+        let new_id = new_label();
+        self.switch = Some(new_id);
+        (old, new_id)
+    }
+
+    fn new_loop(&mut self) -> (Self, LabelId) {
+        let old = *self;
+        let new_id = new_label();
+        self.loop_id = Some(new_id);
+        (old, new_id)
+    }
+
+    fn in_loop(&self) -> bool {
+        self.loop_id.is_some()
+    }
+
+    fn cur(&self) -> Option<LabelId> {
+        if let (Some(loop_id), Some(switch)) = (self.loop_id, self.switch) {
+            if loop_id.0 > switch.0 {
+                Some(loop_id)
+            } else {
+                Some(switch)
             }
+        } else {
+            self.loop_id.or(self.switch)
         }
     }
 }

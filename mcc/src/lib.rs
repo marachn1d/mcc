@@ -21,10 +21,34 @@ pub mod semantics;
 
 use std::sync::OnceLock;
 pub static CONFIG: OnceLock<Config> = OnceLock::new();
-// todo: make config some sorta static thats initialized on startup etc
 pub struct Config {
     pub stage: Option<CompileStage>,
+    pub opt: Optimizations,
     pub version: CVersion,
+}
+
+#[derive(Default, Copy, Clone)]
+pub struct Optimizations {
+    pub constant_folding: bool,
+    pub copy_propogation: bool,
+    pub unreachable_code: bool,
+    pub dead_store: bool,
+}
+
+impl Optimizations {
+    pub const fn all() -> Self {
+        Self {
+            constant_folding: true,
+            copy_propogation: true,
+            unreachable_code: true,
+            dead_store: true,
+        }
+    }
+
+    pub const fn all_disabled(&self) -> bool {
+        (self.constant_folding | self.copy_propogation | self.unreachable_code | self.dead_store)
+            == false
+    }
 }
 
 pub fn compile(mut path: PathBuf) -> Result<PathBuf, Error> {
@@ -55,7 +79,12 @@ pub fn compile(mut path: PathBuf) -> Result<PathBuf, Error> {
                 if !should_codegen(&stage) {
                     return Ok("".into());
                 } else {
-                    let code = codegen::generate(program, should_emit(&stage), map);
+                    let code = codegen::generate(
+                        program,
+                        should_emit(&stage),
+                        &CONFIG.get().unwrap().opt,
+                        map,
+                    );
                     path.set_extension("S");
                     fs::write(&path, &code)?;
                 }

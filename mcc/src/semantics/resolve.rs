@@ -177,7 +177,6 @@ fn resolve_declaration(dec: &mut Dec, map: &mut VarMap) -> Result<(), Error> {
         Dec::Fn(FnDec { sc, .. }) if *sc == Some(StorageClass::Static) => {
             Err(Error::StaticBlockScopeFn)
         }
-
         Dec::Fn(FnDec {
             body: None,
             name,

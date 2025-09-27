@@ -7,6 +7,7 @@ use ast::Constant;
 use ast::{parse::FnType, parse::StaticInit, Ident, VarType};
 
 use std::collections::hash_map::Entry;
+use std::mem::MaybeUninit;
 
 // check FunctionDeclaration, VariableDeclaration,
 
@@ -261,22 +262,58 @@ fn typecheck_expression(expression: labeled::Expr, table: &mut SymbolTable) -> R
             // if it's relational or logical and or logical or then it's gonna be int
             let mut left = typecheck_expression(*left, table).map(Box::from)?;
             let mut right = typecheck_expression(*right, table).map(Box::from)?;
-            // result of this expression is an int
-            let Some(ty) = left.ty().common_type(&right.ty()) else {
-                return Err(Error::InvalidCast);
+
+            // if it's a bitshift, then it's the left's type, if it's a boolean operator, it's an
+            // int,
+            let ty = if operator.bitshift() {
+                left.ty()
+            } else {
+                left.ty()
+                    .common_type(&right.ty())
+                    .ok_or(Error::InvalidCast)?
             };
+
+            let mut lhs = MaybeUninit::uninit();
+
+            if operator.compound() {
+                lhs.write(left.clone());
+            }
             convert_to(&mut left, &ty);
             convert_to(&mut right, &ty);
-            Ok(Expr::Binary {
-                left,
-                operator,
-                right,
-                ty: if operator.relational() || matches!(operator, Bop::LogAnd | Bop::LogOr) {
+
+            if operator.compound() {
+                // for compound operators, we have to convert the inner binary operator first, and
+                // then convert it to the left side's type
+                // if it's a compound operator, we've already confirmed that left is an lvalue, so we
+                // don't have to call typecheck_expression on it
+
+                let lhs = unsafe { lhs.assume_init() };
+                let mut bin = Expr::Binary {
+                    left,
+                    operator: operator.de_compound().unwrap(),
+                    right,
+                    ty,
+                };
+                convert_to(&mut bin, &lhs.ty());
+                Ok(Expr::Assignment {
+                    ty: lhs.ty(),
+                    dst: lhs,
+                    src: Box::new(bin),
+                })
+            } else {
+                let ty = if operator.relational() || matches!(operator, Bop::LogAnd | Bop::LogOr) {
                     VarType::Int
                 } else {
                     ty
-                },
-            })
+                };
+
+                Ok(Expr::Binary {
+                    left,
+                    operator,
+                    right,
+                    ty,
+                })
+            }
         }
         labeled::Expr::Nested(exp) => typecheck_expression(*exp, table),
         labeled::Expr::Const(cnst) => Ok(Expr::Const {
@@ -513,7 +550,7 @@ fn function_declaration(
     let body = if let Some(body) = body {
         let mut new_body = Vec::new();
         for item in body {
-            new_body.push(typecheck_blockitem(item, typ.ret, table)?);
+            new_body.push(typecheck_blockitem(item, typ.ret, table, None)?);
         }
         Some(new_body.into_boxed_slice())
     } else {
@@ -532,10 +569,13 @@ fn typecheck_blockitem(
     block_item: labeled::BlockItem,
     ret: Option<VarType>,
     table: &mut SymbolTable,
+    switch_val_type: Option<VarType>,
 ) -> Result<BlockItem, Error> {
     match block_item {
         labeled::BlockItem::D(dec) => declaration(dec, table).map(BlockItem::D),
-        labeled::BlockItem::S(s) => typecheck_statement(s, ret, table).map(BlockItem::S),
+        labeled::BlockItem::S(s) => {
+            typecheck_statement(s, ret, table, switch_val_type).map(BlockItem::S)
+        }
     }
 }
 
@@ -543,12 +583,18 @@ fn typecheck_statement(
     stmt: labeled::Stmnt,
     return_type: Option<VarType>,
     table: &mut SymbolTable,
+    switch_val_type: Option<VarType>,
 ) -> Result<Stmnt, Error> {
     match stmt {
         labeled::Stmnt::Compound(stmts) => {
             let mut statements = Vec::with_capacity(stmts.len());
             for item in stmts {
-                statements.push(typecheck_blockitem(item, return_type, table)?);
+                statements.push(typecheck_blockitem(
+                    item,
+                    return_type,
+                    table,
+                    switch_val_type,
+                )?);
             }
             let statements = statements.into_boxed_slice();
 
@@ -560,12 +606,13 @@ fn typecheck_statement(
             then,
             r#else,
         } => typecheck_expression(condition, table).and_then(|condition| {
-            typecheck_statement(*then, return_type, table)
+            typecheck_statement(*then, return_type, table, switch_val_type)
                 .map(Box::new)
                 .and_then(|then| {
                     r#else
                         .map(|r#else| {
-                            typecheck_statement(*r#else, return_type, table).map(Box::new)
+                            typecheck_statement(*r#else, return_type, table, switch_val_type)
+                                .map(Box::new)
                         })
                         .transpose()
                         .map(|r#else| Stmnt::If {
@@ -580,7 +627,7 @@ fn typecheck_statement(
             condition,
             label,
         } => {
-            let body = typecheck_statement(*body, return_type, table)?;
+            let body = typecheck_statement(*body, return_type, table, switch_val_type)?;
             let condition = typecheck_expression(condition, table)?;
             Ok(Stmnt::DoWhile {
                 body: body.into(),
@@ -593,7 +640,7 @@ fn typecheck_statement(
             condition,
             label,
         } => {
-            let body = typecheck_statement(*body, return_type, table)?;
+            let body = typecheck_statement(*body, return_type, table, switch_val_type)?;
             let condition = typecheck_expression(condition, table)?;
             Ok(Stmnt::While {
                 body: body.into(),
@@ -607,14 +654,22 @@ fn typecheck_statement(
          */
         labeled::Stmnt::Label {
             body,
-            name: ast::semantics::Label::Case { c, id },
-        } => Ok(Stmnt::Label {
-            name,
-            body: typecheck_statement(*body, return_type, table)?.into(),
-        }),
+            name: ast::semantics::Label::Case { mut c, id },
+        } => {
+            if let Some(val_ty) = switch_val_type {
+                super::const_cast(&mut c, &val_ty);
+                Ok(Stmnt::Label {
+                    name: ast::semantics::Label::Case { c, id },
+                    body: typecheck_statement(*body, return_type, table, switch_val_type)?.into(),
+                })
+            } else {
+                Err(Error::OutOfSwitch)
+            }
+        }
+
         labeled::Stmnt::Label { body, name } => Ok(Stmnt::Label {
             name,
-            body: typecheck_statement(*body, return_type, table)?.into(),
+            body: typecheck_statement(*body, return_type, table, switch_val_type)?.into(),
         }),
         labeled::Stmnt::For {
             init,
@@ -637,7 +692,12 @@ fn typecheck_statement(
                 .transpose()?;
             let post = post.map(|p| typecheck_expression(p, table)).transpose()?;
 
-            let body = Box::new(typecheck_statement(*body, return_type, table)?);
+            let body = Box::new(typecheck_statement(
+                *body,
+                return_type,
+                table,
+                switch_val_type,
+            )?);
             Ok(Stmnt::For {
                 init,
                 condition,
@@ -659,14 +719,20 @@ fn typecheck_statement(
             val: v,
             body: b,
             label,
-            mut cases,
+            cases,
             default,
         } => {
             let val = typecheck_expression(v, table)?;
+            let new_inner_val_type = Some(val.ty());
 
             Ok(Stmnt::Switch {
                 val,
-                body: Box::new(typecheck_statement(*b, return_type, table)?),
+                body: Box::new(typecheck_statement(
+                    *b,
+                    return_type,
+                    table,
+                    new_inner_val_type,
+                )?),
                 label,
                 cases,
                 default,
@@ -685,6 +751,8 @@ pub enum Error {
     DuplicateDefinition,
     DupliCase,
     ConflictingDeclaration,
+
+    OutOfSwitch,
 
     UndefinedVar,
 
