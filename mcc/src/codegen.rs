@@ -8,11 +8,13 @@ use ast::semantics::SymbolTable;
 //use assembly::Program;
 use crate::Optimizations;
 use ast::semantics::typed;
+use asm::x86::Target;
 
 pub fn generate(
     program: typed::Program,
     emit_asm: bool,
     opt: &Optimizations,
+    target: Target,
     mut table: SymbolTable,
 ) -> Box<[u8]> {
     let tacky = {
@@ -25,7 +27,7 @@ pub fn generate(
         let (pseudo, table) = pseudo_pass::emit(tacky, table);
 
         let asm = x86_pass::fix_ast(pseudo, &table);
-        asm::x86::emit(&asm)
+        asm::x86::emit(&asm, target)
     } else {
         Box::new([])
     }

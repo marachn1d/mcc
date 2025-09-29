@@ -56,12 +56,12 @@ struct StackFrame<'a> {
 }
 
 const fn align_quadword(size: usize) -> usize {
-    let remainder = (size + 8) % 16;
-    if remainder == 0 {
-        size
-    } else {
-        // should align to 16
-        size + (16 - remainder)
+    const QWORD:usize = 8;
+    let new_size = size + QWORD;
+    // round down to next multiple of 8
+    match new_size % 16{
+        0 => QWORD,
+        remainder => QWORD + (16 - remainder)
     }
 }
 
@@ -87,6 +87,20 @@ impl<'a> StackFrame<'a> {
             .copied()
     }
 
+    fn alloc(&mut self, ty: &AsmType, ident: &Ident) -> Op {
+        let size = match ty {
+            AsmType::Longword => 4,
+            AsmType::Quadword => align_quadword(self.size),
+        };
+
+        self.size += size;
+
+        let offset = -(self.size as isize);
+
+        self.map.insert(ident.clone(), offset);
+        Op::Stack(offset)
+    }
+
     fn get(&mut self, ident: &Ident) -> Op {
         if let Some(offset) = self.map.get(ident) {
             Op::Stack(*offset)
@@ -100,25 +114,7 @@ impl<'a> StackFrame<'a> {
                 BackendSymbol::Obj {
                     ty,
                     is_static: false,
-                } => {
-                    let size = match ty {
-                        AsmType::Longword => 4,
-                        AsmType::Quadword => align_quadword(self.size),
-                    };
-
-                    self.size += size;
-
-                    let offset = -(self.size as isize);
-
-                    self.map.insert(ident.clone(), offset);
-                    Op::Stack(offset)
-                    /*
-                    self.size += 4;
-                     let offset = -(self.size as isize);
-                     self.map.insert(ident.clone(), offset);
-                     Op::Stack(offset)
-                             */
-                }
+                } => self.alloc(ty, ident),
             }
         }
     }

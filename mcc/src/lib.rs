@@ -9,6 +9,7 @@ use std::path::PathBuf;
 pub mod lex;
 pub use ast::DebugToken;
 pub use ast::Token;
+use asm::x86::Target;
 
 pub use util::TokenIter;
 
@@ -25,6 +26,7 @@ pub struct Config {
     pub stage: Option<CompileStage>,
     pub opt: Optimizations,
     pub version: CVersion,
+    pub target:Target,
 }
 
 #[derive(Default, Copy, Clone)]
@@ -54,7 +56,10 @@ impl Optimizations {
 pub fn compile(mut path: PathBuf) -> Result<PathBuf, Error> {
     let bytes = fs::read(&path).map_err(|_| Error::InvalidInput)?;
     let _ = fs::remove_file(&path);
-    let stage = CONFIG.get().unwrap().stage;
+    let (stage, opt, target) = {
+        let conf = CONFIG.get().unwrap();
+        (conf.stage, conf.opt, conf.target)
+    };
 
     let tokens = lex::tokenize(&bytes)?;
     if stage == Some(CompileStage::Lex) {
@@ -82,7 +87,8 @@ pub fn compile(mut path: PathBuf) -> Result<PathBuf, Error> {
                     let code = codegen::generate(
                         program,
                         should_emit(&stage),
-                        &CONFIG.get().unwrap().opt,
+                        &opt,
+                        target,
                         map,
                     );
                     path.set_extension("S");

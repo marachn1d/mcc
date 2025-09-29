@@ -204,34 +204,43 @@ impl Display for AsmType {
     }
 }
 
-impl Display for X86 {
+
+struct TargettedX86<'a>{
+    inner: &'a X86,
+    target:Target,
+}
+
+impl Display for TargettedX86<'_> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        match self {
-            Self::Call(fun) => write!(f, "call _{fun}"),
+        let target = self.target;
+        let fn_suffix = target.function_suffix().unwrap_or_default();
+        let fn_prefix = target.function_prefix().unwrap_or_default();
+        let local_prefix = target.local_label_prefix();
+        match self.inner {
+            X86::Call(fun) => write!(f, "call {fn_prefix}{fun}{fn_suffix}"),
+            X86::Push(Op::Register(r)) => write!(f, "pushq {}", r.eight_byte()),
+            X86::Push(op) => write!(f, "pushq {op}"),
 
-            Self::Push(Op::Register(r)) => write!(f, "pushq {}", r.eight_byte()),
-            Self::Push(op) => write!(f, "pushq {op}"),
-
-            Self::Mov {
+            X86::Mov {
                 regs: (src, dst),
                 ty,
             } => {
-                write!(f, "mov{ty}  {}, {}", src.sized_fmt(*ty), dst.sized_fmt(*ty))
+                write!(f, "mov{ty}  {}, {}", src.sized_fmt(*ty, target), dst.sized_fmt(*ty, target))
             }
-            Self::Ret => write!(f, "movq %rbp, %rsp\n\tpopq %rbp\n\tret"),
-            Self::Unary {
+            X86::Ret => write!(f, "movq %rbp, %rsp\n\tpopq %rbp\n\tret"),
+            X86::Unary {
                 operator,
                 operand,
                 ty,
-            } => write!(f, "{operator}{ty} {}", operand.sized_fmt(*ty)),
-            Self::Binary {
+            } => write!(f, "{operator}{ty} {}", operand.sized_fmt(*ty, target)),
+            X86::Binary {
                 operator: operator @ (Binary::ShiftLeft | Binary::ShiftRight),
                 regs: (Op::Register(r), by),
                 ty,
             } => {
-                write!(f, "{operator}{ty} {}, {}", r.one_byte(), by.sized_fmt(*ty),)
+                write!(f, "{operator}{ty} {}, {}", r.one_byte(), by.sized_fmt(*ty, target),)
             }
-            Self::Binary {
+            X86::Binary {
                 operator,
                 regs: (op, dst_op),
                 ty,
@@ -239,56 +248,57 @@ impl Display for X86 {
                 write!(
                     f,
                     "{operator}{ty} {}, {}",
-                    op.sized_fmt(*ty),
-                    dst_op.sized_fmt(*ty)
+                    op.sized_fmt(*ty, target),
+                    dst_op.sized_fmt(*ty, target)
                 )
             }
-            Self::Idiv { divisor, ty } => {
-                write!(f, "idiv{ty} {}", divisor.sized_fmt(*ty))
+            X86::Idiv { divisor, ty } => {
+                write!(f, "idiv{ty} {}", divisor.sized_fmt(*ty, target))
             }
-            Self::Cdq(AsmType::Longword) => {
+            X86::Cdq(AsmType::Longword) => {
                 write!(f, "cdq")
             }
-            Self::Cdq(AsmType::Quadword) => {
+            X86::Cdq(AsmType::Quadword) => {
                 write!(f, "cqo")
             }
-            Self::Cmp {
+            X86::Cmp {
                 regs: (left, right),
                 ty,
             } => {
                 write!(
                     f,
                     "cmp{ty} {}, {}",
-                    left.sized_fmt(*ty),
-                    right.sized_fmt(*ty)
+                    left.sized_fmt(*ty, target),
+                    right.sized_fmt(*ty, target)
                 )
             }
-            Self::Jmp(label) => {
-                write!(f, "jmp L{label}")
+            X86::Jmp(label) => {
+                write!(f, "jmp {local_prefix}{label}")
             }
-            Self::JmpCC { label, condition } => {
-                write!(f, "j{condition} L{label}")
+            X86::JmpCC { label, condition } => {
+                write!(f, "j{condition} {local_prefix}{label}")
             }
-            Self::SetCC { op, condition } => {
+            X86::SetCC { op, condition } => {
                 write!(f, "set{condition} {op}")
             }
-            Self::Label(label) => {
-                write!(f, "L{label}:")
+            X86::Label(label) => {
+                write!(f, "{local_prefix}{label}:")
             }
-            Self::Movsx {
+            X86::Movsx {
                 regs: (src, dst),
                 ty,
             } => {
                 write!(
                     f,
                     "movslq {}, {}",
-                    src.sized_fmt(AsmType::Longword),
-                    dst.sized_fmt(*ty)
+                    src.sized_fmt(AsmType::Longword, target),
+                    dst.sized_fmt(*ty, target)
                 )
             }
         }
     }
 }
+
 
 impl Op {
     pub const fn pseudo(self) -> PseudoOp {
@@ -390,20 +400,21 @@ impl Display for Op {
             Self::Imm(val) => write!(f, "${val}"),
             Self::Register(r) => write!(f, "{}", r.extended()),
             Self::Stack(n) => write!(f, "{n}(%rbp)"),
-            Self::Data(name) => write!(f, "_{name}(%rip)"),
+            Self::Data(name) => write!(f, "{name}(%rip)"),
         }
     }
 }
 
 impl Op {
-    fn sized_fmt(&self, size: AsmType) -> String {
+    fn sized_fmt(&self, size: AsmType, target:Target) -> String {
         if let Self::Register(r) = self {
             match size {
                 AsmType::Longword => r.extended().into(),
                 AsmType::Quadword => r.eight_byte().into(),
             }
         } else {
-            format!("{self}")
+
+            format!("{}{self}", if let Self::Data(_) = self && let Some(prefix) = target.user_defined_name_prefix(){prefix}else{""})
         }
     }
 }
@@ -505,11 +516,65 @@ pub enum TopLevel<T> {
     StaticVar(StaticVar),
 }
 
-pub fn emit(program: &Program<X86>) -> Box<[u8]> {
+#[derive(Copy, Clone)]
+pub enum Target{
+    Darwin,
+    Linux,
+}
+
+impl Target{
+    const fn alignment_directive(&self) -> &str{
+        match self{
+            Target::Darwin => ".balign",
+            Target::Linux => ".align",
+        }
+    }
+
+    const fn end_message(&self) -> Option<&str>{
+        match self{
+            Target::Darwin => None,
+            Target::Linux => Some(".section .note.GNU-stack,\"\",@progbits"),
+        }
+    }
+
+    const fn function_prefix(&self) -> Option<&str>{
+        if let Self::Darwin = self{
+            Some(unsafe{self.user_defined_name_prefix().unwrap_unchecked()})
+        }else{
+            None
+        }
+    }
+
+    const fn function_suffix(&self) -> Option<&str>{
+        if let Self::Linux = self{
+            Some("@PLT")
+        }else{
+            None
+        }
+    }
+
+    const fn local_label_prefix(&self) -> &str{
+        match self{
+            Target::Darwin => "L",
+            Target::Linux => ".L",
+        }
+    }
+
+    const fn user_defined_name_prefix(&self) -> Option<&str>{
+        match self{
+            Target::Darwin => Some("_"),
+            Target::Linux => None,
+        }
+    }
+}
+
+pub fn emit(program: &Program<X86>, target: Target) -> Box<[u8]> {
     let mut bytes = Vec::new();
+    let name_prefix = target.user_defined_name_prefix().unwrap_or_default();
+    let alignment_dir = target.alignment_directive();
     for top_level in &program.0 {
         if top_level.global() {
-            let _ = writeln!(bytes, "\t.globl _{}", top_level.name());
+            let _ = writeln!(bytes, "\t.globl {name_prefix}{}",top_level.name());
         }
         match top_level {
             TopLevel::Fn(FunctionDefinition {
@@ -521,10 +586,10 @@ pub fn emit(program: &Program<X86>) -> Box<[u8]> {
                 let _ = writeln!(
                     bytes,
                     "\t.text\n{name}:\n\t{prelude}",
-                    name = format_args!("_{}", name),
+                    name = format_args!("{name_prefix}{}", name),
                     prelude = format_args!("pushq %rbp\n\tmovq %rsp, %rbp")
                 );
-                for instruction in body {
+                for instruction in body.iter().map(|inner| TargettedX86{inner,target}) {
                     let _ = writeln!(bytes, "\t{instruction}");
                 }
             }
@@ -542,14 +607,23 @@ pub fn emit(program: &Program<X86>) -> Box<[u8]> {
                 } else {
                     b"\t.data\n"
                 });
-                let _ = writeln!(bytes, "\t.balign {}\n", alignment);
+                let _ = writeln!(bytes, "\t{alignment_dir} {}\n", alignment);
 
-                let _ = writeln!(bytes, "_{name}:\n \t {init}");
+                let _ = writeln!(bytes, "{name_prefix}{name}:\n \t {init}");
             }
         }
     }
+
+    if let Some(suffix) = target.end_message(){
+        let _ = writeln!(bytes, "{suffix}");
+    }
+    
     bytes.into()
 }
+
+
+
+
 
 impl<T> TopLevel<T> {
     const fn global(&self) -> bool {
