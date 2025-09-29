@@ -11,7 +11,7 @@ const NO_IMM: RuleSet = RuleSet(OpRule::NoImm as u8);
 
 const NO_MEM: RuleSet = RuleSet(OpRule::NoMem as u8);
 
-const NORULE: RuleSet = RuleSet(0);
+const _NORULE: RuleSet = RuleSet(0);
 
 pub struct RuleTable {
     pub mov: PairSet,
@@ -192,7 +192,7 @@ const MAX1STACK: u8 = 0b1000;
 mod test {
     #[test]
     fn test_none() {
-        let rule = super::NORULE;
+        let rule = super::_NORULE;
         assert!(rule.none());
         assert!(!rule.no_mem());
         assert!(!rule.max_dword());

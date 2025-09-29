@@ -1,9 +1,6 @@
 use ast::{Constant, DebugToken, Ident, Token};
 use util::SliceIter;
 
-use std::fmt::{self, Display, Formatter};
-use std::rc::Rc;
-
 pub fn tokenize(bytes: &[u8]) -> Result<Box<[DebugToken]>, Error> {
     let mut iter = SliceIter::new(bytes);
 

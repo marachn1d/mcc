@@ -59,10 +59,4 @@ impl VarMap {
     }
 }
 
-pub fn new_var(name: &[u8]) -> Ident {
-    let name = unsafe { std::str::from_utf8_unchecked(name) };
-    Ident::from(format!(
-        "t{name}.{number}",
-        number = COUNTER.fetch_add(1, Ordering::SeqCst)
-    ))
-}
+

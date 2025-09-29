@@ -1,4 +1,3 @@
-use std::ops::Add;
 
 use crate::Optimizations;
 use asm::tacky::*;
@@ -11,7 +10,7 @@ pub fn opt(tacky: &mut Program, opt: &Optimizations, table: &SymbolTable) {
         return;
     }
 
-    let mut function_bodies: Vec<_> = tacky
+    let function_bodies: Vec<_> = tacky
         .0
         .iter_mut()
         .filter_map(|tl| match tl {
@@ -25,7 +24,7 @@ pub fn opt(tacky: &mut Program, opt: &Optimizations, table: &SymbolTable) {
     }
 }
 
-fn optimize(body: &mut Box<[Instruction]>, opt: &Optimizations, table: &SymbolTable) {
+fn optimize(body: &mut Box<[Instruction]>, opt: &Optimizations, _table: &SymbolTable) {
     let mut changed = true;
     while changed {
         changed = false;
@@ -42,7 +41,7 @@ fn optimize(body: &mut Box<[Instruction]>, opt: &Optimizations, table: &SymbolTa
                 changed |= propagate_copies(&mut cfg);
             }
             if opt.dead_store {
-                changed |= propagate_copies(&mut cfg);
+                changed |= eliminate_dead_stores(&mut cfg);
             }
             if changed {
                 *body = cfg.into_program()
@@ -135,19 +134,19 @@ fn constant_fold(tacky: &mut [Instruction]) -> bool {
     changed
 }
 
-fn eliminate_unreachable(tacky: &mut TackyFlow) -> bool {
+fn eliminate_unreachable(_tacky: &mut TackyFlow) -> bool {
     false
 }
 
-fn propagate_copies(tacky: &mut TackyFlow) -> bool {
+fn propagate_copies(_tacky: &mut TackyFlow) -> bool {
     false
 }
 
-fn eliminate_dead_stores(tacky: &mut TackyFlow) -> bool {
+fn eliminate_dead_stores(_tacky: &mut TackyFlow) -> bool {
     false
 }
 
-fn control_flow_graph(body: &[Instruction]) -> TackyFlow {
+fn control_flow_graph(_body: &[Instruction]) -> TackyFlow {
     todo!()
 }
 
