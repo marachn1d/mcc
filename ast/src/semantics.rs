@@ -310,10 +310,9 @@ pub mod labeled {
     }
 
     impl Expr {
-        pub const fn static_init(&self) -> Option<StaticInit> {
+        pub fn static_init(&self) -> Option<StaticInit> {
             match self {
-                Expr::Const(Constant::Long(l)) => Some(StaticInit::Long(*l)),
-                Expr::Const(Constant::Int(i)) => Some(StaticInit::Int(*i)),
+                Expr::Const(c) => Some(c.static_init()),
                 Expr::Nested(e) => e.static_init(),
                 _ => None,
             }
@@ -487,19 +486,14 @@ pub mod typed {
             }
         }
 
-        pub const fn static_init(&self) -> Option<StaticInit> {
+        pub fn static_init(&self) -> Option<StaticInit> {
             match self {
-                Expr::Const {
-                    cnst: Constant::Long(l),
-                    ..
-                } => Some(StaticInit::Long(*l)),
-                Expr::Const {
-                    cnst: Constant::Int(i),
-                    ..
-                } => Some(StaticInit::Int(*i)),
-                Expr::Nested { inner: e, .. } => e.static_init(),
+                Expr::Const{cnst,..} => Some(cnst.static_init()),
+                Expr::Nested{inner,..} => inner.static_init(),
                 _ => None,
             }
         }
+
+    
     }
 }

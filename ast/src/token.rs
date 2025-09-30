@@ -65,6 +65,9 @@ pub enum Token<Ident> {
 
     QuestionMark,
     Colon,
+
+    Unsigned,
+    Signed,
 }
 
 impl<Ident> Token<Ident> {
@@ -91,8 +94,8 @@ impl<T: fmt::Debug + Display> Display for Token<T> {
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone, Ord, PartialOrd, Hash)]
 pub enum Constant {
-    Int(i32),
-    Long(i64),
+    Int(Int),
+    Long(Long),
 }
 
 impl std::fmt::Display for Constant {
@@ -142,41 +145,60 @@ impl From<i64> for Constant {
     }
 }
 
-
 impl Constant {
-    pub const fn new_int(int:i32) -> Self{
-        Self::Int(int)
+    pub const fn new_int(int: i32) -> Self {
+        Self::Int(Int::I(int))
     }
 
-    pub const fn new_long(long:i64) -> Self{
-        Self::Long(long)
+    pub const fn new_long(long: i64) -> Self {
+        Self::Long(Long::I(long))
     }
 
-    pub fn map<T, F: Fn(i32) -> T, G: Fn(i64) -> T>(self, f:F, g:G) -> T{
-        match self{
+    pub fn map<T, F: Fn(Int) -> T, G: Fn(Long) -> T>(self, f: F, g: G) -> T {
+        match self {
             Constant::Int(i) => f(i),
             Constant::Long(l) => g(l),
         }
     }
 
-    pub fn edit<F: Fn(i32) -> i32, G: Fn(i64) -> i64>(self, f:F, g:G) -> Self{
-        match self{
+    pub fn map_deep<T, F: Fn(i32) -> T, G: Fn(i64) -> T, H: Fn(u32) -> T, J: Fn(u64) -> T>(
+        self,
+        f: F,
+        g: G,
+        h: H,
+        j: J,
+    ) -> T {
+        self.map(|i| i.map(&f, &h), |l| l.map(&g, &j))
+    }
+
+    pub fn map_int<T, F: Fn(i32) -> T, G: Fn(i64) -> T>(self, f: F, g: G) -> T {
+        match self {
+            Constant::Int(i) => f(i.signed()),
+            Constant::Long(l) => g(l.signed()),
+        }
+    }
+
+    pub fn map_uint<T, F: Fn(u32) -> T, G: Fn(u64) -> T>(self, f: F, g: G) -> T {
+        self.map(|i| f(i.unsigned()), |l| g(l.unsigned()))
+    }
+
+    pub fn edit<F: Fn(Int) -> Int, G: Fn(Long) -> Long>(self, f: F, g: G) -> Self {
+        match self {
             Constant::Int(i) => Self::Int(f(i)),
             Constant::Long(l) => Self::Long(g(l)),
         }
     }
 
-
-    const fn copied(&self) -> Self{
+    const fn copied(&self) -> Self {
         *self
     }
 
-    pub fn int(&self) -> i32 {
-        self.copied().map(|i| i, |l| l as i32)
+    pub fn int(&self) -> Int {
+        self.copied().map(|i| i, |l| l.int())
     }
 
-    pub fn long(&self) -> i64 {
-        self.copied().map(|i| i as i64, |l| l)
+    pub fn long(&self) -> Long {
+        self.copied().map(|i| i.long(), |l| l)
     }
 
     pub fn ty(&self) -> crate::VarType {
@@ -189,8 +211,7 @@ impl Constant {
     }
 
     pub fn is_positive(&self) -> bool {
-        self.copied().map(i32::is_positive, i64::is_positive)
-
+        self.map(|i| i.is_positive(), |l| l.is_positive())
     }
 
     pub fn is_negative(&self) -> bool {
@@ -200,11 +221,9 @@ impl Constant {
     pub fn with_unop(&self, op: crate::parse::UnOp) -> Self {
         use crate::parse::UnOp;
         match op {
-            UnOp::Complement => self.edit(|i| !i, |l| !l),
-
             UnOp::Negate => self.edit(|i| -i, |l| -l),
-
-            UnOp::Not => self.copied().edit(|i| if i == 0 {i} else {1}, |l| if l == 0 {l} else {1}),
+            UnOp::Not => self.edit(|i| !i, |l| !l),
+            UnOp::Complement => self.edit(|i| i.complement(), |l| l.complement()),
         }
     }
 
@@ -213,32 +232,194 @@ impl Constant {
         let c = self.copied();
         match op {
             POST_INC | POST_DEC => c,
-            PRE_INC => c.edit(|i| i.wrapping_add(1), |l| l.wrapping_add(1)),
-            PRE_DEC => c.edit(|i| i.wrapping_sub(1), |l| l.wrapping_sub(1)),
+            PRE_INC => c.edit(|i| i + 1, |l| l - 1i64),
+            PRE_DEC => c.edit(|i| i - 1, |l| l - 1i64),
         }
     }
 
+    /*
     pub fn static_init(&self) -> StaticInit {
         self.copied().map(StaticInit::Int, StaticInit::Long)
     }
+    */
 
-    pub fn eq(&self, int:i32, long:i64) -> bool{
-        self.copied().map(|i| i == int, |l| l == long)
+    pub fn eq(&self, int: i32, long: i64) -> bool {
+        self.copied().map(|i| i.eq_signed(int), |l| l.eq_signed(long))
     }
 
     pub fn is_zero(&self) -> bool {
-        self.eq(0,0)
+        self.eq(0, 0)
+    }
+
+    pub fn static_init(&self) -> StaticInit{
+        self.map(|int| StaticInit::Int(int.signed()), |long| StaticInit::Long(long.signed()))
     }
 }
 
-impl From<StaticInit> for Constant{
+#[derive(Debug, PartialEq, Eq, Copy, Clone, Ord, PartialOrd, Hash)]
+pub enum Int {
+    U(u32),
+    I(i32),
+}
+
+impl Int {
+    pub fn map<T, F: Fn(i32) -> T, G: Fn(u32) -> T>(self, f: F, g: G) -> T {
+        match self {
+            Self::I(i) => f(i),
+            Self::U(u) => g(u),
+        }
+    }
+
+    pub fn edit<F: Fn(i32) -> i32, G: Fn(u32) -> u32>(self, f: F, g: G) -> Self {
+        self.map(|i| Self::I(f(i)), |u| Self::U(g(u)))
+    }
+
+    const fn copied(&self) -> Self {
+        *self
+    }
+
+    pub fn signed(&self) -> i32 {
+        self.copied().map(|i| i, |u| u.cast_signed())
+    }
+
+    pub fn unsigned(&self) -> u32 {
+        self.copied().map(|i| i.cast_unsigned(), |u| u)
+    }
+
+    pub fn long(&self) -> Long {
+        self.map(|i| Long::I(i as i64), |u| Long::U(u as u64))
+    }
+
+    pub fn abs(&self) -> Self {
+        self.edit(|i| i.abs(), |u| u)
+    }
+
+    pub fn is_positive(&self) -> bool {
+        self.copied().map(|i| i.is_positive(), |_| true)
+    }
+
+    pub fn combine<F: Fn(i32, i32) -> i32, G: Fn(u32, u32) -> u32>(
+        self,
+        other: Self,
+        f: F,
+        g: G,
+    ) -> Self {
+        match (self, other) {
+            (Self::I(l), Self::I(r)) => Self::I(f(l, r)),
+            (l, r) => Self::U(g(l.unsigned(), r.unsigned())),
+        }
+    }
+
+    pub fn eq_signed(&self, other: i32) -> bool {
+        self.signed() == other
+    }
+
+    pub fn eq_unsigned(&self, other: u32) -> bool {
+        self.unsigned() == other
+    }
+
+    pub fn eq_signed_strict(&self, other: i32) -> bool {
+        self.map(|i| i == other, |_| false)
+    }
+
+    pub fn eq_unsigned_strict(&self, other: u32) -> bool {
+        self.map(|_| false, |u| u == other)
+    }
+
+    pub fn complement(&self) -> Self{
+        self.edit(|i| !i, |u| !u)
+    }
+
+
+}
+
+use std::ops::{Add, Neg, Not, Sub};
+
+#[derive(Debug, PartialEq, Eq, Copy, Clone, Ord, PartialOrd, Hash)]
+pub enum Long {
+    I(i64),
+    U(u64),
+}
+
+impl Long {
+    pub fn map<T, F: Fn(i64) -> T, G: Fn(u64) -> T>(self, f: F, g: G) -> T {
+        match self {
+            Self::I(i) => f(i),
+            Self::U(u) => g(u),
+        }
+    }
+
+    pub fn combine<F: Fn(i64, i64) -> i64, G: Fn(u64, u64) -> u64>(
+        self,
+        other: Self,
+        f: F,
+        g: G,
+    ) -> Self {
+        match (self, other) {
+            (Self::I(l), Self::I(r)) => Self::I(f(l, r)),
+            (l, r) => Self::U(g(l.unsigned(), r.unsigned())),
+        }
+    }
+
+    pub fn edit<F: Fn(i64) -> i64, G: Fn(u64) -> u64>(self, f: F, g: G) -> Self {
+        self.map(|i| Self::I(f(i)), |u| Self::U(g(u)))
+    }
+
+    const fn copied(&self) -> Self {
+        *self
+    }
+
+    pub fn signed(&self) -> i64 {
+        self.copied().map(|i| i, |u| u.cast_signed())
+    }
+
+    pub fn unsigned(&self) -> u64 {
+        self.copied().map(|i| i.cast_unsigned(), |u| u)
+    }
+
+    pub fn int(&self) -> Int {
+        self.map(|i| Int::I(i as i32), |u| Int::U(u as u32))
+    }
+
+    pub fn abs(&self) -> Self {
+        self.edit(|i| i.abs(), |u| u)
+    }
+
+    pub fn complement(&self) -> Self{
+        self.edit(|i| !i, |u| !u)
+    }
+
+    pub fn is_positive(&self) -> bool {
+        self.copied().map(|i| i.is_positive(), |_| true)
+    }
+
+    pub fn eq_signed(&self, other: i64) -> bool {
+        self.signed() == other
+    }
+
+    pub fn eq_unsigned(&self, other: u64) -> bool {
+        self.unsigned() == other
+    }
+
+    pub fn eq_signed_strict(&self, other: i64) -> bool {
+        self.map(|i| i == other, |_| false)
+    }
+
+    pub fn eq_unsigned_strict(&self, other: u64) -> bool {
+        self.map(|_| false, |l| l == other)
+    }
+}
+
+/*
+impl From<StaticInit> for Constant {
     fn from(value: StaticInit) -> Self {
-        match value{
+        match value {
             StaticInit::Int(i) => Self::Int(i),
             StaticInit::Long(l) => Self::Long(l),
         }
     }
 }
+*/
 
 impl<Ident> DebugToken<Ident> {
     pub fn into_inner(self) -> (Token<Ident>, usize) {
@@ -287,5 +468,161 @@ impl<I> From<DebugToken<I>> for Token<I> {
 impl From<crate::Ident> for Token<crate::Ident> {
     fn from(i: crate::Ident) -> Self {
         Self::Ident(i)
+    }
+}
+
+impl Add for Long {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        self.combine(rhs, i64::wrapping_add, u64::wrapping_add)
+    }
+}
+
+impl Sub for Long {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        self.combine(rhs, i64::wrapping_sub, u64::wrapping_sub)
+    }
+}
+
+impl Neg for Long {
+    type Output = Self;
+
+    fn neg(self) -> Self::Output {
+        self.edit(i64::wrapping_neg, u64::wrapping_neg)
+    }
+}
+
+impl Not for Long {
+    type Output = Self;
+
+    fn not(self) -> Self::Output {
+        self.edit(
+            |i| if i == 0 { 0 } else { 1 },
+            |l| if l == 0 { 0 } else { 1 },
+        )
+    }
+}
+
+impl Add<i64> for Long {
+    type Output = Self;
+
+    fn add(self, rhs: i64) -> Self::Output {
+        self + Self::I(rhs)
+    }
+}
+
+impl Sub<i64> for Long {
+    type Output = Self;
+
+    fn sub(self, rhs: i64) -> Self::Output {
+        self - Self::I(rhs)
+    }
+}
+
+impl Add<u64> for Long {
+    type Output = Self;
+
+    fn add(self, rhs: u64) -> Self::Output {
+        self + Self::U(rhs)
+    }
+}
+
+impl Sub<u64> for Long {
+    type Output = Self;
+
+    fn sub(self, rhs: u64) -> Self::Output {
+        self - Self::U(rhs)
+    }
+}
+
+impl Add for Int {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        self.combine(rhs, i32::wrapping_add, u32::wrapping_add)
+    }
+}
+
+impl Sub for Int {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        self.combine(rhs, i32::wrapping_sub, u32::wrapping_sub)
+    }
+}
+
+impl Neg for Int {
+    type Output = Self;
+
+    fn neg(self) -> Self::Output {
+        self.edit(i32::wrapping_neg, u32::wrapping_neg)
+    }
+}
+
+impl Not for Int {
+    type Output = Self;
+
+    fn not(self) -> Self::Output {
+        self.edit(
+            |i| if i == 0 { 0 } else { 1 },
+            |l| if l == 0 { 0 } else { 1 },
+        )
+    }
+}
+
+impl Add<i32> for Int {
+    type Output = Self;
+
+    fn add(self, rhs: i32) -> Self::Output {
+        self + Self::I(rhs)
+    }
+}
+
+impl Sub<i32> for Int {
+    type Output = Self;
+
+    fn sub(self, rhs: i32) -> Self::Output {
+        self - Self::I(rhs)
+    }
+}
+
+impl Add<u32> for Int {
+    type Output = Self;
+
+    fn add(self, rhs: u32) -> Self::Output {
+        self + Self::U(rhs)
+    }
+}
+
+impl Sub<u32> for Int {
+    type Output = Self;
+
+    fn sub(self, rhs: u32) -> Self::Output {
+        self - Self::U(rhs)
+    }
+}
+
+impl std::fmt::Display for Int {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self{
+            Int::U(u) => u.fmt(f),
+            Int::I(i) if *i < 0 => write!(f,"n{}", i.abs()),
+            Int::I(i) => i.fmt(f)
+        }
+
+    }
+}
+
+impl std::fmt::Display for Long {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self{
+            Long::U(u) => u.fmt(f),
+            Long::I(i) if *i < 0 => write!(f,"n{}", i.abs()),
+            Long::I(i) => i.fmt(f)
+        }
+
     }
 }

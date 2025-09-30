@@ -208,16 +208,17 @@ fn constant_number(start: AsciiDigit, iter: &mut SliceIter<u8>) -> Result<Consta
         bytes.push(constant);
     }
 
-    match iter.peek() {
+    match iter.next() {
         Some(b'l') => {
             iter.next();
-            Ok(Constant::from(parse_long(&bytes)))
+            Ok(Constant::new_long(parse_long(&bytes)))
         }
         Some(x) if !word_character(x) => {
             let long = parse_long(&bytes);
             Ok(i32::try_from(long).map_or(Constant::new_long(long), Constant::new_int))
         }
-        _ => Err(Error::InvalidConstant),
+        Some(_) => Err(Error::InvalidConstant),
+        None => Err(Error::UnexpectedEof),
     }
 }
 
@@ -245,6 +246,8 @@ fn literal(byte: u8, iter: &mut SliceIter<u8>) -> Result<Token, Error> {
             b"static" => Token::Static,
             b"extern" => Token::Extern,
             b"long" => Token::Long,
+            b"unsigned" => Token::Unsigned,
+            b"signed" => Token::Signed,
             _ => identifier(bytes.into())?.into(),
         })
     } else {
@@ -312,6 +315,7 @@ pub enum Error {
     InvalidIdentifier,
     NotAscii,
     Other(String),
+    UnexpectedEof,
 }
 
 fn error<T>(message: &str) -> Result<T, Error> {
