@@ -154,6 +154,14 @@ impl Constant {
         Self::Long(Long::I(long))
     }
 
+    pub const fn new_uint(int:u32) -> Self{
+        Self::Int(Int::U(int))
+    }
+
+    pub const fn new_ulong(long:u64) -> Self{
+        Self::Long(Long::U(long))
+    }
+
     pub fn map<T, F: Fn(Int) -> T, G: Fn(Long) -> T>(self, f: F, g: G) -> T {
         match self {
             Constant::Int(i) => f(i),

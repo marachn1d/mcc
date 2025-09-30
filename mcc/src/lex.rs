@@ -208,17 +208,33 @@ fn constant_number(start: AsciiDigit, iter: &mut SliceIter<u8>) -> Result<Consta
         bytes.push(constant);
     }
 
-    match iter.next() {
-        Some(b'l') => {
+    match iter.as_slice() {
+        [b'l' | b'L', b'u' | b'U', ..] | [b'u' | b'U', b'l' | b'L', ..] => {
             iter.next();
-            Ok(Constant::new_long(parse_long(&bytes)))
+            iter.next();
+            Ok(Constant::new_ulong(parse_ulong(&bytes)))
         }
-        Some(x) if !word_character(x) => {
-            let long = parse_long(&bytes);
-            Ok(i32::try_from(long).map_or(Constant::new_long(long), Constant::new_int))
+        [x, ..] => {
+            iter.next();
+            match x {
+                b'l' | b'L' => Ok(Constant::new_long(parse_long(&bytes))),
+                b'u' | b'U' => Ok(Constant::new_ulong(parse_ulong(&bytes))),
+                x if word_character(x) => {
+                    let ulong = parse_ulong(&bytes);
+                    if let Ok(int) = i32::try_from(ulong){
+                        Ok(Constant::new_int(int))
+                    }else if let Ok(uint) = i32::try_from(ulong){
+                        Ok(Constant::new_uint(uint))
+                    }else if let Ok(long) = i64::try_from(ulong){
+                        Ok(Constant::new_long(long))
+                    }else{
+                        Ok(Constant::new_ulong(ulong))
+                    }
+                }
+                _ => Err(Error::InvalidConstant),
+            }
         }
-        Some(_) => Err(Error::InvalidConstant),
-        None => Err(Error::UnexpectedEof),
+        [] => Err(Error::UnexpectedEof),
     }
 }
 
@@ -297,6 +313,14 @@ enum AsciiDigit {
     Nine = 9,
 }
 
+fn parse_ulong(slice: &[AsciiDigit]) -> u64 {
+    let mut cur = 0u64;
+    for (place, digit) in slice.iter().map(|&x| u64::from(x as u8)).rev().enumerate() {
+        cur += 10u64.pow(place as u32) * digit;
+    }
+    cur
+}
+
 fn parse_long(slice: &[AsciiDigit]) -> i64 {
     let mut cur = 0i64;
     for (place, digit) in slice.iter().map(|&x| i64::from(x as u8)).rev().enumerate() {
@@ -304,6 +328,7 @@ fn parse_long(slice: &[AsciiDigit]) -> i64 {
     }
     cur
 }
+
 fn next_if_word(iter: &mut SliceIter<u8>) -> Option<u8> {
     iter.next_if(word_character)
 }

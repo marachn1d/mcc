@@ -80,8 +80,7 @@ impl StaticInit {
 
 impl From<Constant> for StaticInit{
     fn from(value: Constant) -> Self {
-        // for now
-        value.map(|int| StaticInit::Int(int.signed()), |long| StaticInit::Long(long.signed()))
+        value.static_init()
     }
 }
 
