@@ -54,18 +54,6 @@ impl StaticInit {
         }
     }
 
-    pub const fn to_int(&mut self) -> &i32 {
-        *self = Self::Int(self.as_int());
-        let Self::Int(i) = self else { unreachable!() };
-        i
-    }
-
-    pub const fn to_long(&mut self) -> &i64 {
-        *self = Self::Long(self.as_long());
-        let Self::Long(l) = self else { unreachable!() };
-        l
-    }
-
     pub const fn as_int(&self) -> i32 {
         match self {
             StaticInit::Long(l) => *l as i32,
@@ -86,6 +74,14 @@ impl StaticInit {
             VarType::Long => Self::Long(self.as_long()),
         }
     }
+
+
+}
+
+impl From<Constant> for StaticInit{
+    fn from(value: Constant) -> Self {
+        value.static_init()
+    }
 }
 
 impl std::fmt::Display for StaticInit {
@@ -99,15 +95,7 @@ impl std::fmt::Display for StaticInit {
     }
 }
 
-impl From<Constant> for StaticInit {
-    fn from(c: Constant) -> Self {
-        match c {
-            Constant::Int(i) => Self::Int(i),
 
-            Constant::Long(i) => Self::Long(i),
-        }
-    }
-}
 pub type Block = Arr<BlockItem>;
 
 pub type ParamList = Arr<Param>;
@@ -245,7 +233,7 @@ impl Expr {
         }
     }
 
-    pub const fn static_init(&self) -> Option<StaticInit> {
+    pub fn static_init(&self) -> Option<StaticInit> {
         match self {
             Self::Nested(e) => e.static_init(),
             Self::Const(c) => Some(c.static_init()),

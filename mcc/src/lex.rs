@@ -215,9 +215,7 @@ fn constant_number(start: AsciiDigit, iter: &mut SliceIter<u8>) -> Result<Consta
         }
         Some(x) if !word_character(x) => {
             let long = parse_long(&bytes);
-            i32::try_from(long)
-                .map(Constant::Int)
-                .or(Ok(Constant::Long(long)))
+            Ok(i32::try_from(long).map_or(Constant::new_long(long), Constant::new_int))
         }
         _ => Err(Error::InvalidConstant),
     }

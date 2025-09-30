@@ -65,7 +65,7 @@ fn convert_function(
 ) -> Option<FunctionDefinition> {
     let mut body_ops = Vec::new();
     convert_block(body?, &mut body_ops, &name, table);
-    body_ops.push(Instruction::Return(Value::Constant(Constant::Long(0))));
+    body_ops.push(Instruction::Return(Value::Constant(Constant::new_long(0))));
 
     Some(FunctionDefinition {
         name: name.clone(),
@@ -409,7 +409,7 @@ fn convert_expression(
                         target: false_label.clone(),
                     },
                     Instruction::Copy {
-                        src: Value::Constant(Constant::Int(1)),
+                        src: Value::Constant(Constant::new_int(1)),
                         dst: result.clone(),
                     },
                     Instruction::Jump {
@@ -417,7 +417,7 @@ fn convert_expression(
                     },
                     Instruction::Label(false_label),
                     Instruction::Copy {
-                        src: Value::Constant(Constant::Int(0)),
+                        src: Value::Constant(Constant::new_int(0)),
                         dst: result.clone(),
                     },
                     Instruction::Label(end_label.clone()),
@@ -441,7 +441,7 @@ fn convert_expression(
                         target: true_label.clone(),
                     },
                     Instruction::Copy {
-                        src: Value::Constant(Constant::Int(0)),
+                        src: Value::Constant(Constant::new_int(0)),
                         dst: result.clone(),
                     },
                     Instruction::Jump {
@@ -449,7 +449,7 @@ fn convert_expression(
                     },
                     Instruction::Label(true_label),
                     Instruction::Copy {
-                        src: Value::Constant(Constant::Int(1)),
+                        src: Value::Constant(Constant::new_int(1)),
                         dst: result.clone(),
                     },
                     Instruction::Label(end_label),
@@ -552,7 +552,7 @@ fn convert_expression(
             instructions.push(Instruction::Binary {
                 operator: op,
                 source_1: expression_result.clone(),
-                source_2: Value::Constant(Constant::Int(1)),
+                source_2: Value::Constant(Constant::new_int(1)),
                 dst: expression_result.clone(),
             });
             expression_result
@@ -581,7 +581,7 @@ fn convert_expression(
                 Instruction::Binary {
                     operator: op,
                     source_1: res.clone(),
-                    source_2: Value::Constant(Constant::Int(1)),
+                    source_2: Value::Constant(Constant::new_int(1)),
                     dst: res.clone(),
                 },
             ]);

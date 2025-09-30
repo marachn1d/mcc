@@ -68,11 +68,9 @@ fn convert_val(val: &Value) -> PseudoOp {
     }
 }
 
-use ast::Constant;
 fn val_type(val: &Value, table: &SymbolTable) -> AsmType {
     match val {
-        Value::Constant(Constant::Int(_)) => AsmType::Longword,
-        Value::Constant(Constant::Long(_)) => AsmType::Quadword,
+        Value::Constant(c) => c.map(|_| AsmType::Longword, |_| AsmType::Quadword),
         Value::Var(v) => var_type(v, table),
     }
 }

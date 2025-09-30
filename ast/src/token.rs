@@ -132,108 +132,108 @@ impl<T> From<Constant> for Token<T> {
 
 impl From<i32> for Constant {
     fn from(c: i32) -> Self {
-        Self::Int(c)
+        Self::new_int(c)
     }
 }
 
 impl From<i64> for Constant {
     fn from(c: i64) -> Self {
-        Self::Long(c)
+        Self::new_long(c)
     }
 }
 
+
 impl Constant {
-    pub fn int(&self) -> i32 {
-        match self {
-            Self::Int(i) => *i,
-            Self::Long(l) => *l as i32,
+    pub const fn new_int(int:i32) -> Self{
+        Self::Int(int)
+    }
+
+    pub const fn new_long(long:i64) -> Self{
+        Self::Long(long)
+    }
+
+    pub fn map<T, F: Fn(i32) -> T, G: Fn(i64) -> T>(self, f:F, g:G) -> T{
+        match self{
+            Constant::Int(i) => f(i),
+            Constant::Long(l) => g(l),
         }
+    }
+
+    pub fn edit<F: Fn(i32) -> i32, G: Fn(i64) -> i64>(self, f:F, g:G) -> Self{
+        match self{
+            Constant::Int(i) => Self::Int(f(i)),
+            Constant::Long(l) => Self::Long(g(l)),
+        }
+    }
+
+
+    const fn copied(&self) -> Self{
+        *self
+    }
+
+    pub fn int(&self) -> i32 {
+        self.copied().map(|i| i, |l| l as i32)
     }
 
     pub fn long(&self) -> i64 {
-        match self {
-            Self::Int(i) => *i as i64,
-            Self::Long(l) => *l,
-        }
+        self.copied().map(|i| i as i64, |l| l)
     }
 
     pub fn ty(&self) -> crate::VarType {
-        match self {
-            Self::Int(_) => crate::VarType::Int,
-            Self::Long(_) => crate::VarType::Long,
-        }
+        use crate::VarType;
+        self.copied().map(|_| VarType::Int, |_| VarType::Long)
     }
 
-    pub const fn abs(&self) -> Self {
-        match self {
-            Constant::Int(i) => Self::Int(i.abs()),
-            Constant::Long(i) => Self::Long(i.abs()),
-        }
+    pub fn abs(&self) -> Self {
+        self.copied().edit(|i| i.abs(), |l| l.abs())
     }
 
-    pub const fn is_positive(&self) -> bool {
-        match self {
-            Constant::Int(i) => i.is_positive(),
-            Constant::Long(l) => l.is_positive(),
-        }
+    pub fn is_positive(&self) -> bool {
+        self.copied().map(i32::is_positive, i64::is_positive)
+
     }
 
-    pub const fn is_negative(&self) -> bool {
+    pub fn is_negative(&self) -> bool {
         !self.is_positive()
     }
 
     pub fn with_unop(&self, op: crate::parse::UnOp) -> Self {
         use crate::parse::UnOp;
         match op {
-            UnOp::Complement => match self {
-                Self::Int(i) => Self::Int(!i),
-                Self::Long(l) => Self::Long(!l),
-            },
+            UnOp::Complement => self.edit(|i| !i, |l| !l),
 
-            UnOp::Negate => match self {
-                Self::Int(i) => Self::Int(-i),
-                Self::Long(l) => Self::Long(-l),
-            },
+            UnOp::Negate => self.edit(|i| -i, |l| -l),
 
-            UnOp::Not => match self {
-                Self::Int(0) => Self::Int(1),
-                Self::Long(0) => Self::Long(1),
-                Self::Int(_) => Self::Int(0),
-                Self::Long(_) => Self::Long(0),
-            },
+            UnOp::Not => self.copied().edit(|i| if i == 0 {i} else {1}, |l| if l == 0 {l} else {1}),
         }
     }
 
     pub fn with_incdec(&self, op: crate::parse::IncDec) -> Self {
         use crate::parse::inc_dec::{POST_DEC, POST_INC, PRE_DEC, PRE_INC};
+        let c = self.copied();
         match op {
-            POST_INC | POST_DEC => *self,
-            PRE_INC => match self {
-                Self::Int(i) => Self::Int(i.wrapping_add(1)),
-                Self::Long(l) => Self::Long(l.wrapping_add(1)),
-            },
-            PRE_DEC => match self {
-                Self::Int(i) => Self::Int(i.wrapping_sub(1)),
-                Self::Long(l) => Self::Long(l.wrapping_sub(1)),
-            },
+            POST_INC | POST_DEC => c,
+            PRE_INC => c.edit(|i| i.wrapping_add(1), |l| l.wrapping_add(1)),
+            PRE_DEC => c.edit(|i| i.wrapping_sub(1), |l| l.wrapping_sub(1)),
         }
     }
 
-    pub const fn static_init(&self) -> StaticInit {
-        match self {
-            Self::Long(c) => StaticInit::Long(*c),
-            Self::Int(c) => StaticInit::Int(*c),
-        }
+    pub fn static_init(&self) -> StaticInit {
+        self.copied().map(StaticInit::Int, StaticInit::Long)
     }
 
-    pub const fn is_zero(&self) -> bool {
-        matches!(self, Self::Long(0) | Self::Int(0))
+    pub fn eq(&self, int:i32, long:i64) -> bool{
+        self.copied().map(|i| i == int, |l| l == long)
+    }
+
+    pub fn is_zero(&self) -> bool {
+        self.eq(0,0)
     }
 }
 
-impl From<StaticInit> for Constant {
+impl From<StaticInit> for Constant{
     fn from(value: StaticInit) -> Self {
-        match value {
+        match value{
             StaticInit::Int(i) => Self::Int(i),
             StaticInit::Long(l) => Self::Long(l),
         }

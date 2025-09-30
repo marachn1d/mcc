@@ -44,10 +44,7 @@ pub use resolve::Error as ResolveError;
 use resolve_loops::Error as LoopError;
 
 pub fn const_cast(c: &mut Constant, ty: &ast::VarType) {
-    if c.ty() != *ty {
-        match c {
-            Constant::Int(i) => *c = Constant::Long(*i as i64),
-            Constant::Long(l) => *c = Constant::Int(*l as i32),
-        };
-    }
+    let si = c.static_init();
+    si.convert_to(ty);
+    *c = si.into()
 }
