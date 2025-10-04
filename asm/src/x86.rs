@@ -369,6 +369,7 @@ pub mod op_regs {
 #[derive(Clone, Debug)]
 pub enum Op {
     Imm(i64),
+    UImm(u64),
     Register(Register),
     Stack(isize),
     Data(Ident),
@@ -443,6 +444,7 @@ impl Display for Op {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
             Self::Imm(val) => write!(f, "${val}"),
+            Op::UImm(val) => write!(f,  "${val}"),
             Self::Register(r) => write!(f, "{}", r.extended()),
             Self::Stack(n) => write!(f, "{n}(%rbp)"),
             Self::Data(name) => write!(f, "{name}(%rip)"),
@@ -480,7 +482,10 @@ pub enum PseudoOp {
 impl From<Value> for PseudoOp {
     fn from(val: Value) -> Self {
         match val {
-            Value::Constant(c) => Self::imm(c.long().signed()),
+            Value::Constant(c) => match c.long(){
+                l if l.is_signed() => Self::imm(l.signed()),
+                ul => Self::uimm(ul.unsigned()),
+            },
 
             Value::Var(v) => Self::PseudoRegister(v),
         }
@@ -498,6 +503,7 @@ impl<T: Into<Op>> From<T> for PseudoOp {
         let operand: Op = val.into();
         match operand {
             Op::Imm(a) => Self::imm(a),
+            Op::UImm(a) => Self::uimm(a),
             Op::Register(a) => Self::register(a),
             Op::Stack(a) => Self::stack(a),
             Op::Data(a) => Self::data(a),
@@ -533,6 +539,10 @@ impl PseudoOp {
 
     pub const fn imm(value: i64) -> Self {
         Self::Normal(Op::Imm(value))
+    }
+
+    pub const fn uimm(value: u64) -> Self {
+        Self::Normal(Op::UImm(value))
     }
     pub const fn register(reg: Register) -> Self {
         Self::Normal(Op::Register(reg))

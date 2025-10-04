@@ -215,11 +215,16 @@ fn constant_number(start: AsciiDigit, iter: &mut SliceIter<u8>) -> Result<Consta
             Ok(Constant::new_ulong(parse_ulong(&bytes)))
         }
         [x, ..] => {
-            iter.next();
             match x {
-                b'l' | b'L' => Ok(Constant::new_long(parse_long(&bytes))),
-                b'u' | b'U' => Ok(Constant::new_ulong(parse_ulong(&bytes))),
-                x if word_character(*x) => {
+                b'l' | b'L' => {
+                    iter.next();
+                    Ok(Constant::new_long(parse_long(&bytes)))
+                },
+                b'u' | b'U' => {
+                    iter.next();
+                    Ok(Constant::new_ulong(parse_ulong(&bytes)))
+                },
+                x if !word_character(*x) => {
                     let ulong = parse_ulong(&bytes);
                     if let Ok(int) = i32::try_from(ulong) {
                         Ok(Constant::new_int(int))
@@ -231,7 +236,7 @@ fn constant_number(start: AsciiDigit, iter: &mut SliceIter<u8>) -> Result<Consta
                         Ok(Constant::new_ulong(ulong))
                     }
                 }
-                _ => Err(Error::InvalidConstant),
+                other => Err(Error::InvalidConstant(bytes.iter().map(|x| *x as u8 as char).chain(std::iter::once(*other as char)).collect())),
             }
         }
         [] => Err(Error::UnexpectedEof),
@@ -335,7 +340,7 @@ fn next_if_word(iter: &mut SliceIter<u8>) -> Option<u8> {
 
 #[derive(Debug)]
 pub enum Error {
-    InvalidConstant,
+    InvalidConstant(String),
     InvalidLiteral,
     InvalidIdentifier,
     NotAscii,

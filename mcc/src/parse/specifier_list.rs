@@ -23,6 +23,11 @@ impl SpeclistFsm {
     pub const fn done(self) -> Result<SpecifierList, Error> {
         if let Some(typ) = self.typ {
             Ok(SpecifierList { sc: self.sc, typ })
+        } else if let Some(false) = self.signed {
+            Ok(SpecifierList {
+                sc: self.sc,
+                typ: VarType::UINT,
+            })
         } else {
             Err(Error::Catchall("invalid specifier list"))
         }
@@ -116,6 +121,7 @@ impl SpeclistFsm {
             if let Some(ty) = &mut self.typ {
                 *ty = ty.as_unsigned()
             }
+
             Ok(())
         }
     }
@@ -151,7 +157,6 @@ fn get_specifier(tokens: &mut TokenIter, builder: &mut SpeclistFsm) -> Result<bo
 
 pub fn get_specifiers(tokens: &mut TokenIter) -> Result<SpeclistFsm, Error> {
     let mut builder = SpeclistFsm::new();
-
     while get_specifier(tokens, &mut builder)? {
         tokens.next();
     }

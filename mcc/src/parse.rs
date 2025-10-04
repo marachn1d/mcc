@@ -134,8 +134,7 @@ fn param(tokens: &mut TokenIter) -> Result<(Param, bool), Error> {
         Token::Comma => Ok(false),
         Token::CloseParen => Ok(true),
         other => {
-            eprintln!("got {other:?}");
-            Err(Error::Catchall("expected ',' or ')'."))
+            Err(Error::Catchall(format!("expected ',' or ')', got {other}.").leak()))
         }
     }?;
     Ok((Param { typ, name }, last))
@@ -167,7 +166,6 @@ fn var_declaration(tokens: &mut TokenIter, sc: Option<StorageClass>) -> Result<V
     let init = match tokens.consume_any()? {
         Token::Equals => {
             let exp = expression(tokens, None)?;
-
             tokens.consume(Token::Semicolon)?;
             Ok(Some(exp))
         }
@@ -477,7 +475,6 @@ fn factor(tokens: &mut TokenIter) -> Result<Expr, Error> {
         }
 
         t => {
-            eprintln!("errored in {t:?}");
             Err(Error::ExpectedExpr)
         }
     }
