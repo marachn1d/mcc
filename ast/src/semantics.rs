@@ -47,6 +47,7 @@ pub enum Label {
 }
 
 pub type SymbolTable = HashMap<Ident, Attr>;
+
 #[derive(Debug)]
 pub enum Attr {
     Static {
@@ -99,25 +100,22 @@ pub enum InitialVal {
 
 impl InitialVal {
     pub const fn get_static(&self, ty: VarType) -> StaticInit {
-        match (self, ty) {
-            (InitialVal::Initial(s), _) => *s,
-            (InitialVal::Tentative, VarType::Int) => StaticInit::Int(0),
-            (InitialVal::Tentative, VarType::Long) => StaticInit::Long(0),
+        match self {
+            InitialVal::Initial(i) => *i,
+            InitialVal::Tentative => StaticInit::zeroed(ty),
         }
     }
 
     pub fn as_long(&self) -> i64 {
         match self {
-            Self::Initial(StaticInit::Long(i)) => *i,
-            Self::Initial(StaticInit::Int(i)) => (*i).into(),
+            Self::Initial(si) => si.as_long(),
             Self::Tentative => 0,
         }
     }
 
-    pub const fn as_int(&self) -> i32 {
+    pub fn as_int(&self) -> i32 {
         match self {
-            Self::Initial(StaticInit::Int(i)) => *i,
-            Self::Initial(StaticInit::Long(i)) => *i as i32,
+            Self::Initial(si) => si.as_int(),
             Self::Tentative => 0,
         }
     }
@@ -488,12 +486,10 @@ pub mod typed {
 
         pub fn static_init(&self) -> Option<StaticInit> {
             match self {
-                Expr::Const{cnst,..} => Some(cnst.static_init()),
-                Expr::Nested{inner,..} => inner.static_init(),
+                Expr::Const { cnst, .. } => Some(cnst.static_init()),
+                Expr::Nested { inner, .. } => inner.static_init(),
                 _ => None,
             }
         }
-
-    
     }
 }

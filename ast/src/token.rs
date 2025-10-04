@@ -1,4 +1,6 @@
 use crate::parse::StaticInit;
+use crate::var_type::Sign;
+use crate::VarType;
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub enum Token<Ident> {
@@ -145,6 +147,12 @@ impl From<i64> for Constant {
     }
 }
 
+impl From<StaticInit> for Constant {
+    fn from(si: StaticInit) -> Self {
+        si.map(&mut Self::Int, &mut Self::Long)
+    }
+}
+
 impl Constant {
     pub const fn new_int(int: i32) -> Self {
         Self::Int(Int::I(int))
@@ -154,11 +162,11 @@ impl Constant {
         Self::Long(Long::I(long))
     }
 
-    pub const fn new_uint(int:u32) -> Self{
+    pub const fn new_uint(int: u32) -> Self {
         Self::Int(Int::U(int))
     }
 
-    pub const fn new_ulong(long:u64) -> Self{
+    pub const fn new_ulong(long: u64) -> Self {
         Self::Long(Long::U(long))
     }
 
@@ -169,14 +177,18 @@ impl Constant {
         }
     }
 
+    pub fn convert_to(&self, ty: &VarType) -> Self {
+        self.static_init().convert_to(ty).into()
+    }
+
     pub fn map_deep<T, F: Fn(i32) -> T, G: Fn(i64) -> T, H: Fn(u32) -> T, J: Fn(u64) -> T>(
         self,
-        f: F,
-        g: G,
-        h: H,
-        j: J,
+        int: F,
+        long: G,
+        uint: H,
+        ulong: J,
     ) -> T {
-        self.map(|i| i.map(&f, &h), |l| l.map(&g, &j))
+        self.map(|i| i.map(&int, &uint), |l| l.map(&long, &ulong))
     }
 
     pub fn map_int<T, F: Fn(i32) -> T, G: Fn(i64) -> T>(self, f: F, g: G) -> T {
@@ -210,8 +222,7 @@ impl Constant {
     }
 
     pub fn ty(&self) -> crate::VarType {
-        use crate::VarType;
-        self.copied().map(|_| VarType::Int, |_| VarType::Long)
+        self.map(|i| i.ty(), |l| l.ty())
     }
 
     pub fn abs(&self) -> Self {
@@ -252,15 +263,16 @@ impl Constant {
     */
 
     pub fn eq(&self, int: i32, long: i64) -> bool {
-        self.copied().map(|i| i.eq_signed(int), |l| l.eq_signed(long))
+        self.copied()
+            .map(|i| i.eq_signed(int), |l| l.eq_signed(long))
     }
 
     pub fn is_zero(&self) -> bool {
         self.eq(0, 0)
     }
 
-    pub fn static_init(&self) -> StaticInit{
-        self.map(|int| StaticInit::Int(int.signed()), |long| StaticInit::Long(long.signed()))
+    pub fn static_init(&self) -> StaticInit {
+        self.map(StaticInit::Int, StaticInit::Long)
     }
 }
 
@@ -271,6 +283,14 @@ pub enum Int {
 }
 
 impl Int {
+    pub const fn ty(&self) -> VarType {
+        match self {
+            Self::U(_) => VarType::uint(),
+
+            Self::I(_) => VarType::int(),
+        }
+    }
+
     pub fn map<T, F: Fn(i32) -> T, G: Fn(u32) -> T>(self, f: F, g: G) -> T {
         match self {
             Self::I(i) => f(i),
@@ -318,6 +338,18 @@ impl Int {
         }
     }
 
+    pub fn to_signed(&self) -> Self {
+        Self::I(self.signed())
+    }
+
+    pub fn to_unsigned(&self) -> Self {
+        Self::U(self.unsigned())
+    }
+
+    pub const fn is_signed(&self) -> bool {
+        self.ty().signed()
+    }
+
     pub fn eq_signed(&self, other: i32) -> bool {
         self.signed() == other
     }
@@ -334,11 +366,35 @@ impl Int {
         self.map(|_| false, |u| u == other)
     }
 
-    pub fn complement(&self) -> Self{
+    pub fn complement(&self) -> Self {
         self.edit(|i| !i, |u| !u)
     }
 
+    pub const fn zero(s: Sign) -> Self {
+        match s {
+            Sign::Unsigned => Self::U(0),
+            Sign::Signed => Self::I(0),
+        }
+    }
 
+    pub fn is_zero(&self) -> bool {
+        self.map(|i| i == 0, |u| u == 0)
+    }
+
+    pub fn fmt_label(&self) -> String {
+        match self {
+            Int::U(u) => format!("{u}"),
+            Int::I(i) if *i < 0 => format!("n{}", i.abs()),
+            Int::I(i) => format!("{i}"),
+        }
+    }
+
+    pub fn fmt_num(&self) -> String {
+        match self {
+            Int::U(u) => format!("{u}"),
+            Int::I(i) => format!("{i}"),
+        }
+    }
 }
 
 use std::ops::{Add, Neg, Not, Sub};
@@ -389,11 +445,23 @@ impl Long {
         self.map(|i| Int::I(i as i32), |u| Int::U(u as u32))
     }
 
+    pub const fn is_signed(&self) -> bool {
+        self.ty().signed()
+    }
+
+    pub fn to_signed(&self) -> Self {
+        Self::I(self.signed())
+    }
+
+    pub fn to_unsigned(&self) -> Self {
+        Self::U(self.unsigned())
+    }
+
     pub fn abs(&self) -> Self {
         self.edit(|i| i.abs(), |u| u)
     }
 
-    pub fn complement(&self) -> Self{
+    pub fn complement(&self) -> Self {
         self.edit(|i| !i, |u| !u)
     }
 
@@ -415,6 +483,39 @@ impl Long {
 
     pub fn eq_unsigned_strict(&self, other: u64) -> bool {
         self.map(|_| false, |l| l == other)
+    }
+
+    pub const fn zero(s: Sign) -> Self {
+        match s {
+            Sign::Unsigned => Self::U(0),
+            Sign::Signed => Self::I(0),
+        }
+    }
+
+    pub fn is_zero(&self) -> bool {
+        self.map(|i| i == 0, |u| u == 0)
+    }
+
+    pub fn fmt_label(&self) -> String {
+        match self {
+            Self::U(u) => format!("{u}"),
+            Self::I(i) if *i < 0 => format!("n{}", i.abs()),
+            Self::I(i) => format!("{i}"),
+        }
+    }
+
+    pub fn fmt_num(&self) -> String {
+        match self {
+            Self::U(u) => format!("{u}"),
+            Self::I(i) => format!("{i}"),
+        }
+    }
+
+    pub const fn ty(&self) -> VarType {
+        match self {
+            Self::U(_) => VarType::ulong(),
+            Self::I(_) => VarType::long(),
+        }
     }
 }
 
@@ -615,22 +716,20 @@ impl Sub<u32> for Int {
 
 impl std::fmt::Display for Int {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self{
+        match self {
             Int::U(u) => u.fmt(f),
-            Int::I(i) if *i < 0 => write!(f,"n{}", i.abs()),
-            Int::I(i) => i.fmt(f)
+            Int::I(i) if *i < 0 => write!(f, "n{}", i.abs()),
+            Int::I(i) => i.fmt(f),
         }
-
     }
 }
 
 impl std::fmt::Display for Long {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self{
+        match self {
             Long::U(u) => u.fmt(f),
-            Long::I(i) if *i < 0 => write!(f,"n{}", i.abs()),
-            Long::I(i) => i.fmt(f)
+            Long::I(i) if *i < 0 => write!(f, "n{}", i.abs()),
+            Long::I(i) => i.fmt(f),
         }
-
     }
 }

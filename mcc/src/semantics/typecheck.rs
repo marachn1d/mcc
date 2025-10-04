@@ -3,7 +3,6 @@ use ast::parse::{Bop, ParamList};
 use ast::semantics::labeled;
 use ast::semantics::typed::{BlockItem, Dec, Expr, FnDec, ForInit, Program, Stmnt, VarDec};
 use ast::semantics::{Attr, InitialVal, SymbolTable};
-use ast::Constant;
 use ast::{parse::FnType, parse::StaticInit, Ident, VarType};
 
 use std::collections::hash_map::Entry;
@@ -186,34 +185,23 @@ fn variable_declaration(
             }
             None
         }
-        (Some(StorageClass::Static), Some(labeled::Expr::Const(c))) => {
+        (Some(StorageClass::Static), exp) => {
+            let init = match exp {
+                Some(labeled::Expr::Const(c)) => c.static_init().convert_to(&typ),
+                None => StaticInit::zeroed(typ),
+                Some(_) => return Err(Error::NotConstInitialized),
+            };
             table.insert(
                 name.clone(),
                 Attr::Static {
-                    init: Some(InitialVal::Initial(StaticInit::from(*c))),
+                    init: Some(InitialVal::Initial(init)),
                     global: false,
                     typ,
                 },
             );
             Some(Expr::Const {
-                cnst: *c,
-                ty: VarType::Int,
-            })
-        }
-        (Some(StorageClass::Static), Some(_)) => return Err(Error::NotConstInitialized),
-        (Some(StorageClass::Static), None) => {
-            table.insert(
-                name.clone(),
-                Attr::Static {
-                    init: Some(InitialVal::Initial(StaticInit::Long(0))),
-                    global: false,
-                    typ,
-                },
-            );
-
-            Some(Expr::Const {
-                cnst: Constant::Long(0),
-                ty: VarType::Int,
+                cnst: init.into(),
+                ty: typ,
             })
         }
         (None, _) => {
@@ -302,7 +290,7 @@ fn typecheck_expression(expression: labeled::Expr, table: &mut SymbolTable) -> R
                 })
             } else {
                 let ty = if operator.relational() || matches!(operator, Bop::LogAnd | Bop::LogOr) {
-                    VarType::Int
+                    VarType::INT
                 } else {
                     ty
                 };
@@ -335,7 +323,7 @@ fn typecheck_expression(expression: labeled::Expr, table: &mut SymbolTable) -> R
                 .map(Box::new)
                 .map(|operand| Expr::Unary {
                     ty: if operator == UnOp::Not {
-                        VarType::Int
+                        VarType::INT
                     } else {
                         operand.ty()
                     },
@@ -411,7 +399,7 @@ fn typecheck_fn_call(
             new_args.push(typed_param);
         }
 
-        let ty = if let Some(ty) = ret { ty } else { VarType::Int };
+        let ty = if let Some(ty) = ret { ty } else { VarType::INT };
 
         Ok(Expr::FunctionCall {
             ty,
@@ -657,7 +645,7 @@ fn typecheck_statement(
             name: ast::semantics::Label::Case { mut c, id },
         } => {
             if let Some(val_ty) = switch_val_type {
-                super::const_cast(&mut c, &val_ty);
+                c = c.convert_to(&val_ty);
                 Ok(Stmnt::Label {
                     name: ast::semantics::Label::Case { c, id },
                     body: typecheck_statement(*body, return_type, table, switch_val_type)?.into(),

@@ -46,25 +46,36 @@ pub fn update_table(mut table: SymbolTable) -> BackendTable {
 
 const fn get_type(ty: &VarType) -> AsmType {
     match ty {
-        VarType::Int => AsmType::Longword,
-        VarType::Long => AsmType::Quadword,
+        VarType::Int(_) => AsmType::Longword,
+        VarType::Long(_) => AsmType::Quadword,
+    }
+}
+
+fn convert_val(val: &Value) -> PseudoOp {
+    match val {
+        Value::Constant(c) => Op::Imm(c.long().signed()).pseudo(),
+        Value::Var(v) => PseudoOp::PseudoRegister(v.clone()),
     }
 }
 
 fn var_type(var: &Ident, table: &SymbolTable) -> AsmType {
+    get_type(&var_tacky_type(var, table))
+}
+
+fn var_tacky_type(var: &Ident, table: &SymbolTable) -> VarType {
     let Some(Attr::Automatic(typ) | Attr::Static { typ, .. }) = table.get(var) else {
         panic!(
             "unexpected symbol result: {:?} (expected automatic)",
             table.get(var)
         )
     };
-    get_type(typ)
+    *typ
 }
 
-fn convert_val(val: &Value) -> PseudoOp {
+fn val_tacky_type(val: &Value, table: &SymbolTable) -> VarType {
     match val {
-        Value::Constant(c) => Op::Imm(c.long()).pseudo(),
-        Value::Var(v) => PseudoOp::PseudoRegister(v.clone()),
+        Value::Constant(c) => c.ty(),
+        Value::Var(v) => var_tacky_type(v, table),
     }
 }
 
@@ -183,10 +194,10 @@ fn convert_instruction(
             instructions.push(Pseudo::movsx(src.into(), dst.into()))
         }
         TackyOp::Truncate { src, dst } => {
-            instructions.push(Pseudo::Mov {
-                regs: (src.into(), dst.into()),
-                ty: AsmType::Longword,
-            });
+            instructions.push(Pseudo::mov(src.into(), dst.into(), AsmType::Longword));
+        }
+        TackyOp::ZeroExtend { src, dst } => {
+            instructions.push(Pseudo::mov_zero_extend(src.into(), dst.into()))
         }
     };
 }
@@ -225,7 +236,7 @@ fn push_args(args: &[Value], instructions: &mut Vec<Pseudo>, table: &SymbolTable
 fn push_val(val: &Value, instructions: &mut Vec<Pseudo>, table: &SymbolTable) {
     if val_type(val, table) == AsmType::Quadword {
         let val = match val {
-            Value::Constant(c) => Op::Imm(c.long()).pseudo(),
+            Value::Constant(c) => Op::Imm(c.long().signed()).pseudo(),
             Value::Var(v) => PseudoOp::PseudoRegister(v.clone()),
         };
         instructions.push(Pseudo::Push(val))
@@ -349,11 +360,14 @@ fn convert_binary(
     instructions: &mut Vec<Pseudo>,
     table: &SymbolTable,
 ) {
+    let src_tacky_ty = val_tacky_type(&source_1, table);
+
     let src_ty = val_type(&source_1, table);
+
     let source_1 = PseudoOp::from(source_1);
     let source_2 = PseudoOp::from(source_2);
 
-    match process_binop(op) {
+    match process_binop(op, src_tacky_ty) {
         Binop::Relational(condition) => {
             let dst_ty = val_type(&dst, table);
             let dst = PseudoOp::from(dst);
@@ -371,20 +385,32 @@ fn convert_binary(
                 Pseudo::binary(operator, source_2, dst, src_ty),
             ]);
         }
-        Binop::Div(result_register) => {
+        Binop::Div {
+            reg: result_register,
+            signed,
+        } => {
             let dst = PseudoOp::from(dst);
 
-            instructions.extend([
-                Pseudo::mov(source_1, Register::Ax.into(), src_ty),
-                Pseudo::Cdq(src_ty),
-                Pseudo::idiv(source_2, src_ty),
-                Pseudo::mov(result_register.into(), dst, src_ty),
-            ]);
+            if signed {
+                instructions.extend([
+                    Pseudo::mov(source_1, Register::Ax.into(), src_ty),
+                    Pseudo::Cdq(src_ty),
+                    Pseudo::idiv(source_2, src_ty),
+                    Pseudo::mov(result_register.into(), dst, src_ty),
+                ]);
+            } else {
+                instructions.extend([
+                    Pseudo::mov(source_1, Register::Ax.into(), src_ty),
+                    Pseudo::mov(Op::Imm(0).into(), Register::Ax.into(), src_ty),
+                    Pseudo::div(source_2, src_ty),
+                    Pseudo::mov(result_register.into(), dst, src_ty),
+                ])
+            }
         }
     };
 }
 
-const fn process_binop(op: TackyBinary) -> Binop {
+const fn process_binop(op: TackyBinary, ty: VarType) -> Binop {
     match op {
         TackyBinary::Add => Binop::Normal(Binary::Add),
         TackyBinary::Subtract => Binop::Normal(Binary::Sub),
@@ -396,18 +422,36 @@ const fn process_binop(op: TackyBinary) -> Binop {
         TackyBinary::RightShift => Binop::Normal(Binary::ShiftRight),
         TackyBinary::EqualTo => Binop::Relational(CondCode::E),
         TackyBinary::NotEqual => Binop::Relational(CondCode::NE),
-        TackyBinary::LessThan => Binop::Relational(CondCode::L),
+        TackyBinary::LessThan => {
+            if ty.signed() {
+                Binop::Relational(CondCode::L)
+            } else {
+                Binop::Relational(CondCode::B)
+            }
+        }
+        TackyBinary::Leq => {
+            if ty.signed() {
+                Binop::Relational(CondCode::LE)
+            } else {
+                Binop::Relational(CondCode::BE)
+            }
+        }
         TackyBinary::GreaterThan => Binop::Relational(CondCode::G),
-        TackyBinary::Leq => Binop::Relational(CondCode::LE),
         TackyBinary::Geq => Binop::Relational(CondCode::GE),
 
-        TackyBinary::Divide => Binop::Div(Register::Ax),
-        TackyBinary::Remainder => Binop::Div(Register::Dx),
+        TackyBinary::Divide => Binop::Div {
+            reg: Register::Ax,
+            signed: ty.signed(),
+        },
+        TackyBinary::Remainder => Binop::Div {
+            reg: Register::Dx,
+            signed: ty.signed(),
+        },
     }
 }
 
 enum Binop {
     Relational(CondCode),
     Normal(Binary),
-    Div(Register),
+    Div { reg: Register, signed: bool },
 }

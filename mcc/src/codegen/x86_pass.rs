@@ -56,12 +56,12 @@ struct StackFrame<'a> {
 }
 
 const fn align_quadword(size: usize) -> usize {
-    const QWORD:usize = 8;
+    const QWORD: usize = 8;
     let new_size = size + QWORD;
     // round down to next multiple of 8
-    match new_size % 16{
+    match new_size % 16 {
         0 => QWORD,
-        remainder => QWORD + (16 - remainder)
+        remainder => QWORD + (16 - remainder),
     }
 }
 
@@ -260,21 +260,8 @@ fn fix_instruction(op: Pseudo, sf: &mut StackFrame, vec: &mut Vec<X86>) {
         }
 
         // can't be an immediate
-        Pseudo::Idiv { divisor, ty } => match sf.check(divisor, RULES.div) {
-            Ok(divisor) => {
-                vec.push(X86::Idiv { divisor, ty });
-            }
-            Err(divisor) => {
-                let temp_register = Op::Register(Register::R10);
-                vec.extend([
-                    X86::mov(divisor, temp_register.clone(), ty),
-                    X86::Idiv {
-                        divisor: temp_register,
-                        ty,
-                    },
-                ]);
-            }
-        },
+        Pseudo::Idiv { divisor, ty } => fix_div(divisor, ty, sf, vec, true),
+        Pseudo::Div { divisor, ty } => fix_div(divisor, ty, sf, vec, false),
         Pseudo::Ret => vec.push(X86::Ret),
         Pseudo::Cdq(ty) => vec.push(X86::Cdq(ty)),
         // cmp is no quad, one mem, need some kinda bitfield or smth
@@ -325,6 +312,47 @@ fn fix_instruction(op: Pseudo, sf: &mut StackFrame, vec: &mut Vec<X86>) {
                     X86::mov(Register::R11.into(), dst, AsmType::Quadword),
                 ]),
             }
+        }
+        Pseudo::MovZeroExtend((src, dst)) => {
+            if dst.is_register() {
+                vec.push(X86::mov(
+                    sf.fix_operand(src),
+                    sf.fix_operand(dst),
+                    AsmType::Longword,
+                ))
+            } else {
+                let (src, dst) = (sf.fix_operand(src), sf.fix_operand(dst));
+                vec.extend([
+                    X86::mov(src, Register::R11.into(), AsmType::Longword),
+                    X86::mov(Register::R11.into(), dst, AsmType::Quadword),
+                ])
+            }
+        }
+    }
+}
+
+fn fix_div(divisor: PseudoOp, ty: AsmType, sf: &mut StackFrame, vec: &mut Vec<X86>, sign: bool) {
+    use rule::RULES;
+    match sf.check(divisor, RULES.div) {
+        Ok(divisor) => {
+            vec.push(X86::Idiv { divisor, ty });
+        }
+        Err(divisor) => {
+            let temp_register = Op::Register(Register::R10);
+            vec.extend([
+                X86::mov(divisor, temp_register.clone(), ty),
+                if sign {
+                    X86::Idiv {
+                        divisor: temp_register,
+                        ty,
+                    }
+                } else {
+                    X86::Div {
+                        divisor: temp_register,
+                        ty,
+                    }
+                },
+            ]);
         }
     }
 }

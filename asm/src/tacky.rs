@@ -38,6 +38,11 @@ pub enum Instruction {
         dst: Value,
     },
 
+    ZeroExtend {
+        src: Value,
+        dst: Value,
+    },
+
     Truncate {
         src: Value,
         dst: Value,

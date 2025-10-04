@@ -92,11 +92,11 @@ impl TokenIter {
         match self.peek()? {
             Token::Int => {
                 self.next();
-                Some(VarType::Int)
+                Some(VarType::int())
             }
             Token::Long => {
                 self.next();
-                Some(VarType::Long)
+                Some(VarType::long())
             }
             _ => None,
         }
@@ -104,8 +104,8 @@ impl TokenIter {
 
     pub fn consume_type(&mut self) -> Result<VarType, Expected> {
         match self.next() {
-            Some(Token::Int) => Ok(VarType::Int),
-            Some(Token::Long) => Ok(VarType::Long),
+            Some(Token::Int) => Ok(VarType::int()),
+            Some(Token::Long) => Ok(VarType::long()),
             a => expected(a, Expected::Type),
         }
     }

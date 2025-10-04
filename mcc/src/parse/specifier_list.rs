@@ -5,7 +5,8 @@ use util::TokenIter;
 #[derive(Debug, Clone)]
 pub struct SpeclistFsm {
     sc: Option<StorageClass>,
-    int: bool,
+    seen_int: bool,
+    signed: Option<bool>,
     typ: Option<VarType>,
 }
 
@@ -14,7 +15,8 @@ impl SpeclistFsm {
         Self {
             sc: None,
             typ: None,
-            int: false,
+            seen_int: false,
+            signed: None,
         }
     }
 
@@ -32,12 +34,12 @@ impl SpeclistFsm {
             Self {
                 sc: None,
                 typ: None,
-                int: _,
+                ..
             } => Err(Error::InvalidSpecifiers),
             Self {
                 sc: None,
                 typ: Some(typ),
-                int: _,
+                ..
             } => Ok(typ),
         }
     }
@@ -64,16 +66,24 @@ impl SpeclistFsm {
         }
     }
 
+    fn default_signed(&self) -> bool {
+        matches!(self.signed, None | Some(true))
+    }
+
     fn long(&mut self) -> Result<(), Error> {
         match self.typ {
-            Some(VarType::Int) => {
-                self.typ = Some(VarType::Long);
-                self.int = true;
+            Some(VarType::Int(s)) => {
+                self.typ = Some(VarType::Long(s));
+                self.seen_int = true;
                 Ok(())
             }
-            Some(VarType::Long) => self.invalid_type(),
+            Some(VarType::Long(_)) => self.invalid_type(),
             None => {
-                self.typ = Some(VarType::Long);
+                self.typ = if self.default_signed() {
+                    Some(VarType::long())
+                } else {
+                    Some(VarType::ulong())
+                };
                 Ok(())
             }
         }
@@ -82,12 +92,43 @@ impl SpeclistFsm {
     fn int(&mut self) -> Result<(), Error> {
         match self.typ {
             None => {
-                self.typ = Some(VarType::Int);
-                self.int = true;
+                self.typ = if self.default_signed() {
+                    Some(VarType::int())
+                } else {
+                    Some(VarType::uint())
+                };
+                self.seen_int = true;
                 Ok(())
             }
-            Some(VarType::Long) if !self.int => Ok(()),
-            Some(VarType::Int | VarType::Long) => self.invalid_type(),
+            Some(VarType::Long(_)) if !self.seen_int => {
+                self.seen_int = true;
+                Ok(())
+            }
+            Some(VarType::Int(_) | VarType::Long(_)) => self.invalid_type(),
+        }
+    }
+
+    fn unsigned(&mut self) -> Result<(), Error> {
+        if self.signed.is_some() {
+            Err(Error::InvalidSpecifiers)
+        } else {
+            self.signed = Some(false);
+            if let Some(ty) = &mut self.typ {
+                *ty = ty.as_unsigned()
+            }
+            Ok(())
+        }
+    }
+
+    fn signed(&mut self) -> Result<(), Error> {
+        if self.signed.is_some() {
+            Err(Error::InvalidSpecifiers)
+        } else {
+            self.signed = Some(true);
+            if let Some(ty) = &mut self.typ {
+                *ty = ty.as_signed()
+            }
+            Ok(())
         }
     }
 
@@ -102,6 +143,8 @@ fn get_specifier(tokens: &mut TokenIter, builder: &mut SpeclistFsm) -> Result<bo
         Some(Token::Long) => builder.long().map(|_| true),
         Some(Token::Static) => builder.r#static().map(|_| true),
         Some(Token::Extern) => builder.r#extern().map(|_| true),
+        Some(Token::Signed) => builder.signed().map(|_| true),
+        Some(Token::Unsigned) => builder.unsigned().map(|_| true),
         _ => Ok(false),
     }
 }

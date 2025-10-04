@@ -1,4 +1,3 @@
-
 use crate::Optimizations;
 use asm::tacky::*;
 use ast::parse::StaticInit;
@@ -100,10 +99,10 @@ fn constant_fold(tacky: &mut [Instruction]) -> bool {
                 let [s1, s2]: [StaticInit; 2] = [*s1, *s2].map(|x| x.into());
                 let ty = s1.common_type(&s2);
                 let src = match ty {
-                    VarType::Int => Value::Constant(ast::Constant::new_int(
+                    VarType::Int(_) => Value::Constant(ast::Constant::new_int(
                         operator.apply(s1.as_int(), s2.as_int()),
                     )),
-                    VarType::Long => Value::Constant(ast::Constant::new_long(
+                    VarType::Long(_) => Value::Constant(ast::Constant::new_long(
                         operator.apply(s1.as_long(), s2.as_long()),
                     )),
                 };

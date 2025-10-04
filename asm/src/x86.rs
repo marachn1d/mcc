@@ -10,8 +10,8 @@ pub type BackendTable = HashMap<Ident, BackendSymbol>;
 
 const fn asm_type(ty: VarType) -> AsmType {
     match ty {
-        VarType::Int => AsmType::Longword,
-        VarType::Long => AsmType::Quadword,
+        VarType::Int(_) => AsmType::Longword,
+        VarType::Long(_) => AsmType::Quadword,
     }
 }
 pub enum BackendSymbol {
@@ -75,6 +75,11 @@ pub enum BaseX86<T: Operand> {
         divisor: T,
         ty: AsmType,
     },
+    Div {
+        divisor: T,
+        ty: AsmType,
+    },
+    MovZeroExtend(OpPair<T>),
     Cdq(AsmType),
     Cmp {
         ty: AsmType,
@@ -102,6 +107,10 @@ pub enum CondCode {
     GE,
     L,
     LE,
+    A,
+    AE,
+    B,
+    BE,
 }
 
 impl Display for CondCode {
@@ -116,6 +125,10 @@ impl Display for CondCode {
                 Self::GE => "ge",
                 Self::L => "l",
                 Self::LE => "le",
+                Self::A => "a",
+                Self::AE => "ae",
+                Self::B => "b",
+                Self::BE => "be",
             }
         )
     }
@@ -185,11 +198,19 @@ impl<T: Operand> BaseX86<T> {
         Self::Idiv { divisor, ty }
     }
 
+    pub const fn div(divisor: T, ty: AsmType) -> Self {
+        Self::Div { divisor, ty }
+    }
+
     pub const fn movsx(src: T, dst: T) -> Self {
         Self::Movsx {
             ty: AsmType::Quadword,
             regs: (src, dst),
         }
+    }
+
+    pub const fn mov_zero_extend(src: T, dst: T) -> Self {
+        Self::MovZeroExtend((src, dst))
     }
 }
 
@@ -204,10 +225,9 @@ impl Display for AsmType {
     }
 }
 
-
-struct TargettedX86<'a>{
+struct TargettedX86<'a> {
     inner: &'a X86,
-    target:Target,
+    target: Target,
 }
 
 impl Display for TargettedX86<'_> {
@@ -220,12 +240,16 @@ impl Display for TargettedX86<'_> {
             X86::Call(fun) => write!(f, "call {fn_prefix}{fun}{fn_suffix}"),
             X86::Push(Op::Register(r)) => write!(f, "pushq {}", r.eight_byte()),
             X86::Push(op) => write!(f, "pushq {op}"),
-
             X86::Mov {
                 regs: (src, dst),
                 ty,
             } => {
-                write!(f, "mov{ty}  {}, {}", src.sized_fmt(*ty, target), dst.sized_fmt(*ty, target))
+                write!(
+                    f,
+                    "mov{ty}  {}, {}",
+                    src.sized_fmt(*ty, target),
+                    dst.sized_fmt(*ty, target)
+                )
             }
             X86::Ret => write!(f, "movq %rbp, %rsp\n\tpopq %rbp\n\tret"),
             X86::Unary {
@@ -238,7 +262,12 @@ impl Display for TargettedX86<'_> {
                 regs: (Op::Register(r), by),
                 ty,
             } => {
-                write!(f, "{operator}{ty} {}, {}", r.one_byte(), by.sized_fmt(*ty, target),)
+                write!(
+                    f,
+                    "{operator}{ty} {}, {}",
+                    r.one_byte(),
+                    by.sized_fmt(*ty, target),
+                )
             }
             X86::Binary {
                 operator,
@@ -295,14 +324,30 @@ impl Display for TargettedX86<'_> {
                     dst.sized_fmt(*ty, target)
                 )
             }
+            BaseX86::Div { divisor, ty } => {
+                write!(f, "div{ty} {}", divisor.sized_fmt(*ty, target))
+            }
+
+            BaseX86::MovZeroExtend(_) => unreachable!(),
         }
     }
 }
 
-
 impl Op {
     pub const fn pseudo(self) -> PseudoOp {
         PseudoOp::Normal(self)
+    }
+
+    pub const fn is_register(&self) -> bool {
+        matches!(self, Self::Register(_))
+    }
+
+    pub const fn is_memory(&self) -> bool {
+        matches!(self, Self::Data(_) | Self::Imm(_) | Self::Stack(_))
+    }
+
+    pub const fn is_immediate(&self) -> bool {
+        matches!(self, Self::Imm(_))
     }
 }
 
@@ -406,15 +451,23 @@ impl Display for Op {
 }
 
 impl Op {
-    fn sized_fmt(&self, size: AsmType, target:Target) -> String {
+    fn sized_fmt(&self, size: AsmType, target: Target) -> String {
         if let Self::Register(r) = self {
             match size {
                 AsmType::Longword => r.extended().into(),
                 AsmType::Quadword => r.eight_byte().into(),
             }
         } else {
-
-            format!("{}{self}", if let Self::Data(_) = self && let Some(prefix) = target.user_defined_name_prefix(){prefix}else{""})
+            format!(
+                "{}{self}",
+                if let Self::Data(_) = self
+                    && let Some(prefix) = target.user_defined_name_prefix()
+                {
+                    prefix
+                } else {
+                    ""
+                }
+            )
         }
     }
 }
@@ -427,7 +480,7 @@ pub enum PseudoOp {
 impl From<Value> for PseudoOp {
     fn from(val: Value) -> Self {
         match val {
-            Value::Constant(c) => Self::imm(c.long()),
+            Value::Constant(c) => Self::imm(c.long().signed()),
 
             Value::Var(v) => Self::PseudoRegister(v),
         }
@@ -492,6 +545,27 @@ impl PseudoOp {
     pub const fn stack(offset: isize) -> Self {
         Self::Normal(Op::Stack(offset))
     }
+
+    pub const fn is_register(&self) -> bool {
+        match self {
+            PseudoOp::Normal(op) => op.is_register(),
+            PseudoOp::PseudoRegister(_) => false,
+        }
+    }
+
+    pub const fn is_memory(&self) -> bool {
+        match self {
+            PseudoOp::Normal(op) => op.is_memory(),
+            PseudoOp::PseudoRegister(_) => true,
+        }
+    }
+
+    pub const fn is_immediate(&self) -> bool {
+        match self {
+            PseudoOp::Normal(op) => op.is_immediate(),
+            PseudoOp::PseudoRegister(_) => false,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -517,51 +591,51 @@ pub enum TopLevel<T> {
 }
 
 #[derive(Copy, Clone)]
-pub enum Target{
+pub enum Target {
     Darwin,
     Linux,
 }
 
-impl Target{
-    const fn alignment_directive(&self) -> &str{
-        match self{
+impl Target {
+    const fn alignment_directive(&self) -> &str {
+        match self {
             Target::Darwin => ".balign",
             Target::Linux => ".align",
         }
     }
 
-    const fn end_message(&self) -> Option<&str>{
-        match self{
+    const fn end_message(&self) -> Option<&str> {
+        match self {
             Target::Darwin => None,
             Target::Linux => Some(".section .note.GNU-stack,\"\",@progbits"),
         }
     }
 
-    const fn function_prefix(&self) -> Option<&str>{
-        if let Self::Darwin = self{
-            Some(unsafe{self.user_defined_name_prefix().unwrap_unchecked()})
-        }else{
+    const fn function_prefix(&self) -> Option<&str> {
+        if let Self::Darwin = self {
+            Some(unsafe { self.user_defined_name_prefix().unwrap_unchecked() })
+        } else {
             None
         }
     }
 
-    const fn function_suffix(&self) -> Option<&str>{
-        if let Self::Linux = self{
+    const fn function_suffix(&self) -> Option<&str> {
+        if let Self::Linux = self {
             Some("@PLT")
-        }else{
+        } else {
             None
         }
     }
 
-    const fn local_label_prefix(&self) -> &str{
-        match self{
+    const fn local_label_prefix(&self) -> &str {
+        match self {
             Target::Darwin => "L",
             Target::Linux => ".L",
         }
     }
 
-    const fn user_defined_name_prefix(&self) -> Option<&str>{
-        match self{
+    const fn user_defined_name_prefix(&self) -> Option<&str> {
+        match self {
             Target::Darwin => Some("_"),
             Target::Linux => None,
         }
@@ -574,7 +648,7 @@ pub fn emit(program: &Program<X86>, target: Target) -> Box<[u8]> {
     let alignment_dir = target.alignment_directive();
     for top_level in &program.0 {
         if top_level.global() {
-            let _ = writeln!(bytes, "\t.globl {name_prefix}{}",top_level.name());
+            let _ = writeln!(bytes, "\t.globl {name_prefix}{}", top_level.name());
         }
         match top_level {
             TopLevel::Fn(FunctionDefinition {
@@ -589,7 +663,7 @@ pub fn emit(program: &Program<X86>, target: Target) -> Box<[u8]> {
                     name = format_args!("{name_prefix}{}", name),
                     prelude = format_args!("pushq %rbp\n\tmovq %rsp, %rbp")
                 );
-                for instruction in body.iter().map(|inner| TargettedX86{inner,target}) {
+                for instruction in body.iter().map(|inner| TargettedX86 { inner, target }) {
                     let _ = writeln!(bytes, "\t{instruction}");
                 }
             }
@@ -600,7 +674,7 @@ pub fn emit(program: &Program<X86>, target: Target) -> Box<[u8]> {
                 init,
                 alignment,
             }) => {
-                let init_is_zero = matches!(*init, StaticInit::Long(0) | StaticInit::Int(0));
+                let init_is_zero = init.is_zero();
 
                 bytes.extend_from_slice(if init_is_zero {
                     b"\t.bss\n"
@@ -614,16 +688,12 @@ pub fn emit(program: &Program<X86>, target: Target) -> Box<[u8]> {
         }
     }
 
-    if let Some(suffix) = target.end_message(){
+    if let Some(suffix) = target.end_message() {
         let _ = writeln!(bytes, "{suffix}");
     }
-    
+
     bytes.into()
 }
-
-
-
-
 
 impl<T> TopLevel<T> {
     const fn global(&self) -> bool {

@@ -104,14 +104,7 @@ fn specifiers(tokens: &mut TokenIter) -> Result<SpecifierList, Error> {
 }
 
 fn type_specifier(tokens: &mut TokenIter) -> Result<VarType, Error> {
-    let (res, num) = match tokens.as_slice() {
-        [Token::Long | Token::Int, Token::Int | Token::Long, ..] => (VarType::Long, 2),
-        [Token::Int, ..] => (VarType::Int, 1),
-        [Token::Long, ..] => (VarType::Long, 1),
-        _ => return Err(Error::InvalidSpecifiers),
-    };
-    let _ = tokens.nth(num - 1);
-    Ok(res)
+    specifier_list::get_specifiers(tokens).and_then(|s| s.type_specifier())
 }
 
 fn param_list(tokens: &mut TokenIter) -> Result<ParamList, Error> {

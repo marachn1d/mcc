@@ -3,7 +3,6 @@ mod check_switch;
 mod resolve;
 pub mod typecheck;
 use ast::semantics::{typed, Attr, SymbolTable};
-use ast::Constant;
 
 use ast::parse::Program as AstProgram;
 pub use ast::parse::StaticInit;
@@ -42,9 +41,3 @@ pub enum Error {
 pub use check_labels::Error as LabelError;
 pub use resolve::Error as ResolveError;
 use resolve_loops::Error as LoopError;
-
-pub fn const_cast(c: &mut Constant, ty: &ast::VarType) {
-    let si = c.static_init();
-    si.convert_to(ty);
-    *c = si.into()
-}

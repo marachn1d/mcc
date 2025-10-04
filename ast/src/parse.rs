@@ -1,5 +1,5 @@
 use crate::Arr;
-use crate::{Constant, Ident, VarType};
+use crate::{Constant, Ident, Int, Long, VarType};
 pub use inc_dec::*;
 use std::fmt::{self, Display, Formatter};
 
@@ -34,51 +34,85 @@ impl From<VarDec> for Dec {
 }
 #[derive(Debug, Copy, Clone)]
 pub enum StaticInit {
-    Int(i32),
-    Long(i64),
+    Int(Int),
+    Long(Long),
 }
 
 impl StaticInit {
     pub const fn ty(&self) -> VarType {
         match self {
-            Self::Int(_) => VarType::Int,
-            Self::Long(_) => VarType::Long,
+            Self::Int(s) if s.is_signed() => VarType::int(),
+            Self::Int(_) => VarType::uint(),
+            Self::Long(s) if s.is_signed() => VarType::long(),
+            Self::Long(_) => VarType::ulong(),
         }
     }
 
     pub const fn common_type(&self, other: &Self) -> VarType {
-        use VarType::{Int, Long};
-        match (self.ty(), other.ty()) {
-            (Long, _) | (_, Long) => Long,
-            (Int, Int) => Int,
+        self.ty().common_type(&other.ty()).unwrap()
+    }
+
+    pub fn is_zero(&self) -> bool {
+        self.map(&mut |i| i.is_zero(), &mut |l| l.is_zero())
+    }
+
+    pub fn map<T, I: Fn(Int) -> T, L: Fn(Long) -> T>(&self, int: &mut I, long: &mut L) -> T {
+        match self {
+            StaticInit::Int(i) => int(*i),
+            StaticInit::Long(l) => long(*l),
         }
     }
 
-    pub const fn as_int(&self) -> i32 {
-        match self {
-            StaticInit::Long(l) => *l as i32,
+    pub fn as_int(&self) -> i32 {
+        let int = match self {
+            StaticInit::Long(l) => l.int(),
             StaticInit::Int(i) => *i,
-        }
+        };
+        int.signed()
     }
 
-    pub const fn as_long(&self) -> i64 {
-        match self {
+    pub fn as_long(&self) -> i64 {
+        let long = match self {
             StaticInit::Long(l) => *l,
-            StaticInit::Int(i) => *i as i64,
-        }
+            StaticInit::Int(i) => i.long(),
+        };
+        long.signed()
     }
 
-    pub const fn convert_to(&self, ty: &VarType) -> Self {
+    fn as_int_t(&self) -> Int {
+        self.map(&mut |i| i, &mut |l| l.int()).to_signed()
+    }
+
+    fn as_long_t(&self) -> Long {
+        self.map(&mut |i| i.long(), &mut |l| l).to_signed()
+    }
+
+    fn as_uint_t(&self) -> Int {
+        self.map(&mut |i| i, &mut |l| l.int()).to_unsigned()
+    }
+
+    fn as_ulong_t(&self) -> Long {
+        self.map(&mut |i| i.long(), &mut |l| l).to_unsigned()
+    }
+
+    pub fn convert_to(&self, ty: &VarType) -> Self {
         match ty {
-            VarType::Int => Self::Int(self.as_int()),
-            VarType::Long => Self::Long(self.as_long()),
+            VarType::Int(_) if ty.signed() => Self::Int(self.as_int_t()),
+            VarType::Int(_) => Self::Int(self.as_uint_t()),
+            VarType::Long(_) if ty.signed() => Self::Long(self.as_long_t()),
+            VarType::Long(_) => Self::Long(self.as_ulong_t()),
         }
     }
 
-
+    pub const fn zeroed(ty: VarType) -> Self {
+        match ty {
+            VarType::Int(s) => Self::Int(Int::zero(s)),
+            VarType::Long(s) => Self::Long(Long::zero(s)),
+        }
+    }
 }
 
-impl From<Constant> for StaticInit{
+impl From<Constant> for StaticInit {
     fn from(value: Constant) -> Self {
         value.static_init()
     }
@@ -87,14 +121,13 @@ impl From<Constant> for StaticInit{
 impl std::fmt::Display for StaticInit {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Self::Int(0) => f.write_str(".zero 4"),
-            Self::Long(0) => f.write_str(".zero 8"),
-            Self::Int(i) => write!(f, ".long {i}"),
-            Self::Long(i) => write!(f, ".quad {i}"),
+            Self::Int(i) if i.is_zero() => f.write_str(".zero 4"),
+            Self::Long(i) if i.is_zero() => f.write_str(".zero 8"),
+            Self::Int(i) => write!(f, ".long {}", i.fmt_num()),
+            Self::Long(l) => write!(f, ".quad {}", l.fmt_num()),
         }
     }
 }
-
 
 pub type Block = Arr<BlockItem>;
 

@@ -271,9 +271,10 @@ fn convert_statement(
             default,
         } => {
             let end_label = label.labels().r#break;
+            let switch_val_type = val.ty();
             let switch_val = convert_expression(val, instructions, table);
             for case in cases {
-                let target_var = new_var(VarType::Int, table);
+                let target_var = new_var(switch_val_type, table);
                 instructions.extend([
                     // if val == case
                     Instruction::Binary {
@@ -305,35 +306,38 @@ fn convert_statement(
     }
 }
 
-fn convert_cast_op(
-    ty: VarType,
-    src: Value,
-    d: Value,
-    instructions: &mut Vec<Instruction>,
-) -> Value {
-    let dst = d.clone();
-    let op = match ty {
-        VarType::Int => Instruction::Truncate { src, dst },
-        VarType::Long => Instruction::SignExtend { src, dst },
-    };
-    instructions.push(op);
-    d
-}
-
 fn convert_cast(
-    (target, exp, ty): (VarType, Expr, VarType),
+    (target, inner, ty): (VarType, Expr, VarType),
     instructions: &mut Vec<Instruction>,
     table: &mut SymbolTable,
 ) -> Value {
-    match (target, exp, ty) {
-        (target, exp, _) if target == exp.ty() => convert_expression(exp, instructions, table),
-        (_, exp, ty) => {
-            let src = convert_expression(exp, instructions, table);
-            let dst = Value::Var(new_var(ty, r#table));
-            // add dst to symbol table
-            //
-            convert_cast_op(ty, src, dst, instructions)
-        }
+    let inner_type = inner.ty();
+    let result = convert_expression(inner, instructions, table);
+    if target == inner_type {
+        result
+    } else {
+        let dst = Value::Var(new_var(ty, r#table));
+        use std::cmp::Ordering::{Equal, Greater, Less};
+        let instruction = match target.size_bytes().cmp(&inner_type.size_bytes()) {
+            Equal => Instruction::Copy {
+                src: result,
+                dst: dst.clone(),
+            },
+            Less => Instruction::Truncate {
+                src: result,
+                dst: dst.clone(),
+            },
+            Greater if inner_type.signed() => Instruction::SignExtend {
+                src: result,
+                dst: dst.clone(),
+            },
+            Greater => Instruction::ZeroExtend {
+                src: result,
+                dst: dst.clone(),
+            },
+        };
+        instructions.push(instruction);
+        dst
     }
 }
 

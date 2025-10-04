@@ -9,5 +9,5 @@ pub type DebugToken = token::DebugToken<Ident>;
 pub type Arr<T> = Box<[T]>;
 
 pub use parse::inc_dec::{IncDec, IncOp, POST_DEC, POST_INC, PRE_DEC, PRE_INC};
-pub use token::Constant;
+pub use token::{Constant, Int, Long};
 pub use var_type::VarType;
