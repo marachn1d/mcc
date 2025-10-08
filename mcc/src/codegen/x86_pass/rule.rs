@@ -1,24 +1,31 @@
-use asm::x86::{Binary, X86};
-use std::ops::BitOr;
+use asm::x86::{Binary, Pseudo, PseudoOp};
 
 #[derive(Copy, Clone, Debug)]
-struct OpRule {
-    no_memory: bool,
-    max_dword: bool,
-    no_immediate: bool,
+pub struct OpRule<'a> {
+    pub no_memory: bool,
+    pub max_dword: bool,
+    pub no_immediate: bool,
+    pub op: &'a PseudoOp,
 }
 
 #[derive(Copy, Clone, Debug)]
-enum PairRule {
-    Unary(OpRule),
+pub struct OpRuleBuilder {
+    pub no_memory: bool,
+    pub max_dword: bool,
+    pub no_immediate: bool,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum PairRule<'a> {
+    Unary(OpRule<'a>),
     Binary {
-        left: OpRule,
-        right: OpRule,
+        left: OpRule<'a>,
+        right: OpRule<'a>,
         max_1_stack: bool,
     },
 }
 
-impl OpRule {
+impl OpRuleBuilder {
     const fn none() -> Self {
         Self {
             no_memory: false,
@@ -53,69 +60,119 @@ impl OpRule {
         }
     }
 
-    const fn with(&self, other: Self) -> PairRule {
+    const fn build<'a>(self, op: &'a PseudoOp) -> OpRule<'a> {
+        OpRule {
+            no_memory: self.no_memory,
+            no_immediate: self.no_immediate,
+            max_dword: self.max_dword,
+            op,
+        }
+    }
+
+    const fn unary<'a>(self, op: &'a PseudoOp) -> PairRule<'a> {
+        PairRule::Unary(self.build(op))
+    }
+}
+
+impl<'a> OpRule<'a> {
+    const fn with(self, other: Self) -> PairRule<'a> {
         PairRule::Binary {
-            left: *self,
+            left: self,
             right: other,
             max_1_stack: false,
         }
     }
-    const fn unary(&self) -> PairRule {
-        PairRule::Unary(*self)
+
+    pub const fn no_memory(&self) -> bool {
+        self.no_memory
+    }
+
+    pub const fn max_dword(&self) -> bool {
+        self.max_dword
+    }
+
+    pub const fn no_immediate(&self) -> bool {
+        self.no_immediate
+    }
+
+    pub const fn operand(&self) -> &PseudoOp {
+        self.op
     }
 }
 
-impl PairRule {
-    const fn rule(instruction: &X86) -> Option<Self> {
-        const fn no_memory() -> OpRule {
-            OpRule::no_memory()
+impl<'a> PairRule<'a> {
+    pub const fn rule(instruction: &'a Pseudo) -> Option<Self> {
+        const fn no_memory() -> OpRuleBuilder {
+            OpRuleBuilder::no_memory()
         }
 
-        const fn no_immediate() -> OpRule {
-            OpRule::no_immediate()
+        const fn no_immediate() -> OpRuleBuilder {
+            OpRuleBuilder::no_immediate()
         }
 
-        const fn max_dword() -> OpRule {
-            OpRule::max_dword()
+        const fn max_dword() -> OpRuleBuilder {
+            OpRuleBuilder::max_dword()
+        }
+
+        const fn binary<'a>(
+            left: &'a PseudoOp,
+            left_rule: OpRuleBuilder,
+            right: &'a PseudoOp,
+            right_rule: OpRuleBuilder,
+        ) -> PairRule<'a> {
+            let left = left_rule.build(left);
+            let right = right_rule.build(right);
+            left.with(right)
         }
 
         match instruction {
-            asm::x86::BaseX86::Mov { .. }
-            | asm::x86::BaseX86::Binary {
+            Pseudo::Mov {
+                regs: (left, right),
+                ..
+            }
+            | Pseudo::Binary {
                 operator: Binary::ShiftLeft | Binary::ShiftRight,
+                regs: (left, right),
                 ..
-            } => Some(no_memory().with(no_immediate()).max_1_stack()),
-            asm::x86::BaseX86::Movsx { .. } => {
-                Some(no_immediate().with(no_immediate().and(no_memory())))
-            }
-            asm::x86::BaseX86::Idiv { .. }
-            | asm::x86::BaseX86::Div { .. }
-            | asm::x86::BaseX86::Unary { .. } => Some(no_immediate().unary()),
+            } => Some(binary(left, no_memory(), right, no_immediate()).max_1_stack()),
+            Pseudo::Movsx {
+                regs: (left, right),
+                ..
+            } => Some(binary(left, no_immediate(), right, no_immediate())),
+            Pseudo::Idiv { divisor: op, .. }
+            | Pseudo::Div { divisor: op, .. }
+            | Pseudo::Unary { operand: op, .. } => Some(no_immediate().unary(op)),
 
-            asm::x86::BaseX86::Binary {
+            Pseudo::Binary {
                 operator: Binary::And | Binary::Or | Binary::Xor,
+                regs: (left, right),
                 ..
             }
-            | asm::x86::BaseX86::Cmp { .. }
-            | asm::x86::BaseX86::Binary {
+            | Pseudo::Cmp {
+                regs: (left, right),
+                ..
+            }
+            | Pseudo::Binary {
                 operator: Binary::Add | Binary::Sub,
+                regs: (left, right),
                 ..
-            } => Some(max_dword().with(no_immediate()).max_1_stack()),
-            asm::x86::BaseX86::Binary {
+            } => Some(binary(left, max_dword(), right, no_immediate()).max_1_stack()),
+            Pseudo::Binary {
                 operator: Binary::Mult,
+                regs: (left, right),
                 ..
-            } => Some(max_dword().with(no_memory()).max_1_stack()),
+            } => Some(binary(left, max_dword(), right, no_memory()).max_1_stack()),
 
-            asm::x86::BaseX86::MovZeroExtend(_) | asm::x86::BaseX86::Push(_) => {
-                Some(max_dword().unary())
-            }
-            asm::x86::BaseX86::Call(_)
-            | asm::x86::BaseX86::Ret
-            | asm::x86::BaseX86::Cdq(_)
-            | asm::x86::BaseX86::Jmp(_)
-            | asm::x86::BaseX86::JmpCC { .. }
-            | asm::x86::BaseX86::SetCC { .. }
-            | asm::x86::BaseX86::Label(_) => None,
+            Pseudo::Push(op) => Some(max_dword().unary(op)),
+
+            Pseudo::MovZeroExtend(_) => todo!(),
+            Pseudo::Call(_)
+            | Pseudo::Ret
+            | Pseudo::Cdq(_)
+            | Pseudo::Jmp(_)
+            | Pseudo::JmpCC { .. }
+            | Pseudo::SetCC { .. }
+            | Pseudo::Label(_) => None,
         }
     }
 
@@ -125,17 +182,7 @@ impl PairRule {
         }
     }
 
-    /// # Safety
-    /// # PairRule must be binary
-    const unsafe fn assume_right(&self) -> OpRule {
-        if let PairRule::Binary { right, .. } = self {
-            *right
-        } else {
-            unsafe { std::hint::unreachable_unchecked() }
-        }
-    }
-
-    const fn unary(rule: OpRule) -> Self {
+    const fn unary(rule: OpRule<'a>) -> Self {
         Self::Unary(rule)
     }
 

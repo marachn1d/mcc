@@ -53,7 +53,7 @@ const fn get_type(ty: &VarType) -> AsmType {
 
 fn convert_val(val: &Value) -> PseudoOp {
     match val {
-        Value::Constant(c) => Op::Imm(c.long().signed()).pseudo(),
+        Value::Constant(c) => Op::imm(c.long().signed()).pseudo(),
         Value::Var(v) => PseudoOp::PseudoRegister(v.clone()),
     }
 }
@@ -236,7 +236,7 @@ fn push_args(args: &[Value], instructions: &mut Vec<Pseudo>, table: &SymbolTable
 fn push_val(val: &Value, instructions: &mut Vec<Pseudo>, table: &SymbolTable) {
     if val_type(val, table) == AsmType::Quadword {
         let val = match val {
-            Value::Constant(c) => Op::Imm(c.long().signed()).pseudo(),
+            Value::Constant(c) => Op::imm(c.long().signed()).pseudo(),
             Value::Var(v) => PseudoOp::PseudoRegister(v.clone()),
         };
         instructions.push(Pseudo::Push(val))
@@ -307,11 +307,11 @@ fn convert_unary(
         instructions.extend([
             Pseudo::Cmp {
                 ty,
-                regs: (Op::Imm(0).into(), src),
+                regs: (Op::imm(0).into(), src),
             },
             Pseudo::Mov {
                 ty: dst_ty,
-                regs: (Op::Imm(0).into(), dst.clone()),
+                regs: (Op::imm(0).into(), dst.clone()),
             },
             Pseudo::SetCC {
                 condition: CondCode::E,
@@ -343,7 +343,7 @@ fn convert_conditional_jump(
     [
         Pseudo::Cmp {
             ty,
-            regs: (Op::Imm(0).into(), condition.into()),
+            regs: (Op::imm(0).into(), condition.into()),
         },
         Pseudo::JmpCC {
             condition: code,
@@ -374,7 +374,7 @@ fn convert_binary(
 
             instructions.extend([
                 Pseudo::cmp(source_2, source_1, src_ty),
-                Pseudo::mov(Op::Imm(0).into(), dst.clone(), dst_ty),
+                Pseudo::mov(Op::imm(0).into(), dst.clone(), dst_ty),
                 Pseudo::SetCC { condition, op: dst },
             ]);
         }
@@ -401,7 +401,7 @@ fn convert_binary(
             } else {
                 instructions.extend([
                     Pseudo::mov(source_1, Register::Ax.into(), src_ty),
-                    Pseudo::mov(Op::Imm(0).into(), Register::Ax.into(), src_ty),
+                    Pseudo::mov(Op::imm(0).into(), Register::Ax.into(), src_ty),
                     Pseudo::div(source_2, src_ty),
                     Pseudo::mov(result_register.into(), dst, src_ty),
                 ])
