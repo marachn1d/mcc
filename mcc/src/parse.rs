@@ -99,12 +99,11 @@ pub struct SpecifierList {
 }
 
 fn specifiers(tokens: &mut TokenIter) -> Result<SpecifierList, Error> {
-    let builder = specifier_list::get_specifiers(tokens)?;
-    builder.done()
+    specifier_list::get_specifiers(tokens).and_then(specifier_list::SpeclistFsm::done)
 }
 
 fn type_specifier(tokens: &mut TokenIter) -> Result<VarType, Error> {
-    specifier_list::get_specifiers(tokens).and_then(|s| s.type_specifier())
+    specifier_list::get_specifiers(tokens).and_then(specifier_list::SpeclistFsm::type_specifier)
 }
 
 fn param_list(tokens: &mut TokenIter) -> Result<ParamList, Error> {
@@ -133,9 +132,9 @@ fn param(tokens: &mut TokenIter) -> Result<(Param, bool), Error> {
     let last = match tokens.consume_any()? {
         Token::Comma => Ok(false),
         Token::CloseParen => Ok(true),
-        other => {
-            Err(Error::Catchall(format!("expected ',' or ')', got {other}.").leak()))
-        }
+        other => Err(Error::Catchall(
+            format!("expected ',' or ')', got {other}.").leak(),
+        )),
     }?;
     Ok((Param { typ, name }, last))
 }
@@ -152,9 +151,7 @@ fn block(tokens: &mut TokenIter) -> Result<Block, Error> {
 
 fn block_item(tokens: &mut TokenIter) -> Result<Option<BlockItem>, Error> {
     match tokens.peek_any()? {
-        Token::Int | Token::Static | Token::Extern | Token::Long => {
-            Ok(Some(BlockItem::D(declaration(tokens)?)))
-        }
+        t if t.specifier() => Ok(Some(BlockItem::D(declaration(tokens)?))),
         Token::CloseBrace => Ok(None),
         _ => Ok(Some(BlockItem::S(statement(tokens)?))),
     }
@@ -454,7 +451,8 @@ fn factor(tokens: &mut TokenIter) -> Result<Expr, Error> {
             Ok(Expr::Unary(Unary { exp, op: operator }))
         }
         Token::OpenParen => {
-            if let Some(target) = tokens.peek_consume_type() {
+            if tokens.peek_any()?.type_specifier() {
+                let target = type_specifier(tokens)?;
                 tokens.consume(Token::CloseParen)?;
                 let exp = factor(tokens)?.into();
                 Ok(Expr::Cast { target, exp })
@@ -474,9 +472,7 @@ fn factor(tokens: &mut TokenIter) -> Result<Expr, Error> {
             }
         }
 
-        t => {
-            Err(Error::ExpectedExpr)
-        }
+        t => Err(Error::ExpectedExpr(t)),
     }
     .map(
         |factor| match tokens.next_if(|x| x == &Token::Increment || x == &Token::Decrement) {
@@ -517,16 +513,16 @@ pub struct DebugError {
 pub enum Error {
     Expected(util::Expected),
     UnexpectedEof,
-    ExpectedExpr,
+    ExpectedExpr(Token),
     ExpectedKeyword,
     Catchall(&'static str),
     ExtraStuff,
     DoubleDef,
     NoType,
     ConflictingLinkage,
-    InvalidSpecifiers,
-    InvalidType(specifier_list::SpeclistFsm),
-    NoStorageClass,
+    InvalidSpecifiers(specifier_list::SpeclistFsm),
+    InvalidType(specifier_list::TyBuilder, Token),
+    NoStorageClass(specifier_list::SpeclistFsm),
 }
 
 impl From<util::Expected> for Error {

@@ -214,31 +214,35 @@ fn constant_number(start: AsciiDigit, iter: &mut SliceIter<u8>) -> Result<Consta
             iter.next();
             Ok(Constant::new_ulong(parse_ulong(&bytes)))
         }
-        [x, ..] => {
-            match x {
-                b'l' | b'L' => {
-                    iter.next();
-                    Ok(Constant::new_long(parse_long(&bytes)))
-                },
-                b'u' | b'U' => {
-                    iter.next();
-                    Ok(Constant::new_ulong(parse_ulong(&bytes)))
-                },
-                x if !word_character(*x) => {
-                    let ulong = parse_ulong(&bytes);
-                    if let Ok(int) = i32::try_from(ulong) {
-                        Ok(Constant::new_int(int))
-                    } else if let Ok(uint) = u32::try_from(ulong) {
-                        Ok(Constant::new_uint(uint))
-                    } else if let Ok(long) = i64::try_from(ulong) {
-                        Ok(Constant::new_long(long))
-                    } else {
-                        Ok(Constant::new_ulong(ulong))
-                    }
-                }
-                other => Err(Error::InvalidConstant(bytes.iter().map(|x| *x as u8 as char).chain(std::iter::once(*other as char)).collect())),
+        [x, ..] => match x {
+            b'l' | b'L' => {
+                iter.next();
+                Ok(Constant::new_long(parse_long(&bytes)))
             }
-        }
+            b'u' | b'U' => {
+                iter.next();
+                Ok(Constant::new_ulong(parse_ulong(&bytes)))
+            }
+            x if !word_character(*x) => {
+                let ulong = parse_ulong(&bytes);
+                if let Ok(int) = i32::try_from(ulong) {
+                    Ok(Constant::new_int(int))
+                } else if let Ok(uint) = u32::try_from(ulong) {
+                    Ok(Constant::new_uint(uint))
+                } else if let Ok(long) = i64::try_from(ulong) {
+                    Ok(Constant::new_long(long))
+                } else {
+                    Ok(Constant::new_ulong(ulong))
+                }
+            }
+            other => Err(Error::InvalidConstant(
+                bytes
+                    .iter()
+                    .map(|x| *x as u8 as char)
+                    .chain(std::iter::once(*other as char))
+                    .collect(),
+            )),
+        },
         [] => Err(Error::UnexpectedEof),
     }
 }
@@ -304,7 +308,7 @@ fn next_if_number(iter: &mut SliceIter<u8>) -> Option<AsciiDigit> {
     iter.next_if_map(AsciiDigit::from_int)
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum AsciiDigit {
     Zero = 0,
     One = 1,

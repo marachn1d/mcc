@@ -1,32 +1,163 @@
+use asm::x86::{Binary, X86};
 use std::ops::BitOr;
 
 #[derive(Copy, Clone, Debug)]
-pub struct PairSet(u8);
-
-// lower 4 bits = left, upper 4 bits = right
-
-const MAX_DWORD: RuleSet = RuleSet(OpRule::MaxDword as u8);
-
-const NO_IMM: RuleSet = RuleSet(OpRule::NoImm as u8);
-
-const NO_MEM: RuleSet = RuleSet(OpRule::NoMem as u8);
-
-const _NORULE: RuleSet = RuleSet(0);
-
-pub struct RuleTable {
-    pub mov: PairSet,
-    pub movsx: PairSet,
-    pub add: PairSet,
-    pub unop: RuleSet,
-    pub sub: PairSet,
-    pub shift: PairSet,
-    pub bitwise: PairSet,
-    pub div: RuleSet,
-    pub push: RuleSet,
-    pub cmp: PairSet,
-    pub mul: PairSet,
+struct OpRule {
+    no_memory: bool,
+    max_dword: bool,
+    no_immediate: bool,
 }
 
+#[derive(Copy, Clone, Debug)]
+enum PairRule {
+    Unary(OpRule),
+    Binary {
+        left: OpRule,
+        right: OpRule,
+        max_1_stack: bool,
+    },
+}
+
+impl OpRule {
+    const fn none() -> Self {
+        Self {
+            no_memory: false,
+            max_dword: false,
+            no_immediate: false,
+        }
+    }
+
+    const fn no_memory() -> Self {
+        let mut new = Self::none();
+        new.no_memory = true;
+        new
+    }
+
+    const fn max_dword() -> Self {
+        let mut new = Self::none();
+        new.max_dword = true;
+        new
+    }
+
+    const fn no_immediate() -> Self {
+        let mut new = Self::none();
+        new.no_immediate = true;
+        new
+    }
+
+    const fn and(&self, other: Self) -> Self {
+        Self {
+            no_memory: self.no_memory | other.no_memory,
+            max_dword: self.max_dword | other.max_dword,
+            no_immediate: self.no_immediate | other.no_immediate,
+        }
+    }
+
+    const fn with(&self, other: Self) -> PairRule {
+        PairRule::Binary {
+            left: *self,
+            right: other,
+            max_1_stack: false,
+        }
+    }
+    const fn unary(&self) -> PairRule {
+        PairRule::Unary(*self)
+    }
+}
+
+impl PairRule {
+    const fn rule(instruction: &X86) -> Option<Self> {
+        const fn no_memory() -> OpRule {
+            OpRule::no_memory()
+        }
+
+        const fn no_immediate() -> OpRule {
+            OpRule::no_immediate()
+        }
+
+        const fn max_dword() -> OpRule {
+            OpRule::max_dword()
+        }
+
+        match instruction {
+            asm::x86::BaseX86::Mov { .. }
+            | asm::x86::BaseX86::Binary {
+                operator: Binary::ShiftLeft | Binary::ShiftRight,
+                ..
+            } => Some(no_memory().with(no_immediate()).max_1_stack()),
+            asm::x86::BaseX86::Movsx { .. } => {
+                Some(no_immediate().with(no_immediate().and(no_memory())))
+            }
+            asm::x86::BaseX86::Idiv { .. }
+            | asm::x86::BaseX86::Div { .. }
+            | asm::x86::BaseX86::Unary { .. } => Some(no_immediate().unary()),
+
+            asm::x86::BaseX86::Binary {
+                operator: Binary::And | Binary::Or | Binary::Xor,
+                ..
+            }
+            | asm::x86::BaseX86::Cmp { .. }
+            | asm::x86::BaseX86::Binary {
+                operator: Binary::Add | Binary::Sub,
+                ..
+            } => Some(max_dword().with(no_immediate()).max_1_stack()),
+            asm::x86::BaseX86::Binary {
+                operator: Binary::Mult,
+                ..
+            } => Some(max_dword().with(no_memory()).max_1_stack()),
+
+            asm::x86::BaseX86::MovZeroExtend(_) | asm::x86::BaseX86::Push(_) => {
+                Some(max_dword().unary())
+            }
+            asm::x86::BaseX86::Call(_)
+            | asm::x86::BaseX86::Ret
+            | asm::x86::BaseX86::Cdq(_)
+            | asm::x86::BaseX86::Jmp(_)
+            | asm::x86::BaseX86::JmpCC { .. }
+            | asm::x86::BaseX86::SetCC { .. }
+            | asm::x86::BaseX86::Label(_) => None,
+        }
+    }
+
+    const fn left(&self) -> OpRule {
+        match self {
+            PairRule::Unary(left) | PairRule::Binary { left, .. } => *left,
+        }
+    }
+
+    /// # Safety
+    /// # PairRule must be binary
+    const unsafe fn assume_right(&self) -> OpRule {
+        if let PairRule::Binary { right, .. } = self {
+            *right
+        } else {
+            unsafe { std::hint::unreachable_unchecked() }
+        }
+    }
+
+    const fn unary(rule: OpRule) -> Self {
+        Self::Unary(rule)
+    }
+
+    const fn max_1_stack(&self) -> Self {
+        if let PairRule::Binary {
+            left,
+            right,
+            max_1_stack: false,
+        } = self
+        {
+            Self::Binary {
+                left: *left,
+                right: *right,
+                max_1_stack: true,
+            }
+        } else {
+            *self
+        }
+    }
+}
+
+/*
 impl RuleTable {
     const ADD_SUB_CMP: PairSet = pair_set(MemRule::One, MAX_DWORD, NO_IMM);
 }
@@ -44,173 +175,4 @@ pub const RULES: RuleTable = RuleTable {
     shift: pair_set(MemRule::One, NO_MEM, NO_IMM),
     push: MAX_DWORD,
 };
-
-// ideally we'd have some nice elegant matching stuff but it's pretty involved
-#[derive(PartialEq, Eq)]
-enum MemRule {
-    One,
-    Two,
-}
-
-const fn pair_set(mem: MemRule, l: RuleSet, r: RuleSet) -> PairSet {
-    let set = (r.0 << 4) | l.0;
-    match mem {
-        MemRule::One => PairSet(set | MAX1STACK),
-        MemRule::Two => PairSet(set & !(MAX1STACK)),
-    }
-}
-
-impl PairSet {
-    pub const fn max_1_stack(&self) -> bool {
-        self.0 & MAX1STACK == MAX1STACK
-    }
-
-    pub const fn left(&self) -> RuleSet {
-        RuleSet(self.0 & 0b0111)
-    }
-
-    pub const fn right(&self) -> RuleSet {
-        RuleSet((self.0 >> 4) & 0b0111)
-    }
-}
-use std::fmt::{self, Display, Formatter};
-#[derive(Copy, Clone, Debug)]
-pub struct RuleSet(u8);
-impl Display for RuleSet {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        let mut first = false;
-        if self.max_dword() {
-            first = true;
-            write!(f, "MAX_DWORD")?;
-        };
-        if self.no_mem() {
-            if !first {
-                write!(f, " | ")?;
-            }
-            write!(f, "NO_MEM")?;
-            first = true;
-        };
-
-        if self.no_imm() {
-            if !first {
-                write!(f, " | ")?;
-            }
-
-            write!(f, "NO_IMM")?;
-        }
-
-        Ok(())
-    }
-}
-
-impl RuleSet {
-    pub const fn imm_not_allowed(&self, val: i64) -> bool {
-        self.no_imm() || (self.max_dword() && val > i32::MAX as i64)
-    }
-
-    pub const fn validate(self) -> RuleSet {
-        if self.invalid_state() {
-            panic!("invalid state")
-        }
-        self
-    }
-
-    pub const fn none(&self) -> bool {
-        self.0 == 0
-    }
-
-    pub const fn no_mem(&self) -> bool {
-        self.0 & 0b1 == 1
-    }
-
-    pub const fn max_dword(&self) -> bool {
-        self.0 & 0b10 == 0b10
-    }
-
-    pub const fn no_imm(&self) -> bool {
-        self.0 & 0b100 == 0b100
-    }
-
-    pub const fn invalid_state(&self) -> bool {
-        self.0 & 0b110 == 0b110
-    }
-
-    pub const fn or(self, rhs: Self) -> RuleSet {
-        Self(self.0 | rhs.0).validate()
-    }
-
-    pub const fn or_bit(self, rhs: OpRule) -> RuleSet {
-        Self(self.0 | rhs as u8).validate()
-    }
-}
-
-impl BitOr<OpRule> for RuleSet {
-    type Output = RuleSet;
-
-    fn bitor(self, rhs: OpRule) -> Self::Output {
-        self.or_bit(rhs)
-    }
-}
-
-impl BitOr<RuleSet> for OpRule {
-    type Output = RuleSet;
-
-    fn bitor(self, rhs: RuleSet) -> Self::Output {
-        rhs.or_bit(self)
-    }
-}
-
-impl BitOr<OpRule> for OpRule {
-    type Output = RuleSet;
-
-    fn bitor(self, rhs: Self) -> Self::Output {
-        self.or(rhs)
-    }
-}
-
-#[repr(u8)]
-#[derive(Copy, Clone, Debug)]
-pub enum OpRule {
-    NoMem = 0b001,
-    MaxDword = 0b010,
-    NoImm = 0b100,
-}
-
-impl OpRule {
-    const fn or(self, rhs: Self) -> RuleSet {
-        match (self, rhs) {
-            (Self::NoImm, Self::MaxDword) | (Self::MaxDword, Self::NoImm) => {
-                panic!("invalid state")
-            }
-            _ => RuleSet(self as u8 | rhs as u8),
-        }
-    }
-}
-const MAX1STACK: u8 = 0b1000;
-
-#[cfg(test)]
-mod test {
-    #[test]
-    fn test_none() {
-        let rule = super::_NORULE;
-        assert!(rule.none());
-        assert!(!rule.no_mem());
-        assert!(!rule.max_dword());
-        assert!(!rule.no_imm());
-    }
-
-    #[test]
-    fn test_pair() {
-        let rule = super::RULES.mov;
-        assert!(!rule.max_1_stack());
-        assert!(!rule.left().none());
-        assert!(rule.left().max_dword());
-        assert!(rule.left().no_mem());
-        assert!(!rule.left().no_imm());
-
-        assert!(rule.right().none());
-        assert!(!rule.right().no_mem());
-        assert!(!rule.right().max_dword());
-        assert!(!rule.right().no_imm());
-    }
-}
+*/

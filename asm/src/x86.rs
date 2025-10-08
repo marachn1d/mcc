@@ -3,6 +3,8 @@ use ast::parse::{StaticInit, UnOp};
 use ast::semantics::Attr;
 use ast::Ident;
 use ast::VarType;
+use ast::{Int, Long};
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt::{self, Display, Formatter};
 use std::io::Write;
@@ -138,7 +140,7 @@ impl BaseX86<PseudoOp> {
     pub const fn allocate_stack(n: i64) -> Self {
         Self::binary(
             Binary::Sub,
-            Op::Imm(n).pseudo(),
+            Op::imm(n).pseudo(),
             Op::Register(Register::Sp).pseudo(),
             AsmType::Quadword,
         )
@@ -147,7 +149,7 @@ impl BaseX86<PseudoOp> {
     pub const fn deallocate_stack(n: i64) -> Self {
         Self::binary(
             Binary::Add,
-            Op::Imm(n).pseudo(),
+            Op::imm(n).pseudo(),
             Op::Register(Register::Sp).pseudo(),
             AsmType::Quadword,
         )
@@ -158,7 +160,7 @@ impl BaseX86<Op> {
     pub const fn allocate_stack(n: i64) -> Self {
         Self::binary(
             Binary::Sub,
-            Op::Imm(n),
+            Op::imm(n),
             Op::Register(Register::Sp),
             AsmType::Quadword,
         )
@@ -349,6 +351,14 @@ impl Op {
     pub const fn is_immediate(&self) -> bool {
         matches!(self, Self::Imm(_))
     }
+
+    pub const fn imm(imm: i64) -> Self {
+        Self::Imm(Immediate::new_i64(imm))
+    }
+
+    pub const fn uimm(imm: u64) -> Self {
+        Self::Imm(Immediate::new_u64(imm))
+    }
 }
 
 pub mod op_regs {
@@ -368,12 +378,152 @@ pub mod op_regs {
 
 #[derive(Clone, Debug)]
 pub enum Op {
-    Imm(i64),
-    UImm(u64),
+    Imm(Immediate),
     Register(Register),
     Stack(isize),
     Data(Ident),
 }
+
+#[repr(C)]
+pub union Immediate {
+    long: i64,
+    ulong: u64,
+    int: i32,
+    uint: u32,
+}
+
+impl Clone for Immediate {
+    fn clone(&self) -> Self {
+        Self {
+            long: self.as_long(),
+        }
+    }
+}
+
+impl Copy for Immediate {}
+
+impl fmt::Debug for Immediate {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        <u64 as fmt::Debug>::fmt(&self.as_ulong(), f)
+    }
+}
+
+impl fmt::Display for Immediate {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        <u64 as fmt::Display>::fmt(&self.as_ulong(), f)
+    }
+}
+
+impl Ord for Immediate {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.as_long().cmp(&other.as_long())
+    }
+}
+
+impl PartialOrd<i64> for Immediate {
+    fn partial_cmp(&self, other: &i64) -> Option<Ordering> {
+        Some(<i64 as Ord>::cmp(&self.as_long(), other))
+    }
+}
+
+impl PartialOrd for Immediate {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(<Self as Ord>::cmp(&self, other))
+    }
+}
+
+impl Eq for Immediate {}
+
+impl PartialEq for Immediate {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_ulong() == other.as_ulong()
+    }
+}
+
+impl PartialEq<i64> for Immediate {
+    fn eq(&self, other: &i64) -> bool {
+        self.as_long() == *other
+    }
+}
+
+impl Immediate {
+    pub const fn as_long(&self) -> i64 {
+        unsafe { self.long }
+    }
+
+    pub const fn as_ulong(&self) -> u64 {
+        unsafe { self.ulong }
+    }
+
+    pub const fn as_int(&self) -> i32 {
+        unsafe { self.int }
+    }
+
+    pub const fn as_uint(&self) -> u32 {
+        unsafe { self.uint }
+    }
+
+    pub const fn new_int(int: Int) -> Self {
+        match int {
+            Int::U(u) => Self::new_u32(u),
+            Int::I(i) => Self::new_i32(i),
+        }
+    }
+
+    pub const fn new_long(long: Long) -> Self {
+        match long {
+            Long::U(u) => Self::new_u64(u),
+            Long::I(i) => Self::new_i64(i),
+        }
+    }
+
+    pub const fn new_i64(long: i64) -> Self {
+        Self { long: long }
+    }
+
+    pub const fn new_u64(long: u64) -> Self {
+        Self { ulong: long }
+    }
+
+    pub const fn new_u32(int: u32) -> Self {
+        Self::new_u64(int as u64)
+    }
+
+    pub const fn new_i32(int: i32) -> Self {
+        Self::new_i64(int as i64)
+    }
+
+    pub const fn set_int(&mut self, int: &Int) {
+        match int {
+            Int::U(u) => self.set_u32(*u),
+            Int::I(i) => self.set_i32(*i),
+        }
+    }
+
+    pub const fn set_long(&mut self, long: &Long) {
+        match long {
+            Long::U(u) => self.set_u64(*u),
+            Long::I(i) => self.set_i64(*i),
+        }
+    }
+
+    pub const fn set_i32(&mut self, int: i32) {
+        self.set_i64(int as i64);
+    }
+
+    pub const fn set_u32(&mut self, int: u32) {
+        self.set_u64(int as u64);
+    }
+
+    pub const fn set_i64(&mut self, long: i64) {
+        self.long = long
+    }
+
+    pub const fn set_u64(&mut self, long: u64) {
+        self.ulong = long
+    }
+}
+
 impl Operand for Op {}
 
 impl Operand for PseudoOp {}
@@ -443,8 +593,7 @@ impl From<UnOp> for Unary {
 impl Display for Op {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
-            Self::Imm(val) => write!(f, "${val}"),
-            Op::UImm(val) => write!(f,  "${val}"),
+            Self::Imm(val) => write!(f, "{val}"),
             Self::Register(r) => write!(f, "{}", r.extended()),
             Self::Stack(n) => write!(f, "{n}(%rbp)"),
             Self::Data(name) => write!(f, "{name}(%rip)"),
@@ -482,7 +631,7 @@ pub enum PseudoOp {
 impl From<Value> for PseudoOp {
     fn from(val: Value) -> Self {
         match val {
-            Value::Constant(c) => match c.long(){
+            Value::Constant(c) => match c.long() {
                 l if l.is_signed() => Self::imm(l.signed()),
                 ul => Self::uimm(ul.unsigned()),
             },
@@ -502,8 +651,7 @@ impl<T: Into<Op>> From<T> for PseudoOp {
     fn from(val: T) -> Self {
         let operand: Op = val.into();
         match operand {
-            Op::Imm(a) => Self::imm(a),
-            Op::UImm(a) => Self::uimm(a),
+            Op::Imm(a) => Self::imm(a.as_long()),
             Op::Register(a) => Self::register(a),
             Op::Stack(a) => Self::stack(a),
             Op::Data(a) => Self::data(a),
@@ -538,11 +686,11 @@ impl PseudoOp {
     ];
 
     pub const fn imm(value: i64) -> Self {
-        Self::Normal(Op::Imm(value))
+        Self::Normal(Op::imm(value))
     }
 
     pub const fn uimm(value: u64) -> Self {
-        Self::Normal(Op::UImm(value))
+        Self::Normal(Op::uimm(value))
     }
     pub const fn register(reg: Register) -> Self {
         Self::Normal(Op::Register(reg))

@@ -124,6 +124,7 @@ impl<'a> StackFrame<'a> {
             op if rules.none() => Ok(self.fix_operand(op)),
             PseudoOp::PseudoRegister(name) if rules.no_mem() => Err(self.fix_by_name(&name)),
             PseudoOp::Normal(op @ Op::Imm(i)) if rules.imm_not_allowed(i) => Err(op),
+            PseudoOp::Normal(op @ Op::UImm(u)) if rules.uimm_not_allowed(u) => Err(op),
             op => Ok(self.fix_operand(op)),
         }
     }
@@ -175,6 +176,19 @@ fn fix_instruction(op: Pseudo, sf: &mut StackFrame, vec: &mut Vec<X86>) {
             Err(op) => vec.extend([X86::mov(op, op::R10, AsmType::Quadword), X86::Push(op::R10)]),
         },
         Pseudo::Call(fun) => vec.push(X86::Call(fun)),
+        Pseudo::Mov {
+            // no quadword immediates
+            ty: AsmType::Quadword,
+            regs:
+                (
+                    PseudoOp::Normal(src @ Op::UImm(u)),
+                    PseudoOp::PseudoRegister(name) | PseudoOp::Normal(Op::Data(name)),
+                ),
+        } if u > u32::MAX as u64 => vec.extend([
+            X86::mov(src, op::R10, AsmType::Quadword),
+            X86::mov(op::R10, sf.fix_by_name(&name), AsmType::Quadword),
+        ]),
+
         Pseudo::Mov {
             ty: AsmType::Quadword,
             // problem i have right now, I want
@@ -333,7 +347,7 @@ fn fix_instruction(op: Pseudo, sf: &mut StackFrame, vec: &mut Vec<X86>) {
 
 fn fix_div(divisor: PseudoOp, ty: AsmType, sf: &mut StackFrame, vec: &mut Vec<X86>, sign: bool) {
     use rule::RULES;
-    match sf.check(divisor, RULES.div) {
+    match dbg!(sf.check(divisor, RULES.div)) {
         Ok(divisor) => {
             vec.push(X86::Idiv { divisor, ty });
         }

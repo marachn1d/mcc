@@ -38,6 +38,14 @@ impl VarType {
         self.map(&mut || 4, &mut || 8)
     }
 
+    pub const fn int_with_sign(s: Sign) -> Self {
+        Self::Int(s)
+    }
+
+    pub const fn long_with_sign(s: Sign) -> Self {
+        Self::Long(s)
+    }
+
     pub const fn int() -> Self {
         Self::Int(Sign::Signed)
     }

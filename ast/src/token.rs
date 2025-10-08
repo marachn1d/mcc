@@ -73,6 +73,15 @@ pub enum Token<Ident> {
 }
 
 impl<Ident> Token<Ident> {
+    pub const fn type_specifier(&self) -> bool {
+        use Token::{Int, Long, Signed, Unsigned};
+        matches!(self, Int | Long | Signed | Unsigned)
+    }
+    pub const fn specifier(&self) -> bool {
+        use Token::{Extern, Static};
+        self.type_specifier() || matches!(self, Extern | Static)
+    }
+
     pub fn constant(&self) -> bool {
         matches!(self, Self::Const(_))
     }

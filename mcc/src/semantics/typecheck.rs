@@ -478,11 +478,14 @@ fn function_declaration(
             let Attr::Fn {
                 defined,
                 global: was_global,
-                r#typ: _,
+                typ: ty,
             } = e.get_mut()
             else {
                 unreachable!()
             };
+            if typ != *ty {
+                return Err(Error::ConflictingDeclaration);
+            }
 
             if has_body {
                 *defined = true;
