@@ -27,6 +27,15 @@ pub enum BackendSymbol {
     },
 }
 
+impl BackendSymbol {
+    fn ty(&self) -> Option<AsmType> {
+        match self {
+            BackendSymbol::Obj { ty, .. } => Some(*ty),
+            BackendSymbol::Fn { .. } => None,
+        }
+    }
+}
+
 impl From<Attr> for BackendSymbol {
     fn from(attr: Attr) -> Self {
         match attr {
@@ -154,6 +163,61 @@ impl BaseX86<PseudoOp> {
             AsmType::Quadword,
         )
     }
+
+    pub fn as_fixed(&self, regs: &[Op]) -> BaseX86<Op> {
+        // not sure how I feel about this interface but it's deduplicated
+        let left = regs.get(0).cloned();
+        let right = regs.get(1).cloned();
+
+        match self {
+            BaseX86::Mov { ty, .. } => BaseX86::Mov {
+                ty: *ty,
+                regs: (left.unwrap(), right.unwrap()),
+            },
+            BaseX86::Movsx { ty, .. } => BaseX86::Movsx {
+                ty: *ty,
+                regs: (left.unwrap(), right.unwrap()),
+            },
+            BaseX86::Binary { operator, ty, .. } => BaseX86::Binary {
+                operator: *operator,
+                ty: *ty,
+                regs: (left.unwrap(), right.unwrap()),
+            },
+            BaseX86::Unary { operator, ty, .. } => BaseX86::Unary {
+                operator: *operator,
+                operand: left.unwrap(),
+                ty: *ty,
+            },
+            BaseX86::Idiv { ty, .. } => BaseX86::Idiv {
+                divisor: left.unwrap(),
+                ty: *ty,
+            },
+            BaseX86::Div { ty, .. } => BaseX86::Div {
+                divisor: left.unwrap(),
+                ty: *ty,
+            },
+            BaseX86::MovZeroExtend(_) => BaseX86::MovZeroExtend((left.unwrap(), right.unwrap())),
+            BaseX86::Cmp { ty, .. } => BaseX86::Cmp {
+                regs: (left.unwrap(), right.unwrap()),
+                ty: *ty,
+            },
+
+            BaseX86::Push(_) => BaseX86::Push(left.unwrap()),
+            BaseX86::Call(l) => BaseX86::Call(l.clone()),
+            BaseX86::Ret => BaseX86::Ret,
+            BaseX86::Cdq(asm_type) => BaseX86::Cdq(*asm_type),
+            BaseX86::Jmp(l) => BaseX86::Jmp(l.clone()),
+            BaseX86::JmpCC { condition, label } => BaseX86::JmpCC {
+                condition: condition.clone(),
+                label: label.clone(),
+            },
+            BaseX86::SetCC { condition, .. } => BaseX86::SetCC {
+                condition: condition.clone(),
+                op: left.unwrap(),
+            },
+            BaseX86::Label(l) => BaseX86::Label(l.clone()),
+        }
+    }
 }
 
 impl BaseX86<Op> {
@@ -214,6 +278,88 @@ impl<T: Operand> BaseX86<T> {
     pub const fn mov_zero_extend(src: T, dst: T) -> Self {
         Self::MovZeroExtend((src, dst))
     }
+
+    pub fn map<
+        U,
+        F: FnOnce(T, T, Option<Binary>, AsmType) -> U,
+        G: FnOnce(T, Option<Unary>, AsmType) -> U,
+        H: FnOnce() -> U,
+    >(
+        self,
+        bin_map: F,
+        unary_map: G,
+        other_map: H,
+    ) -> U {
+        match self {
+            BaseX86::Mov { ty, regs } | BaseX86::Movsx { ty, regs } | BaseX86::Cmp { ty, regs } => {
+                bin_map(regs.0, regs.1, None, ty)
+            }
+            BaseX86::MovZeroExtend((l, r)) => bin_map(l, r, None, AsmType::Longword),
+            BaseX86::Binary { operator, regs, ty } => bin_map(regs.0, regs.1, Some(operator), ty),
+            BaseX86::Idiv { divisor, ty } | BaseX86::Div { divisor, ty } => {
+                unary_map(divisor, None, ty)
+            }
+            BaseX86::Unary {
+                operator,
+                operand,
+                ty,
+            } => unary_map(operand, Some(operator), ty),
+            BaseX86::SetCC { op, .. } => unary_map(op, None, AsmType::Quadword),
+            BaseX86::Push(op) => unary_map(op, None, AsmType::Quadword),
+            BaseX86::Call(_)
+            | BaseX86::Ret
+            | BaseX86::Cdq(_)
+            | BaseX86::Jmp(_)
+            | BaseX86::JmpCC { .. }
+            | BaseX86::Label(_) => other_map(),
+        }
+    }
+
+    pub fn regs(&self) -> Box<[&T]> {
+        match self {
+            BaseX86::Mov { regs: (l, r), .. }
+            | BaseX86::Movsx { regs: (l, r), .. }
+            | BaseX86::Binary { regs: (l, r), .. }
+            | BaseX86::MovZeroExtend((l, r))
+            | BaseX86::Cmp { regs: (l, r), .. } => Box::new([l, r]),
+
+            BaseX86::Idiv { divisor: l, .. }
+            | BaseX86::Div { divisor: l, .. }
+            | BaseX86::Push(l)
+            | BaseX86::SetCC { op: l, .. }
+            | BaseX86::Unary { operand: l, .. } => Box::new([l]),
+
+            BaseX86::Cdq(_)
+            | BaseX86::Call(_)
+            | BaseX86::Ret
+            | BaseX86::Jmp(_)
+            | BaseX86::JmpCC { .. }
+            | BaseX86::Label(_) => Box::new([]),
+        }
+    }
+
+    pub const fn ty(&self) -> Option<AsmType> {
+        match self {
+            BaseX86::Mov { ty, .. }
+            | BaseX86::Movsx { ty, .. }
+            | BaseX86::Unary { ty, .. }
+            | BaseX86::Binary { ty, .. }
+            | BaseX86::Idiv { ty, .. }
+            | BaseX86::Div { ty, .. }
+            | BaseX86::Cdq(ty)
+            | BaseX86::Cmp { ty, .. } => Some(*ty),
+
+            BaseX86::Push(_) => Some(AsmType::Quadword),
+            BaseX86::MovZeroExtend(_) => Some(AsmType::Longword),
+
+            BaseX86::Call(_)
+            | BaseX86::Ret
+            | BaseX86::Jmp(_)
+            | BaseX86::JmpCC { .. }
+            | BaseX86::SetCC { .. }
+            | BaseX86::Label(_) => None,
+        }
+    }
 }
 
 pub trait Operand {}
@@ -261,14 +407,26 @@ impl Display for TargettedX86<'_> {
             } => write!(f, "{operator}{ty} {}", operand.sized_fmt(*ty, target)),
             X86::Binary {
                 operator: operator @ (Binary::ShiftLeft | Binary::ShiftRight),
-                regs: (Op::Register(r), by),
+                regs: (Op::Register(by), dst),
                 ty,
             } => {
                 write!(
                     f,
                     "{operator}{ty} {}, {}",
-                    r.one_byte(),
+                    by.one_byte(),
+                    dst.sized_fmt(*ty, target),
+                )
+            }
+            X86::Binary {
+                operator: operator @ (Binary::ShiftLeft | Binary::ShiftRight),
+                regs: (by, dst),
+                ty,
+            } => {
+                write!(
+                    f,
+                    "{operator}{ty} {}, {}",
                     by.sized_fmt(*ty, target),
+                    dst.sized_fmt(*ty, target),
                 )
             }
             X86::Binary {
@@ -330,7 +488,12 @@ impl Display for TargettedX86<'_> {
                 write!(f, "div{ty} {}", divisor.sized_fmt(*ty, target))
             }
 
-            BaseX86::MovZeroExtend(_) => unreachable!(),
+            BaseX86::MovZeroExtend((l, r)) => write!(
+                f,
+                "movzx {}, {}",
+                l.sized_fmt(AsmType::Longword, target),
+                r.sized_fmt(AsmType::Quadword, target),
+            ),
         }
     }
 }
@@ -447,6 +610,10 @@ impl PartialEq<i64> for Immediate {
 }
 
 impl Immediate {
+    pub const fn above_dword(&self) -> bool {
+        self.as_ulong() > u32::max_value() as u64
+    }
+
     pub const fn as_long(&self) -> i64 {
         unsafe { self.long }
     }
@@ -593,7 +760,7 @@ impl From<UnOp> for Unary {
 impl Display for Op {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
-            Self::Imm(val) => write!(f, "{val}"),
+            Self::Imm(val) => write!(f, "${val}"),
             Self::Register(r) => write!(f, "{}", r.extended()),
             Self::Stack(n) => write!(f, "{n}(%rbp)"),
             Self::Data(name) => write!(f, "{name}(%rip)"),

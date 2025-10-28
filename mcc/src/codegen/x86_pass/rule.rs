@@ -1,10 +1,11 @@
-use asm::x86::{Binary, Pseudo, PseudoOp};
+use asm::x86::{Binary, Op, Pseudo, PseudoOp};
 
 #[derive(Copy, Clone, Debug)]
 pub struct OpRule<'a> {
     pub no_memory: bool,
     pub max_dword: bool,
     pub no_immediate: bool,
+    pub imm_or_cl: bool,
     pub op: &'a PseudoOp,
 }
 
@@ -13,6 +14,7 @@ pub struct OpRuleBuilder {
     pub no_memory: bool,
     pub max_dword: bool,
     pub no_immediate: bool,
+    pub imm_or_cl: bool,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -31,6 +33,7 @@ impl OpRuleBuilder {
             no_memory: false,
             max_dword: false,
             no_immediate: false,
+            imm_or_cl: false,
         }
     }
 
@@ -46,6 +49,12 @@ impl OpRuleBuilder {
         new
     }
 
+    const fn imm_or_cl() -> Self {
+        let mut new = Self::none();
+        new.imm_or_cl = true;
+        new
+    }
+
     const fn no_immediate() -> Self {
         let mut new = Self::none();
         new.no_immediate = true;
@@ -57,6 +66,7 @@ impl OpRuleBuilder {
             no_memory: self.no_memory | other.no_memory,
             max_dword: self.max_dword | other.max_dword,
             no_immediate: self.no_immediate | other.no_immediate,
+            imm_or_cl: self.imm_or_cl | other.imm_or_cl,
         }
     }
 
@@ -66,6 +76,7 @@ impl OpRuleBuilder {
             no_immediate: self.no_immediate,
             max_dword: self.max_dword,
             op,
+            imm_or_cl: self.imm_or_cl,
         }
     }
 
@@ -83,6 +94,22 @@ impl<'a> OpRule<'a> {
         }
     }
 
+    pub const fn needs_fix(&self) -> bool {
+        if let PseudoOp::Normal(Op::Imm(i)) = self.operand() {
+            self.no_immediate() || (self.max_dword() && i.above_dword())
+        } else {
+            self.no_memory()
+        }
+    }
+
+    pub const fn needs_cl(&self) -> bool {
+        if let PseudoOp::Normal(Op::Imm(_)) = self.operand() {
+            false
+        } else {
+            self.imm_or_cl()
+        }
+    }
+
     pub const fn no_memory(&self) -> bool {
         self.no_memory
     }
@@ -93,6 +120,10 @@ impl<'a> OpRule<'a> {
 
     pub const fn no_immediate(&self) -> bool {
         self.no_immediate
+    }
+
+    pub const fn imm_or_cl(&self) -> bool {
+        self.imm_or_cl
     }
 
     pub const fn operand(&self) -> &PseudoOp {
@@ -114,6 +145,10 @@ impl<'a> PairRule<'a> {
             OpRuleBuilder::max_dword()
         }
 
+        const fn imm_or_cl() -> OpRuleBuilder {
+            OpRuleBuilder::imm_or_cl()
+        }
+
         const fn binary<'a>(
             left: &'a PseudoOp,
             left_rule: OpRuleBuilder,
@@ -129,12 +164,17 @@ impl<'a> PairRule<'a> {
             Pseudo::Mov {
                 regs: (left, right),
                 ..
-            }
-            | Pseudo::Binary {
+            } => Some(binary(left, no_memory(), right, no_immediate()).with_max_1_stack()),
+            Pseudo::Binary {
                 operator: Binary::ShiftLeft | Binary::ShiftRight,
                 regs: (left, right),
                 ..
-            } => Some(binary(left, no_memory(), right, no_immediate()).max_1_stack()),
+            } => Some(binary(
+                left,
+                imm_or_cl(),
+                right,
+                no_immediate().and(no_memory()),
+            )),
             Pseudo::Movsx {
                 regs: (left, right),
                 ..
@@ -156,16 +196,18 @@ impl<'a> PairRule<'a> {
                 operator: Binary::Add | Binary::Sub,
                 regs: (left, right),
                 ..
-            } => Some(binary(left, max_dword(), right, no_immediate()).max_1_stack()),
+            } => Some(binary(left, max_dword(), right, no_immediate()).with_max_1_stack()),
             Pseudo::Binary {
                 operator: Binary::Mult,
                 regs: (left, right),
                 ..
-            } => Some(binary(left, max_dword(), right, no_memory()).max_1_stack()),
+            } => Some(binary(left, max_dword(), right, no_memory()).with_max_1_stack()),
 
             Pseudo::Push(op) => Some(max_dword().unary(op)),
 
-            Pseudo::MovZeroExtend(_) => todo!(),
+            Pseudo::MovZeroExtend((left, right)) => {
+                Some(binary(left, no_immediate(), right, no_immediate()))
+            }
             Pseudo::Call(_)
             | Pseudo::Ret
             | Pseudo::Cdq(_)
@@ -176,17 +218,32 @@ impl<'a> PairRule<'a> {
         }
     }
 
-    const fn left(&self) -> OpRule {
+    pub const fn left(&self) -> OpRule<'_> {
         match self {
             PairRule::Unary(left) | PairRule::Binary { left, .. } => *left,
         }
     }
 
-    const fn unary(rule: OpRule<'a>) -> Self {
+    pub const fn right(&self) -> Option<OpRule<'_>> {
+        match self {
+            PairRule::Unary(_) => None,
+            PairRule::Binary { right, .. } => Some(*right),
+        }
+    }
+
+    pub const fn unary(rule: OpRule<'a>) -> Self {
         Self::Unary(rule)
     }
 
-    const fn max_1_stack(&self) -> Self {
+    pub const fn max_1_stack(&self) -> bool {
+        if let Self::Binary { max_1_stack, .. } = self {
+            *max_1_stack
+        } else {
+            false
+        }
+    }
+
+    pub const fn with_max_1_stack(&self) -> Self {
         if let PairRule::Binary {
             left,
             right,
