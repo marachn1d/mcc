@@ -148,35 +148,49 @@ use rule::PairRule;
 // tbh I'm not the happiest with this code, it's not really clear, but it's very dedpulicated and
 // it's kinda done so I figure i should just let it be like this for now
 fn fix_instruction(op: Pseudo, sf: &mut StackFrame, vec: &mut Vec<X86>) {
+    //eprintln!("fixing {op:?}");
     if let Some(rule) = PairRule::rule(&op) {
         let l_rule = rule.left();
 
         let mut l_op = sf.fix_operand(l_rule.operand().clone());
         let mut r_op = None;
+        let mut r_dst = None;
 
         if l_rule.needs_cl() {
-            vec.push(X86::mov(l_op, op::CX, op.ty().unwrap()));
+            vec.push(X86::mov(l_op.clone(), op::CX, op.ty().unwrap()));
             l_op = op::CX;
         } else if l_rule.needs_fix() {
-            vec.push(X86::mov(l_op, op::R10, op.ty().unwrap()));
+            let ty = if matches!(op, Pseudo::Movsx { .. }) {
+                AsmType::Longword
+            } else {
+                op.ty().unwrap()
+            };
+            vec.push(X86::mov(l_op.clone(), op::R10, ty));
             l_op = op::R10;
         }
 
         if let Some(r_rule) = rule.right() {
             let r = sf.fix_operand(r_rule.operand().clone());
             if r_rule.needs_fix() || (l_op.is_memory() && r.is_memory() && rule.max_1_stack()) {
-                vec.push(X86::mov(r, op::R11, op.ty().unwrap()));
+                vec.push(X86::mov(r.clone(), op::R11, op.ty().unwrap()));
+                if rule.r_is_dst() {
+                    r_dst = Some(r.clone())
+                }
                 r_op = Some(op::R11);
             } else {
                 r_op = Some(r);
             }
         }
-        let fixed = if let Some(r_op) = r_op {
-            op.as_fixed(&[l_op, r_op])
+        let fixed = if let Some(r_op) = r_op.clone() {
+            op.as_fixed(&[l_op.clone(), r_op])
         } else {
-            op.as_fixed(&[l_op])
+            op.as_fixed(&[l_op.clone()])
         };
-        vec.push(fixed)
+        vec.push(fixed);
+
+        if let Some(r_dst) = r_dst {
+            vec.push(X86::mov(r_op.unwrap(), r_dst, op.ty().unwrap()))
+        }
     } else {
         let fixed_regs: Box<[Op]> = op
             .regs()
@@ -185,6 +199,7 @@ fn fix_instruction(op: Pseudo, sf: &mut StackFrame, vec: &mut Vec<X86>) {
             .collect();
         vec.push(op.as_fixed(&fixed_regs))
     }
+    //eprintln!("result: {:?}", &vec[end_idx..]);
 }
 
 // no mem dst

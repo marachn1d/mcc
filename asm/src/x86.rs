@@ -508,7 +508,7 @@ impl Op {
     }
 
     pub const fn is_memory(&self) -> bool {
-        matches!(self, Self::Data(_) | Self::Imm(_) | Self::Stack(_))
+        matches!(self, Self::Data(_) | Self::Stack(_))
     }
 
     pub const fn is_immediate(&self) -> bool {

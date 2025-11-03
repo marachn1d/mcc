@@ -24,6 +24,7 @@ pub enum PairRule<'a> {
         left: OpRule<'a>,
         right: OpRule<'a>,
         max_1_stack: bool,
+        r_is_dst: bool,
     },
 }
 
@@ -86,11 +87,12 @@ impl OpRuleBuilder {
 }
 
 impl<'a> OpRule<'a> {
-    const fn with(self, other: Self) -> PairRule<'a> {
+    const fn with(self, other: Self, r_is_dst: bool) -> PairRule<'a> {
         PairRule::Binary {
             left: self,
             right: other,
             max_1_stack: false,
+            r_is_dst,
         }
     }
 
@@ -132,6 +134,10 @@ impl<'a> OpRule<'a> {
 }
 
 impl<'a> PairRule<'a> {
+    pub const fn r_is_dst(&self) -> bool {
+        matches!(self, Self::Binary { r_is_dst: true, .. })
+    }
+
     pub const fn rule(instruction: &'a Pseudo) -> Option<Self> {
         const fn no_memory() -> OpRuleBuilder {
             OpRuleBuilder::no_memory()
@@ -154,22 +160,41 @@ impl<'a> PairRule<'a> {
             left_rule: OpRuleBuilder,
             right: &'a PseudoOp,
             right_rule: OpRuleBuilder,
+            l_is_dst: bool,
         ) -> PairRule<'a> {
             let left = left_rule.build(left);
             let right = right_rule.build(right);
-            left.with(right)
+            left.with(right, l_is_dst)
+        }
+
+        const fn binary_r_dst<'a>(
+            left: &'a PseudoOp,
+            left_rule: OpRuleBuilder,
+            right: &'a PseudoOp,
+            right_rule: OpRuleBuilder,
+        ) -> PairRule<'a> {
+            binary(left, left_rule, right, right_rule, true)
+        }
+
+        const fn binary_no_dst<'a>(
+            left: &'a PseudoOp,
+            left_rule: OpRuleBuilder,
+            right: &'a PseudoOp,
+            right_rule: OpRuleBuilder,
+        ) -> PairRule<'a> {
+            binary(left, left_rule, right, right_rule, false)
         }
 
         match instruction {
             Pseudo::Mov {
                 regs: (left, right),
                 ..
-            } => Some(binary(left, no_memory(), right, no_immediate()).with_max_1_stack()),
+            } => Some(binary_r_dst(left, no_memory(), right, no_immediate()).with_max_1_stack()),
             Pseudo::Binary {
                 operator: Binary::ShiftLeft | Binary::ShiftRight,
                 regs: (left, right),
                 ..
-            } => Some(binary(
+            } => Some(binary_r_dst(
                 left,
                 imm_or_cl(),
                 right,
@@ -178,7 +203,13 @@ impl<'a> PairRule<'a> {
             Pseudo::Movsx {
                 regs: (left, right),
                 ..
-            } => Some(binary(left, no_immediate(), right, no_immediate())),
+                    // we only emit movsx when doing a casting operation, in which case the emitted
+                    // tacky accounts for the new destination
+            } => Some(binary_no_dst(left, no_immediate(), right, no_immediate().and(no_memory())).with_max_1_stack()),
+            Pseudo::Cmp {
+                regs: (left, right),
+                ..
+            } => Some(binary_no_dst(left, max_dword(), right, no_immediate()).with_max_1_stack()),
             Pseudo::Idiv { divisor: op, .. }
             | Pseudo::Div { divisor: op, .. }
             | Pseudo::Unary { operand: op, .. } => Some(no_immediate().unary(op)),
@@ -188,25 +219,21 @@ impl<'a> PairRule<'a> {
                 regs: (left, right),
                 ..
             }
-            | Pseudo::Cmp {
-                regs: (left, right),
-                ..
-            }
             | Pseudo::Binary {
                 operator: Binary::Add | Binary::Sub,
                 regs: (left, right),
                 ..
-            } => Some(binary(left, max_dword(), right, no_immediate()).with_max_1_stack()),
+            } => Some(binary_r_dst(left, max_dword(), right, no_immediate()).with_max_1_stack()),
             Pseudo::Binary {
                 operator: Binary::Mult,
                 regs: (left, right),
                 ..
-            } => Some(binary(left, max_dword(), right, no_memory()).with_max_1_stack()),
+            } => Some(binary_r_dst(left, max_dword(), right, no_memory()).with_max_1_stack()),
 
             Pseudo::Push(op) => Some(max_dword().unary(op)),
 
             Pseudo::MovZeroExtend((left, right)) => {
-                Some(binary(left, no_immediate(), right, no_immediate()))
+                Some(binary_r_dst(left, no_immediate(), right, no_immediate()))
             }
             Pseudo::Call(_)
             | Pseudo::Ret
@@ -248,12 +275,14 @@ impl<'a> PairRule<'a> {
             left,
             right,
             max_1_stack: false,
+            r_is_dst,
         } = self
         {
             Self::Binary {
                 left: *left,
                 right: *right,
                 max_1_stack: true,
+                r_is_dst: *r_is_dst,
             }
         } else {
             *self
