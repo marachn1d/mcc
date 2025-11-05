@@ -9,6 +9,8 @@ use std::collections::{HashMap, HashSet};
 use std::mem;
 mod cfg;
 use cfg::{Graph, Node, NodeId};
+mod constant_fold;
+mod eliminate_unreachable;
 
 pub fn opt(tacky: Program, opt: &Optimizations, table: &SymbolTable) -> Program {
     if opt.all_disabled() {
@@ -59,13 +61,13 @@ fn optimize(
     while changed {
         changed = false;
         if opt.constant_folding {
-            changed &= constant_fold(&mut body);
+            changed &= constant_fold::constant_fold(&mut body);
         }
 
         if opt.unreachable_code || opt.copy_propogation || opt.dead_store {
             let mut cfg = control_flow_graph(mem::take(&mut body));
             if opt.unreachable_code {
-                changed |= eliminate_unreachable(&mut cfg);
+                changed |= eliminate_unreachable::eliminate_unreachable(&mut cfg);
             }
             if opt.copy_propogation {
                 changed |= propagate_copies(&mut cfg);
@@ -79,130 +81,6 @@ fn optimize(
         }
     }
     body.into_boxed_slice()
-}
-
-fn constant_fold(tacky: &mut [Instruction]) -> bool {
-    let mut changed = false;
-    for instruction in tacky {
-        use Value::Constant;
-        changed |= match instruction {
-            Instruction::SignExtend {
-                src: Constant(s),
-                dst: d,
-            } => {
-                let src: StaticInit = (*s).into();
-                let src: ast::Constant = src.as_long().into();
-                *instruction = Instruction::Copy {
-                    src: Constant(src),
-                    dst: d.clone(),
-                };
-                true
-            }
-            Instruction::Truncate {
-                src: Constant(s),
-                dst: d,
-            } => {
-                let src: StaticInit = (*s).into();
-                let src: ast::Constant = src.as_int().into();
-                *instruction = Instruction::Copy {
-                    src: Constant(src),
-                    dst: d.clone(),
-                };
-                true
-            }
-
-            Instruction::Unary {
-                op,
-                source: Constant(s),
-                dst,
-            } => {
-                *instruction = Instruction::Copy {
-                    dst: Value::Var(dst.clone()),
-                    src: Value::Constant(s.with_unop(*op)),
-                };
-                true
-            }
-            Instruction::Binary {
-                operator,
-                source_1: Constant(s1),
-                source_2: Constant(s2),
-                dst,
-            } => {
-                let [s1, s2]: [StaticInit; 2] = [*s1, *s2].map(|x| x.into());
-                let ty = s1.common_type(&s2);
-                let src = match ty {
-                    VarType::Int(_) => Value::Constant(ast::Constant::new_int(
-                        operator.apply(s1.as_int(), s2.as_int()),
-                    )),
-                    VarType::Long(_) => Value::Constant(ast::Constant::new_long(
-                        operator.apply(s1.as_long(), s2.as_long()),
-                    )),
-                };
-                *instruction = Instruction::Copy {
-                    src,
-                    dst: dst.clone(),
-                };
-                true
-            }
-            Instruction::JumpIfZero {
-                condition: Constant(c),
-                target,
-            } if c.is_zero() => {
-                *instruction = Instruction::Jump {
-                    target: target.clone(),
-                };
-                true
-            }
-            // need to replace the boxed slice with a vec for this
-            Instruction::JumpIfNotZero {
-                condition: Constant(_c),
-                target: _t,
-            } => false,
-
-            _ => false,
-        }
-    }
-    changed
-}
-
-fn eliminate_unreachable<T>(graph: &mut Graph<T>) -> bool {
-    let mut visited_nodes = HashSet::new();
-
-    for node in graph.dfs() {
-        visited_nodes.insert(node.id);
-    }
-
-    let mut eliminated_any = false;
-
-    graph.retain(|node| {
-        if !visited_nodes.contains(&node.id) {
-            eliminated_any = true;
-            false
-        } else {
-            true
-        }
-    });
-
-    // now we're gonna get rid of unnecessary labels
-    for node in graph.linear_iter_mut().filter(|node| {
-        // if we start with a label
-        node.instructions
-            .first()
-            .is_some_and(|op| matches!(op, Instruction::Label(_)))
-    }) {
-        // and we only have one predecessor
-        if let Some([NodeId::Basic(pred_id)]) = node.predecessors.as_ref().map(|p| p.as_slice()) {
-            if let NodeId::Basic(our_id) = node.id {
-                // and our predecessor directly precedes us
-                if *pred_id == our_id - 1 {
-                    eliminated_any = true;
-                    node.instructions.remove(0);
-                }
-            }
-        }
-    }
-
-    eliminated_any
 }
 
 fn propagate_copies<T>(_tacky: &mut Graph<T>) -> bool {
