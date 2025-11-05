@@ -7,8 +7,8 @@ use ast::semantics::SymbolTable;
 //pub use assembly::Binary;
 //use assembly::Program;
 use crate::Optimizations;
-use ast::semantics::typed;
 use asm::x86::Target;
+use ast::semantics::typed;
 
 pub fn generate(
     program: typed::Program,
@@ -17,11 +17,8 @@ pub fn generate(
     target: Target,
     mut table: SymbolTable,
 ) -> Box<[u8]> {
-    let tacky = {
-        let mut tacky = tacky_pass::emit(program, &mut table);
-        tacky_opt::opt(&mut tacky, opt, &table);
-        tacky
-    };
+    let tacky = tacky_pass::emit(program, &mut table);
+    let tacky = tacky_opt::opt(tacky, opt, &table);
 
     if emit_asm {
         let (pseudo, table) = pseudo_pass::emit(tacky, table);

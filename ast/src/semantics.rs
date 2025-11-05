@@ -4,7 +4,7 @@ use crate::Ident;
 use crate::{parse::FnType, VarType};
 use std::collections::HashMap;
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct LabelId(pub usize);
 
 #[derive(Debug, Clone)]
@@ -39,7 +39,7 @@ impl LabelId {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Label {
     Named(Ident),
     Default(LabelId),
