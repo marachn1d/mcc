@@ -91,53 +91,44 @@ fn eliminate_dead_stores<T>(_tacky: &mut Graph<T>) -> bool {
     false
 }
 
+// I should turn this into a method on Graph, and give it the map
 fn control_flow_graph(body: impl IntoIterator<Item = Instruction>) -> Graph<()> {
-    let basic_blocks = basic_blocks(body);
-    let (nodes, ids) = label_blocks(basic_blocks);
+    let (nodes, ids) = build_nodes(body);
     add_edges(nodes, ids)
 }
 
-fn basic_blocks(body: impl IntoIterator<Item = Instruction>) -> Vec<Vec<Instruction>> {
-    let mut finished_blocks: Vec<Vec<Instruction>> = vec![];
-    let mut current_block: Vec<Instruction> = vec![];
+fn build_nodes(
+    body: impl IntoIterator<Item = Instruction>,
+) -> (Vec<Node<()>>, HashMap<Ident, usize>) {
+    let mut finished_blocks: Vec<Node<()>> = vec![];
+    let mut current_block: Node<()> = Node::basic_start(vec![], 0, ());
+    let mut map = HashMap::new();
+    // should probably do this differently, like a map or something
     for instruction in body {
         use Instruction::{Jump, JumpIfNotZero, JumpIfZero, Label, Return};
         match instruction {
-            Label(_) => {
-                if !current_block.is_empty() {
+            Label(ref lbl) => {
+                if !current_block.instructions.is_empty() {
                     finished_blocks.push(mem::take(&mut current_block));
                 }
-                current_block = vec![instruction];
+
+                let size = finished_blocks.len();
+                map.insert(lbl.clone(), size);
+                current_block.id = NodeId::basic(finished_blocks.len());
+
+                current_block.instructions.push(instruction);
             }
             Jump { .. } | JumpIfZero { .. } | JumpIfNotZero { .. } | Return(_) => {
-                current_block.push(instruction);
+                current_block.instructions.push(instruction);
                 finished_blocks.push(mem::take(&mut current_block));
             }
-            _ => current_block.push(instruction),
+            _ => current_block.instructions.push(instruction),
         }
     }
-    if !current_block.is_empty() {
+    if !current_block.instructions.is_empty() {
         finished_blocks.push(current_block)
     }
-    finished_blocks
-}
-
-fn label_blocks(
-    blocks: impl IntoIterator<Item = Vec<Instruction>>,
-) -> (Vec<Node<()>>, HashMap<Ident, usize>) {
-    let mut map: HashMap<Ident, usize> = HashMap::new();
-    let blocks = blocks
-        .into_iter()
-        .enumerate()
-        .map(|(idx, ops)| {
-            if let Instruction::Label(l) = ops.first().unwrap() {
-                map.insert(l.clone(), idx);
-            };
-            Node::basic_start(ops, idx, ())
-        })
-        .collect();
-
-    (blocks, map)
+    (finished_blocks, map)
 }
 
 fn link_nodes<T>(predecessor: &mut Node<T>, successor: &mut Node<T>) {

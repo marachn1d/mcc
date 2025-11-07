@@ -18,11 +18,9 @@ impl<T> Graph<T> {
             .into_boxed_slice()
     }
 
-    pub fn linear_iter_mut(&mut self) -> std::slice::IterMut<Node<T>> {
+    pub fn linear_iter_mut<'a>(&'a mut self) -> std::slice::IterMut<'a, Node<T>> {
         self.nodes.iter_mut()
     }
-
-    //pub fn traverse_mut(&mut self) -> impl Iterator<Item = &mut Node<T>> {}
 
     pub fn find_mut(&mut self, id: &NodeId) -> Option<&mut Node<T>> {
         self.nodes
@@ -31,6 +29,7 @@ impl<T> Graph<T> {
             .map(|idx| &mut self.nodes[idx])
     }
 
+    #[allow(dead_code)]
     pub fn find(&self, id: &NodeId) -> Option<&Node<T>> {
         self.nodes
             .binary_search_by_key(id, |node| node.id)
@@ -38,7 +37,7 @@ impl<T> Graph<T> {
             .map(|idx| &self.nodes[idx])
     }
 
-    pub fn dfs(&mut self) -> NodeIter<T> {
+    pub fn dfs<'a>(&'a mut self) -> NodeIter<'a, T> {
         NodeIter {
             next: vec![NodeId::Entry],
             graph: NonNull::from_mut(self),
@@ -56,7 +55,7 @@ use std::ptr::NonNull;
 pub struct NodeIter<'a, T> {
     next: Vec<NodeId>,
     graph: NonNull<Graph<T>>,
-    _marker: PhantomData<&'a mut T>,
+    _marker: PhantomData<&'a mut Graph<T>>,
 }
 
 impl<'a, T> Iterator for NodeIter<'a, T> {
@@ -157,5 +156,11 @@ impl<T> Node<T> {
         } else {
             self.successors = Some(vec![successor])
         }
+    }
+}
+
+impl<T: Default> Default for Node<T> {
+    fn default() -> Self {
+        Self::basic_start(vec![], 0, T::default())
     }
 }

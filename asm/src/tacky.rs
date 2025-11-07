@@ -147,11 +147,18 @@ impl TackyBinary {
         let (lhs, rhs) = (Wrapping(lhs), Wrapping(rhs));
         let truee = || <u8 as Into<T>>::into(1);
         let falsee = || <u8 as Into<T>>::into(0);
+        let zero = || Wrapping(falsee());
         match self {
             TackyBinary::Add => (lhs + rhs).0,
             TackyBinary::Subtract => (lhs - rhs).0,
             TackyBinary::Multiply => (lhs * rhs).0,
-            TackyBinary::Divide => (lhs / rhs).0,
+            TackyBinary::Divide => {
+                if rhs != zero() {
+                    (lhs / rhs).0
+                } else {
+                    zero().0
+                }
+            }
             TackyBinary::Remainder => (lhs % rhs).0,
             TackyBinary::BitAnd => (lhs & rhs).0,
             TackyBinary::BitOr => (lhs | rhs).0,

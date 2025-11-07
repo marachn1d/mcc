@@ -618,8 +618,8 @@ impl Not for Long {
 
     fn not(self) -> Self::Output {
         self.edit(
-            |i| if i == 0 { 0 } else { 1 },
-            |l| if l == 0 { 0 } else { 1 },
+            |i| if i == 0 { 1 } else { 0 },
+            |l| if l == 0 { 1 } else { 0 },
         )
     }
 }
@@ -685,8 +685,8 @@ impl Not for Int {
 
     fn not(self) -> Self::Output {
         self.edit(
-            |i| if i == 0 { 0 } else { 1 },
-            |l| if l == 0 { 0 } else { 1 },
+            |i| if i == 0 { 1 } else { 0 },
+            |l| if l == 0 { 1 } else { 0 },
         )
     }
 }
