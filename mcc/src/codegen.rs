@@ -23,7 +23,7 @@ pub fn generate(
     if emit_asm {
         let (pseudo, table) = pseudo_pass::emit(tacky, table);
 
-        let asm = x86_pass::fix_ast(pseudo, &table);
+        let asm = x86_pass::fix_ast(pseudo, &table, &target);
         asm::x86::emit(&asm, target)
     } else {
         Box::new([])

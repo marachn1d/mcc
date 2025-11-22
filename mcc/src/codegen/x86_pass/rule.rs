@@ -1,4 +1,4 @@
-use asm::x86::{Binary, Op, Pseudo, PseudoOp};
+use asm::x86::{Binary, Op, Pseudo, PseudoOp, Target};
 
 #[derive(Copy, Clone, Debug)]
 pub struct OpRule<'a> {
@@ -24,7 +24,7 @@ pub enum PairRule<'a> {
         left: OpRule<'a>,
         right: OpRule<'a>,
         max_1_stack: bool,
-        r_is_dst: bool,
+        r_is_read: bool,
     },
 }
 
@@ -87,18 +87,18 @@ impl OpRuleBuilder {
 }
 
 impl<'a> OpRule<'a> {
-    const fn with(self, other: Self, r_is_dst: bool) -> PairRule<'a> {
+    const fn with(self, other: Self, r_is_read: bool) -> PairRule<'a> {
         PairRule::Binary {
             left: self,
             right: other,
             max_1_stack: false,
-            r_is_dst,
+            r_is_read,
         }
     }
 
-    pub const fn needs_fix(&self) -> bool {
+    pub fn needs_fix(&self, target: &Target) -> bool {
         if let PseudoOp::Normal(Op::Imm(i)) = self.operand() {
-            self.no_immediate() || (self.max_dword() && i.above_dword())
+            self.no_immediate() || (self.max_dword() && i.above_dword(target))
         } else {
             self.no_memory()
         }
@@ -123,7 +123,6 @@ impl<'a> OpRule<'a> {
     pub const fn no_immediate(&self) -> bool {
         self.no_immediate
     }
-
     pub const fn imm_or_cl(&self) -> bool {
         self.imm_or_cl
     }
@@ -134,8 +133,14 @@ impl<'a> OpRule<'a> {
 }
 
 impl<'a> PairRule<'a> {
-    pub const fn r_is_dst(&self) -> bool {
-        matches!(self, Self::Binary { r_is_dst: true, .. })
+    pub const fn r_is_read(&self) -> bool {
+        matches!(
+            self,
+            Self::Binary {
+                r_is_read: true,
+                ..
+            }
+        )
     }
 
     pub const fn rule(instruction: &'a Pseudo) -> Option<Self> {
@@ -167,7 +172,7 @@ impl<'a> PairRule<'a> {
             left.with(right, l_is_dst)
         }
 
-        const fn binary_r_dst<'a>(
+        const fn binary_r_read<'a>(
             left: &'a PseudoOp,
             left_rule: OpRuleBuilder,
             right: &'a PseudoOp,
@@ -176,7 +181,7 @@ impl<'a> PairRule<'a> {
             binary(left, left_rule, right, right_rule, true)
         }
 
-        const fn binary_no_dst<'a>(
+        const fn binary_r_not_read<'a>(
             left: &'a PseudoOp,
             left_rule: OpRuleBuilder,
             right: &'a PseudoOp,
@@ -189,12 +194,15 @@ impl<'a> PairRule<'a> {
             Pseudo::Mov {
                 regs: (left, right),
                 ..
-            } => Some(binary_r_dst(left, no_memory(), right, no_immediate()).with_max_1_stack()),
+            } => Some(
+                binary_r_not_read(left, no_memory().and(max_dword()), right, no_immediate())
+                    .with_max_1_stack(),
+            ),
             Pseudo::Binary {
                 operator: Binary::ShiftLeft | Binary::ShiftRight,
                 regs: (left, right),
                 ..
-            } => Some(binary_r_dst(
+            } => Some(binary_r_read(
                 left,
                 imm_or_cl(),
                 right,
@@ -203,13 +211,19 @@ impl<'a> PairRule<'a> {
             Pseudo::Movsx {
                 regs: (left, right),
                 ..
-                    // we only emit movsx when doing a casting operation, in which case the emitted
-                    // tacky accounts for the new destination
-            } => Some(binary_no_dst(left, no_immediate(), right, no_immediate().and(no_memory())).with_max_1_stack()),
+            } => Some(
+                binary_r_not_read(
+                    left,
+                    no_immediate().and(max_dword()),
+                    right,
+                    no_immediate().and(no_memory()),
+                )
+                .with_max_1_stack(),
+            ),
             Pseudo::Cmp {
                 regs: (left, right),
                 ..
-            } => Some(binary_no_dst(left, max_dword(), right, no_immediate()).with_max_1_stack()),
+            } => Some(binary_r_read(left, max_dword(), right, no_immediate()).with_max_1_stack()),
             Pseudo::Idiv { divisor: op, .. }
             | Pseudo::Div { divisor: op, .. }
             | Pseudo::Unary { operand: op, .. } => Some(no_immediate().unary(op)),
@@ -223,18 +237,18 @@ impl<'a> PairRule<'a> {
                 operator: Binary::Add | Binary::Sub,
                 regs: (left, right),
                 ..
-            } => Some(binary_r_dst(left, max_dword(), right, no_immediate()).with_max_1_stack()),
+            } => Some(binary_r_read(left, max_dword(), right, no_immediate()).with_max_1_stack()),
             Pseudo::Binary {
                 operator: Binary::Mult,
                 regs: (left, right),
                 ..
-            } => Some(binary_r_dst(left, max_dword(), right, no_memory()).with_max_1_stack()),
+            } => Some(binary_r_read(left, max_dword(), right, no_memory()).with_max_1_stack()),
 
             Pseudo::Push(op) => Some(max_dword().unary(op)),
 
-            Pseudo::MovZeroExtend((left, right)) => {
-                Some(binary_r_dst(left, no_immediate(), right, no_immediate()))
-            }
+            Pseudo::MovZeroExtend((left, right)) => Some(
+                binary_r_not_read(left, no_immediate(), right, no_immediate()).with_max_1_stack(),
+            ),
             Pseudo::Call(_)
             | Pseudo::Ret
             | Pseudo::Cdq(_)
@@ -275,14 +289,14 @@ impl<'a> PairRule<'a> {
             left,
             right,
             max_1_stack: false,
-            r_is_dst,
+            r_is_read,
         } = self
         {
             Self::Binary {
                 left: *left,
                 right: *right,
                 max_1_stack: true,
-                r_is_dst: *r_is_dst,
+                r_is_read: *r_is_read,
             }
         } else {
             *self

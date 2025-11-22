@@ -1,17 +1,16 @@
 use asm::x86::{
-    op_regs as op, AsmType, Binary, FunctionDefinition, Op, Program, Pseudo, PseudoOp, Register,
-    TopLevel, X86,
+    op_regs::{self as op, R10},
+    AsmType, FunctionDefinition, Op, Program, Pseudo, PseudoOp, Target, TopLevel, X86,
 };
 use ast::Ident;
 
 use asm::x86::{BackendSymbol, BackendTable};
 use std::collections::HashMap;
-use std::mem::MaybeUninit;
-pub fn fix_ast(program: Program<Pseudo>, table: &BackendTable) -> Program<X86> {
+pub fn fix_ast(program: Program<Pseudo>, table: &BackendTable, target: &Target) -> Program<X86> {
     let mut decs = Vec::with_capacity(program.0.len());
     for dec in program.0 {
         decs.push(match dec {
-            TopLevel::Fn(f) => TopLevel::Fn(convert_function(f, table)),
+            TopLevel::Fn(f) => TopLevel::Fn(convert_function(f, table, target)),
             TopLevel::StaticVar(s) => TopLevel::StaticVar(s),
         })
     }
@@ -26,13 +25,30 @@ fn convert_function(
         global,
     }: FunctionDefinition<Pseudo>,
     table: &BackendTable,
+    target: &Target,
 ) -> FunctionDefinition<X86> {
     let mut stack_frame = StackFrame::new(table);
     let mut body_vec: Vec<X86> = Vec::with_capacity(body.len() + 1);
     body_vec.push(X86::allocate_stack(0));
 
     for op in body.into_iter() {
-        fix_instruction(op, &mut stack_frame, &mut body_vec);
+        if let Pseudo::MovZeroExtend((src, dst)) = op {
+            let src = stack_frame.fix_operand(src);
+            let dst = stack_frame.fix_operand(dst);
+
+            body_vec.extend([
+                X86::Mov {
+                    ty: AsmType::Longword,
+                    regs: (src, op::AX),
+                },
+                X86::Mov {
+                    ty: AsmType::Quadword,
+                    regs: (op::AX, dst),
+                },
+            ])
+        } else {
+            fix_instruction(op, &mut stack_frame, &mut body_vec, target);
+        }
     }
 
     if stack_frame.size == 0 {
@@ -147,7 +163,7 @@ use rule::PairRule;
 
 // tbh I'm not the happiest with this code, it's not really clear, but it's very dedpulicated and
 // it's kinda done so I figure i should just let it be like this for now
-fn fix_instruction(op: Pseudo, sf: &mut StackFrame, vec: &mut Vec<X86>) {
+fn fix_instruction(op: Pseudo, sf: &mut StackFrame, vec: &mut Vec<X86>, target: &Target) {
     //eprintln!("fixing {op:?}");
     if let Some(rule) = PairRule::rule(&op) {
         let l_rule = rule.left();
@@ -159,7 +175,7 @@ fn fix_instruction(op: Pseudo, sf: &mut StackFrame, vec: &mut Vec<X86>) {
         if l_rule.needs_cl() {
             vec.push(X86::mov(l_op.clone(), op::CX, op.ty().unwrap()));
             l_op = op::CX;
-        } else if l_rule.needs_fix() {
+        } else if l_rule.needs_fix(target) {
             let ty = if matches!(op, Pseudo::Movsx { .. }) {
                 AsmType::Longword
             } else {
@@ -171,11 +187,15 @@ fn fix_instruction(op: Pseudo, sf: &mut StackFrame, vec: &mut Vec<X86>) {
 
         if let Some(r_rule) = rule.right() {
             let r = sf.fix_operand(r_rule.operand().clone());
-            if r_rule.needs_fix() || (l_op.is_memory() && r.is_memory() && rule.max_1_stack()) {
-                vec.push(X86::mov(r.clone(), op::R11, op.ty().unwrap()));
-                if rule.r_is_dst() {
+            if (r_rule).needs_fix(target)
+                || (l_op.is_memory() && r.is_memory() && rule.max_1_stack())
+            {
+                if rule.r_is_read() {
+                    vec.push(X86::mov(r.clone(), op::R11, op.ty().unwrap()));
+                } else {
                     r_dst = Some(r.clone())
                 }
+
                 r_op = Some(op::R11);
             } else {
                 r_op = Some(r);

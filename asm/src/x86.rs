@@ -610,8 +610,12 @@ impl PartialEq<i64> for Immediate {
 }
 
 impl Immediate {
-    pub const fn above_dword(&self) -> bool {
-        self.as_ulong() > u32::max_value() as u64
+    pub fn above_dword(&self, target: &Target) -> bool {
+        if *target == Target::Darwin {
+            self.as_long() > i32::max_value() as i64
+        } else {
+            self.as_ulong() > u32::max_value() as u64
+        }
     }
 
     pub const fn as_long(&self) -> i64 {
@@ -915,7 +919,7 @@ pub enum TopLevel<T> {
     StaticVar(StaticVar),
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum Target {
     Darwin,
     Linux,

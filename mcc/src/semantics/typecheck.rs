@@ -267,7 +267,11 @@ fn typecheck_expression(expression: labeled::Expr, table: &mut SymbolTable) -> R
                 lhs.write(left.clone());
             }
             convert_to(&mut left, &ty);
-            convert_to(&mut right, &ty);
+            if operator.bitshift() {
+                convert_to(&mut right, &VarType::uint());
+            } else {
+                convert_to(&mut right, &ty);
+            }
 
             if operator.compound() {
                 // for compound operators, we have to convert the inner binary operator first, and
