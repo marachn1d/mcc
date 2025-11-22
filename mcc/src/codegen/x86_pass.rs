@@ -192,9 +192,8 @@ fn fix_instruction(op: Pseudo, sf: &mut StackFrame, vec: &mut Vec<X86>, target: 
             {
                 if rule.r_is_read() {
                     vec.push(X86::mov(r.clone(), op::R11, op.ty().unwrap()));
-                } else {
-                    r_dst = Some(r.clone())
                 }
+                r_dst = Some(r.clone());
 
                 r_op = Some(op::R11);
             } else {
