@@ -471,7 +471,9 @@ fn convert_expression(
                     source_2,
                     dst: dst.clone(),
                 };
+
                 instructions.push(binary);
+
                 dst
             }
             ProcessedBinop::Compound(op) => {
@@ -483,7 +485,7 @@ fn convert_expression(
                     source_2: modifier,
                     dst: dst.clone(),
                 };
-                instructions.push(dbg!(binary));
+                instructions.push(binary);
                 dst
             }
         },

@@ -611,11 +611,7 @@ impl PartialEq<i64> for Immediate {
 
 impl Immediate {
     pub fn above_dword(&self, target: &Target) -> bool {
-        if *target == Target::Darwin {
-            self.as_long() > i32::max_value() as i64
-        } else {
-            self.as_ulong() > u32::max_value() as u64
-        }
+        self.as_ulong() > i32::MAX as u64
     }
 
     pub const fn as_long(&self) -> i64 {

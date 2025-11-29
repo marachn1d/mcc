@@ -194,6 +194,10 @@ fn convert_instruction(
             instructions.push(Pseudo::movsx(src.into(), dst.into()))
         }
         TackyOp::Truncate { src, dst } => {
+            let dst = match dst {
+                Value::Constant(c) => Value::Constant(c.convert_to(&VarType::INT)),
+                _ => dst,
+            };
             instructions.push(Pseudo::mov(src.into(), dst.into(), AsmType::Longword));
         }
         TackyOp::ZeroExtend { src, dst } => {
@@ -211,7 +215,7 @@ fn should_pad(args: &[Value]) -> bool {
         //
         // even number of non stack args, so the whole thing will be odd if the stack args are odd,
         // in which case we should pad
-        args.len() % 2 != 0
+        !args.len().is_multiple_of(2)
     }
 }
 

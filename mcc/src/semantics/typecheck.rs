@@ -326,10 +326,10 @@ fn typecheck_expression(expression: labeled::Expr, table: &mut SymbolTable) -> R
             typecheck_expression(*operand, table)
                 .map(Box::new)
                 .map(|operand| Expr::Unary {
-                    ty: if operator == UnOp::Not {
-                        VarType::INT
-                    } else {
-                        operand.ty()
+                    ty: match operator {
+                        UnOp::Complement => operand.ty(),
+                        UnOp::Negate => VarType::INT,
+                        UnOp::Not => operand.ty().as_signed(),
                     },
                     operand,
                     operator,

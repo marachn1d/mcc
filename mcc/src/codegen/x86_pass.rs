@@ -36,6 +36,8 @@ fn convert_function(
             let src = stack_frame.fix_operand(src);
             let dst = stack_frame.fix_operand(dst);
 
+            eprintln!("converting movzeroextend {src:?}, {dst:?}");
+
             body_vec.extend([
                 X86::Mov {
                     ty: AsmType::Longword,
@@ -193,7 +195,9 @@ fn fix_instruction(op: Pseudo, sf: &mut StackFrame, vec: &mut Vec<X86>, target: 
                 if rule.r_is_read() {
                     vec.push(X86::mov(r.clone(), op::R11, op.ty().unwrap()));
                 }
-                r_dst = Some(r.clone());
+                if rule.r_is_dst() {
+                    r_dst = Some(r.clone());
+                }
 
                 r_op = Some(op::R11);
             } else {

@@ -27,8 +27,8 @@ pub fn eliminate_unreachable<T>(graph: &mut Graph<T>) -> bool {
             .is_some_and(|op| matches!(op, Instruction::Label(_)))
     }) {
         // and we only have one predecessor
-        if let Some([NodeId::Basic(pred_id)]) = node.predecessors.as_ref().map(|p| p.as_slice()) {
-            if let NodeId::Basic(our_id) = node.id {
+        if let Some([NodeId::Basic(pred_id)]) = node.predecessors.as_deref() && 
+            let NodeId::Basic(our_id) = node.id {
                 // and our predecessor directly precedes us
                 if *pred_id == our_id - 1 {
                     eliminated_any = true;
@@ -36,7 +36,6 @@ pub fn eliminate_unreachable<T>(graph: &mut Graph<T>) -> bool {
                 }
             }
         }
-    }
 
     eliminated_any
 }

@@ -29,7 +29,6 @@ impl<T> Graph<T> {
             .map(|idx| &mut self.nodes[idx])
     }
 
-    #[allow(dead_code)]
     pub fn find(&self, id: &NodeId) -> Option<&Node<T>> {
         self.nodes
             .binary_search_by_key(id, |node| node.id)
@@ -45,8 +44,61 @@ impl<T> Graph<T> {
         }
     }
 
-    pub fn retain(&mut self, f: impl FnMut(&Node<T>) -> bool) {
-        self.nodes.retain(f)
+    pub fn retain(&mut self, mut f: impl FnMut(&Node<T>) -> bool) {
+        let ids_to_remove: Vec<NodeId> = self
+            .linear_iter_mut()
+            .filter_map(|x| f(x).then_some(x.id))
+            .collect();
+        for id in ids_to_remove {
+            self.remove_node(id)
+        }
+    }
+
+    fn remove_node(&mut self, target_id: NodeId) {
+        let empty = vec![];
+        let [successors, predecessors]: [Box<[NodeId]>; 2] = {
+            match &self.find(&target_id) {
+                Some(Node {
+                    predecessors,
+                    successors,
+                    ..
+                }) => [
+                    predecessors
+                        .as_ref()
+                        .unwrap_or(&empty)
+                        .iter()
+                        .copied()
+                        .collect(),
+                    successors
+                        .as_ref()
+                        .unwrap_or(&empty)
+                        .iter()
+                        .copied()
+                        .collect(),
+                ],
+                _ => [[].iter().copied().collect(), [].iter().copied().collect()],
+            }
+        };
+
+        for id in successors {
+            if let Some(Node {
+                predecessors: Some(p),
+                ..
+            }) = self.find_mut(&id)
+            {
+                p.retain(|id| *id != target_id)
+            }
+        }
+
+        for id in predecessors {
+            if let Some(Node {
+                successors: Some(s),
+                ..
+            }) = self.find_mut(&id)
+            {
+                s.retain(|id| *id != target_id)
+            }
+        }
     }
 }
 

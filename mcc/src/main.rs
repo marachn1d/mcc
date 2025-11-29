@@ -1,5 +1,5 @@
-use mcc::CompileStage;
 use asm::x86::Target;
+use mcc::CompileStage;
 use std::fmt;
 use std::io;
 
@@ -20,7 +20,7 @@ fn main() -> Result<(), MCCError> {
         stage: args.stage,
         version: CVersion::C23,
         opt: args.opts,
-        target:args.target,
+        target: args.target,
     });
 
     let output = args.file.with_extension("i");
@@ -41,8 +41,6 @@ struct Args {
     opts: Optimizations,
 }
 
-
-
 impl Args {
     fn parse() -> Option<Self> {
         let mut path: Option<PathBuf> = None;
@@ -50,7 +48,11 @@ impl Args {
         let mut keep_asm = false;
         let mut compile: bool = false;
         let mut opts = Optimizations::default();
-        let mut target = if cfg!(target_os="linux") {Target::Linux} else{Target::Darwin};
+        let mut target = if cfg!(target_os = "linux") {
+            Target::Linux
+        } else {
+            Target::Darwin
+        };
 
         let mut args = std::env::args();
         args.next();
