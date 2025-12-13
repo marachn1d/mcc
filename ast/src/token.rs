@@ -1,6 +1,6 @@
+use crate::VarType;
 use crate::parse::StaticInit;
 use crate::var_type::Sign;
-use crate::VarType;
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub enum Token<Ident> {

@@ -1,7 +1,7 @@
-use crate::parse::StaticInit;
 use crate::Constant;
 use crate::Ident;
-use crate::{parse::FnType, VarType};
+use crate::parse::StaticInit;
+use crate::{VarType, parse::FnType};
 use std::collections::HashMap;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
@@ -123,8 +123,8 @@ impl InitialVal {
 
 pub mod labeled {
     use super::{Label, LabelId};
-    use crate::parse;
     use crate::Constant;
+    use crate::parse;
     use crate::{Arr, Ident, IncDec, VarType};
     use parse::{Bop, FnType, ParamList, StaticInit, StorageClass, UnOp};
 
@@ -254,8 +254,8 @@ pub mod labeled {
 
     impl From<parse::Expr> for Expr {
         fn from(e: parse::Expr) -> Self {
-            use parse::Expr as AE;
             use Expr as E;
+            use parse::Expr as AE;
             match e {
                 AE::IncDec { op, exp: e } => Self::IncDec { op, exp: e.into() },
                 AE::Var(v) => E::Var(v),
@@ -320,8 +320,8 @@ pub mod labeled {
 
 pub mod typed {
     use super::{Label, LabelId};
-    use crate::parse;
     use crate::Constant;
+    use crate::parse;
     use crate::{Arr, Ident, IncDec, VarType};
     use parse::{Bop, FnType, ParamList, StaticInit, StorageClass, UnOp};
 

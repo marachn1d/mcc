@@ -1,8 +1,8 @@
 use super::tacky::Value;
-use ast::parse::{StaticInit, UnOp};
-use ast::semantics::Attr;
 use ast::Ident;
 use ast::VarType;
+use ast::parse::{StaticInit, UnOp};
+use ast::semantics::Attr;
 use ast::{Int, Long};
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -828,8 +828,8 @@ impl<T: Into<Op>> From<T> for PseudoOp {
 
 #[allow(dead_code)]
 pub mod pseudo_regs {
-    use super::op_regs as regs;
     use super::PseudoOp as Psu;
+    use super::op_regs as regs;
     pub const AX: Psu = Psu::Normal(regs::AX);
     pub const CX: Psu = Psu::Normal(regs::CX);
     pub const DX: Psu = Psu::Normal(regs::DX);

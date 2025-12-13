@@ -1,6 +1,6 @@
-use ast::semantics::typed::{BlockItem, Dec, FnDec, Program, Stmnt};
-use ast::semantics::Label;
 use ast::Ident;
+use ast::semantics::Label;
+use ast::semantics::typed::{BlockItem, Dec, FnDec, Program, Stmnt};
 
 //use super::ast::type_prelude::*;
 //

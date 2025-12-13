@@ -224,15 +224,11 @@ fn constant_number(start: AsciiDigit, iter: &mut SliceIter<u8>) -> Result<Consta
                 Ok(Constant::new_ulong(parse_ulong(&bytes)))
             }
             x if !word_character(*x) => {
-                let ulong = parse_ulong(&bytes);
-                if let Ok(int) = i32::try_from(ulong) {
+                let long = parse_long(&bytes);
+                if let Ok(int) = i32::try_from(long) {
                     Ok(Constant::new_int(int))
-                } else if let Ok(uint) = u32::try_from(ulong) {
-                    Ok(Constant::new_uint(uint))
-                } else if let Ok(long) = i64::try_from(ulong) {
-                    Ok(Constant::new_long(long))
                 } else {
-                    Ok(Constant::new_ulong(ulong))
+                    Ok(Constant::new_long(long))
                 }
             }
             other => Err(Error::InvalidConstant(
@@ -273,14 +269,14 @@ fn literal(byte: u8, iter: &mut SliceIter<u8>) -> Result<Token, Error> {
             b"long" => Token::Long,
             b"unsigned" => Token::Unsigned,
             b"signed" => Token::Signed,
-            _ => identifier(bytes.into())?.into(),
+            _ => identifier(&bytes)?.into(),
         })
     } else {
         Err(Error::InvalidLiteral)
     }
 }
 
-fn identifier(bytes: Box<[u8]>) -> Result<Ident, Error> {
+fn identifier(bytes: &[u8]) -> Result<Ident, Error> {
     if word_start(bytes[0]) && bytes[1..].iter().all(|&x| word_character(x)) {
         Ok(unsafe { String::from_utf8_unchecked(bytes.to_vec()) })
     } else {

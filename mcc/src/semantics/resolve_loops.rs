@@ -1,7 +1,6 @@
+use ast::Arr;
 use ast::semantics::labeled;
 use ast::semantics::{Label, LabelId};
-use ast::Arr;
-
 
 use labeled::{Block, BlockItem, Dec, Expr, FnDec, ForInit, Program, Stmnt, VarDec};
 

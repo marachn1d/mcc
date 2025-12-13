@@ -21,6 +21,7 @@
 	    python3
 	    binutils_nogold
             rust-bin.stable.latest.complete
+            gdb
           ];
 
           shellHook = ''

@@ -1,10 +1,10 @@
 use crate::Optimizations;
 use asm::tacky::*;
+use ast::Ident;
+use ast::VarType;
 use ast::parse::StaticInit;
 use ast::semantics::Label;
 use ast::semantics::SymbolTable;
-use ast::Ident;
-use ast::VarType;
 use std::collections::{HashMap, HashSet};
 use std::mem;
 mod cfg;

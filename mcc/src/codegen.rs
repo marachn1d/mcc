@@ -19,7 +19,7 @@ pub fn generate(
 ) -> Box<[u8]> {
     let tacky = tacky_pass::emit(program, &mut table);
     let tacky = tacky_opt::opt(tacky, opt, &table);
-
+    println!("{tacky:?}");
     if emit_asm {
         let (pseudo, table) = pseudo_pass::emit(tacky, table);
 

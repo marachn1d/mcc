@@ -36,8 +36,6 @@ fn convert_function(
             let src = stack_frame.fix_operand(src);
             let dst = stack_frame.fix_operand(dst);
 
-            eprintln!("converting movzeroextend {src:?}, {dst:?}");
-
             body_vec.extend([
                 X86::Mov {
                     ty: AsmType::Longword,

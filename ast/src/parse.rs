@@ -281,11 +281,23 @@ pub struct Unary {
     pub op: UnOp,
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub enum UnOp {
     Complement,
     Negate,
     Not,
+}
+impl fmt::Debug for UnOp {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        use std::fmt::Write;
+
+        let c = match self {
+            Self::Complement => '~',
+            Self::Not => '!',
+            Self::Negate => '-',
+        };
+        f.write_char(c)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -365,7 +377,7 @@ impl Bop {
     }
 
     pub const fn compound(&self) -> bool {
-        matches!(self.de_compound(), Some(_))
+        self.de_compound().is_some()
     }
 
     pub const fn de_compound(&self) -> Option<Self> {

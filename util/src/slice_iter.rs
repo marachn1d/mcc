@@ -28,11 +28,7 @@ impl<'a, T: Copy> SliceIter<'a, T> {
 
     pub fn next_if(&mut self, f: impl Fn(T) -> bool) -> Option<T> {
         let next = self.peek()?;
-        if f(next) {
-            self.next()
-        } else {
-            None
-        }
+        if f(next) { self.next() } else { None }
     }
 
     pub fn next_if_map<Y>(&mut self, f: impl Fn(T) -> Option<Y>) -> Option<Y> {
@@ -125,11 +121,7 @@ impl TokenIter {
 
     pub fn next_if(&mut self, f: impl Fn(&Token) -> bool) -> Option<Token> {
         let next = self.peek()?;
-        if f(next) {
-            self.next()
-        } else {
-            None
-        }
+        if f(next) { self.next() } else { None }
     }
     pub fn next_if_map<T>(&mut self, f: impl Fn(Token) -> Option<T>) -> Option<T> {
         f(self.next()?)

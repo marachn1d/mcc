@@ -327,9 +327,8 @@ fn typecheck_expression(expression: labeled::Expr, table: &mut SymbolTable) -> R
                 .map(Box::new)
                 .map(|operand| Expr::Unary {
                     ty: match operator {
-                        UnOp::Complement => operand.ty(),
-                        UnOp::Negate => VarType::INT,
-                        UnOp::Not => operand.ty().as_signed(),
+                        UnOp::Not => VarType::INT,
+                        UnOp::Complement | UnOp::Negate => operand.ty(),
                     },
                     operand,
                     operator,

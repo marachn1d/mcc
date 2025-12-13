@@ -1,15 +1,15 @@
 use crate::parse;
 use asm::tacky::StaticVar;
 use asm::tacky::{FunctionDefinition, Instruction, Program, TackyBinary, TopLevel, Value};
-use ast::parse::Fix;
-use ast::semantics::typed::{self, Block, BlockItem, Dec, Expr, FnDec, ForInit, Stmnt, VarDec};
-use ast::semantics::Label;
-use ast::semantics::StatementLabels;
-use ast::semantics::{Attr, SymbolTable};
 use ast::Constant;
 use ast::Ident;
-use parse::inc_dec::*;
+use ast::parse::Fix;
+use ast::semantics::Label;
+use ast::semantics::StatementLabels;
+use ast::semantics::typed::{self, Block, BlockItem, Dec, Expr, FnDec, ForInit, Stmnt, VarDec};
+use ast::semantics::{Attr, SymbolTable};
 use parse::VarType;
+use parse::inc_dec::*;
 
 use parse::StorageClass;
 
@@ -23,10 +23,10 @@ static LABEL_COUNT: AtomicUsize = AtomicUsize::new(0);
 pub fn emit(program: typed::Program, symbol_table: &mut SymbolTable) -> Program {
     let mut tlvs = Vec::with_capacity(program.len());
     for dec in program {
-        if let Dec::Fn(f) = dec {
-            if let Some(f) = convert_function(f, symbol_table) {
-                tlvs.push(TopLevel::Fn(f));
-            }
+        if let Dec::Fn(f) = dec
+            && let Some(f) = convert_function(f, symbol_table)
+        {
+            tlvs.push(TopLevel::Fn(f));
         }
     }
 
@@ -634,8 +634,8 @@ impl From<CompoundOp> for TackyBinary {
 }
 
 const fn process_binop(binop: parse::Bop) -> ProcessedBinop {
-    use parse::Bop as Pre;
     use ProcessedBinop as Post;
+    use parse::Bop as Pre;
     match binop {
         Pre::Equals => unreachable!(),
         Pre::Ternary => unreachable!(),

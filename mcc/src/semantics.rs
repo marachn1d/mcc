@@ -2,7 +2,7 @@ mod check_labels;
 mod check_switch;
 mod resolve;
 pub mod typecheck;
-use ast::semantics::{typed, Attr, SymbolTable};
+use ast::semantics::{Attr, SymbolTable, typed};
 
 use ast::parse::Program as AstProgram;
 pub use ast::parse::StaticInit;

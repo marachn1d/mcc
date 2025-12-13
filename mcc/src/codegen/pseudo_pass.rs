@@ -3,8 +3,8 @@ use asm::tacky::{
     StaticVar as TackySV, TackyBinary, TopLevel as TackyTL, Value,
 };
 use asm::x86::{
-    pseudo_regs as pseudop, AsmType, Binary, CondCode, FunctionDefinition, Op, Program, Pseudo,
-    PseudoOp, Register, StaticVar, TopLevel,
+    AsmType, Binary, CondCode, FunctionDefinition, Op, Program, Pseudo, PseudoOp, Register,
+    StaticVar, TopLevel, pseudo_regs as pseudop,
 };
 use ast::parse::UnOp;
 use ast::{Ident, VarType};

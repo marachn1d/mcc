@@ -4,9 +4,9 @@
 //
 //
 //
-use ast::semantics::typed::{BlockItem, Dec, FnDec, Program, Stmnt};
-use ast::semantics::Label;
 use ast::Constant;
+use ast::semantics::Label;
+use ast::semantics::typed::{BlockItem, Dec, FnDec, Program, Stmnt};
 
 use std::collections::HashSet;
 pub struct SwitchState {

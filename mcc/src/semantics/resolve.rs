@@ -1,8 +1,8 @@
+use ast::Ident;
 use ast::parse::{
     Binary, Block, BlockItem, Dec, Expr, FnDec, ForInit, ParamList, Program, Stmnt, StorageClass,
     VarDec,
 };
-use ast::Ident;
 
 use util::{Var, VarMap};
 

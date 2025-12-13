@@ -1,5 +1,5 @@
-use ast::parse::StorageClass;
 use ast::Ident;
+use ast::parse::StorageClass;
 use derive_more::{Deref, DerefMut};
 use std::borrow::{Borrow, BorrowMut};
 use std::collections::HashMap;
@@ -58,5 +58,3 @@ impl VarMap {
         ))
     }
 }
-
-

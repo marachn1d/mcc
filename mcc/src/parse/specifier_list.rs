@@ -6,7 +6,7 @@ use util::TokenIter;
 #[derive(Debug, Clone)]
 pub struct SpeclistFsm {
     sc: Option<StorageClass>,
-    ty:Option<TyBuilder>,
+    ty: Option<TyBuilder>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -18,19 +18,19 @@ pub enum TyBuilder {
 }
 
 impl TyBuilder {
-    const fn new_int() -> Self{
+    const fn new_int() -> Self {
         Self::Int(None)
     }
 
-    const fn new_long() -> Self{
+    const fn new_long() -> Self {
         Self::Long(false, None)
     }
 
-    const fn new_signed() -> Self{
+    const fn new_signed() -> Self {
         Self::Sign(Sign::Signed)
     }
 
-    const fn new_unsigned() -> Self{
+    const fn new_unsigned() -> Self {
         Self::Sign(Sign::Unsigned)
     }
 
@@ -65,26 +65,30 @@ impl TyBuilder {
     }
 
     fn unsigned(&mut self) -> Result<(), Error> {
-        use Sign::{Unsigned};
-        if let Self::Int(s) | Self::Long(_, s) = self && s.is_none(){
+        use Sign::Unsigned;
+        if let Self::Int(s) | Self::Long(_, s) = self
+            && s.is_none()
+        {
             *s = Some(Unsigned);
             Ok(())
-        }else{
+        } else {
             self.invalid_type(Token::Unsigned)
         }
     }
     const fn signed(&mut self) -> Result<(), Error> {
-        use Sign::{Signed};
-        if let Self::Int(s) | Self::Long(_, s) = self && s.is_none(){
+        use Sign::Signed;
+        if let Self::Int(s) | Self::Long(_, s) = self
+            && s.is_none()
+        {
             *s = Some(Signed);
             Ok(())
-        }else{
+        } else {
             self.invalid_type(Token::Signed)
         }
     }
 
     fn to_type(self) -> VarType {
-        match self{
+        match self {
             TyBuilder::Sign(sign) => VarType::int_with_sign(sign),
             TyBuilder::Int(s) => s.map(VarType::int_with_sign).unwrap_or(VarType::int()),
             TyBuilder::Long(_, s) => s.map(VarType::long_with_sign).unwrap_or(VarType::long()),
@@ -94,10 +98,7 @@ impl TyBuilder {
 
 impl SpeclistFsm {
     const fn new() -> Self {
-        Self {
-            sc: None,
-            ty: None,
-        }
+        Self { sc: None, ty: None }
     }
 
     const fn const_clone(&self) -> Self {
@@ -109,8 +110,11 @@ impl SpeclistFsm {
 
     pub fn done(self) -> Result<SpecifierList, Error> {
         if let Some(ty) = self.ty {
-            Ok(SpecifierList { sc: self.sc, typ:ty.to_type() })
-        }  else {
+            Ok(SpecifierList {
+                sc: self.sc,
+                typ: ty.to_type(),
+            })
+        } else {
             Err(Error::Catchall("invalid specifier list"))
         }
     }
@@ -119,9 +123,8 @@ impl SpeclistFsm {
         if self.sc.is_some() {
             Err(Error::NoStorageClass(self))
         } else {
-            self.ty.map_or_else(|| self.invalid_specifiers(), |ty| {
-                Ok(ty.to_type())
-            })
+            self.ty
+                .map_or_else(|| self.invalid_specifiers(), |ty| Ok(ty.to_type()))
         }
     }
 
@@ -153,13 +156,16 @@ impl SpeclistFsm {
 
     fn long(&mut self) -> Result<(), Error> {
         self.map_ty(TyBuilder::long, TyBuilder::new_long())
-
     }
 
-    fn map_ty(&mut self, mut f:impl FnMut(&mut TyBuilder) -> Result<(), Error>, default:TyBuilder) -> Result<(), Error>{
-        if let Some(ty) = &mut self.ty{
+    fn map_ty(
+        &mut self,
+        mut f: impl FnMut(&mut TyBuilder) -> Result<(), Error>,
+        default: TyBuilder,
+    ) -> Result<(), Error> {
+        if let Some(ty) = &mut self.ty {
             f(ty)
-        }else{
+        } else {
             self.ty = Some(default);
             Ok(())
         }
@@ -176,8 +182,6 @@ impl SpeclistFsm {
     fn signed(&mut self) -> Result<(), Error> {
         self.map_ty(TyBuilder::signed, TyBuilder::new_signed())
     }
-
-
 }
 
 fn get_specifier(tokens: &mut TokenIter, builder: &mut SpeclistFsm) -> Result<bool, Error> {
