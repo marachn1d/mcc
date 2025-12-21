@@ -1,8 +1,8 @@
 use super::tacky::Value;
-use ast::Ident;
-use ast::VarType;
 use ast::parse::{StaticInit, UnOp};
 use ast::semantics::Attr;
+use ast::Ident;
+use ast::VarType;
 use ast::{Int, Long};
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -10,12 +10,14 @@ use std::fmt::{self, Display, Formatter};
 use std::io::Write;
 pub type BackendTable = HashMap<Ident, BackendSymbol>;
 
-const fn asm_type(ty: VarType) -> AsmType {
+pub const fn asm_type(ty: VarType) -> AsmType {
     match ty {
         VarType::Int(_) => AsmType::Longword,
         VarType::Long(_) => AsmType::Quadword,
     }
 }
+
+#[derive(Debug)]
 pub enum BackendSymbol {
     Obj {
         ty: AsmType,
@@ -828,8 +830,8 @@ impl<T: Into<Op>> From<T> for PseudoOp {
 
 #[allow(dead_code)]
 pub mod pseudo_regs {
-    use super::PseudoOp as Psu;
     use super::op_regs as regs;
+    use super::PseudoOp as Psu;
     pub const AX: Psu = Psu::Normal(regs::AX);
     pub const CX: Psu = Psu::Normal(regs::CX);
     pub const DX: Psu = Psu::Normal(regs::DX);
@@ -998,6 +1000,7 @@ pub fn emit(program: &Program<X86>, target: Target) -> Box<[u8]> {
                 global: _,
                 init,
                 alignment,
+                ty,
             }) => {
                 let init_is_zero = init.is_zero();
 
@@ -1008,7 +1011,7 @@ pub fn emit(program: &Program<X86>, target: Target) -> Box<[u8]> {
                 });
                 let _ = writeln!(bytes, "\t{alignment_dir} {}\n", alignment);
 
-                let _ = writeln!(bytes, "{name_prefix}{name}:\n \t {init}");
+                let _ = writeln!(bytes, "{name_prefix}{name}:\n \t {}", fmt_init(init, *ty));
             }
         }
     }
@@ -1018,6 +1021,17 @@ pub fn emit(program: &Program<X86>, target: Target) -> Box<[u8]> {
     }
 
     bytes.into()
+}
+
+fn fmt_init(init: &StaticInit, ty: AsmType) -> String {
+    match init {
+        StaticInit::Int(i) if i.is_zero() => String::from(".zero 4"),
+        StaticInit::Long(i) if i.is_zero() => String::from(".zero 8"),
+        init => match ty {
+            AsmType::Longword => format!(".long {}", init.fmt_num()),
+            AsmType::Quadword => format!(".quad {}", init.fmt_num()),
+        },
+    }
 }
 
 impl<T> TopLevel<T> {
@@ -1043,6 +1057,7 @@ pub struct StaticVar {
     pub global: bool,
     pub alignment: u32,
     pub init: StaticInit,
+    pub ty: AsmType,
 }
 
 #[derive(Debug)]

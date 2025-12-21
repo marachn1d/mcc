@@ -3,8 +3,8 @@ use asm::tacky::{
     StaticVar as TackySV, TackyBinary, TopLevel as TackyTL, Value,
 };
 use asm::x86::{
-    AsmType, Binary, CondCode, FunctionDefinition, Op, Program, Pseudo, PseudoOp, Register,
-    StaticVar, TopLevel, pseudo_regs as pseudop,
+    pseudo_regs as pseudop, AsmType, Binary, CondCode, FunctionDefinition, Op, Program, Pseudo,
+    PseudoOp, Register, StaticVar, TopLevel,
 };
 use ast::parse::UnOp;
 use ast::{Ident, VarType};
@@ -30,6 +30,7 @@ pub fn emit(program: TackyProgram, table: SymbolTable) -> (Program<Pseudo>, Back
                 global,
                 init,
                 alignment: typ.alignment(),
+                ty: asm::x86::asm_type(typ),
             }),
         })
     }

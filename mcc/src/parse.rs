@@ -1,16 +1,17 @@
 mod specifier_list;
 
+pub use ast::parse::inc_dec::{self, *};
 pub use ast::parse::{
     Binary, Block, BlockItem, Bop, Dec, Expr, FnDec, FnType, ForInit, Label, Param, ParamList,
     Program, Stmnt, StorageClass, UnOp, Unary, VarDec,
 };
+use ast::Constant;
 pub use ast::{Arr, VarType};
-
-pub use ast::parse::inc_dec::{self, *};
 
 use util::TokenIter;
 
 use super::Token;
+use ast::{Int, Long};
 
 pub fn parse(tokens: Box<[Token]>) -> Result<Program, Error> {
     let mut tokens = TokenIter::new(tokens);

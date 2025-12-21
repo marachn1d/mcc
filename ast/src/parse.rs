@@ -110,6 +110,10 @@ impl StaticInit {
             VarType::Long(s) => Self::Long(Long::zero(s)),
         }
     }
+
+    pub fn fmt_num(&self) -> String {
+        self.map(&mut |i| i.fmt_num(), &mut |l| l.fmt_num())
+    }
 }
 
 impl From<Constant> for StaticInit {

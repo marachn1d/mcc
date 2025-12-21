@@ -133,3 +133,24 @@ impl VarType {
         }
     }
 }
+
+#[cfg(test)]
+mod test {
+
+    use super::VarType;
+    const INT: VarType = VarType::int();
+    const UINT: VarType = VarType::uint();
+    const LONG: VarType = VarType::long();
+    const ULONG: VarType = VarType::ulong();
+
+    #[test]
+    fn common_types() {
+        assert_eq!(INT.common_type(&UINT), Some(UINT));
+        assert_eq!(INT.common_type(&ULONG), Some(ULONG));
+        assert_eq!(UINT.common_type(&LONG), Some(LONG));
+
+        assert_eq!(UINT.common_type(&ULONG), Some(ULONG));
+
+        assert_eq!(LONG.common_type(&ULONG), Some(ULONG));
+    }
+}

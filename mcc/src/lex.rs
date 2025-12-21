@@ -212,7 +212,7 @@ fn constant_number(start: AsciiDigit, iter: &mut SliceIter<u8>) -> Result<Consta
         [b'l' | b'L', b'u' | b'U', ..] | [b'u' | b'U', b'l' | b'L', ..] => {
             iter.next();
             iter.next();
-            Ok(Constant::new_ulong(parse_ulong(&bytes)))
+            Ok(Constant::new_ulong(parse_ulong(&bytes)).as_shrunk())
         }
         [x, ..] => match x {
             b'l' | b'L' => {
@@ -221,7 +221,7 @@ fn constant_number(start: AsciiDigit, iter: &mut SliceIter<u8>) -> Result<Consta
             }
             b'u' | b'U' => {
                 iter.next();
-                Ok(Constant::new_ulong(parse_ulong(&bytes)))
+                Ok(Constant::new_ulong(parse_ulong(&bytes)).as_shrunk())
             }
             x if !word_character(*x) => {
                 let long = parse_long(&bytes);

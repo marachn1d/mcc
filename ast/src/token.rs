@@ -1,6 +1,6 @@
-use crate::VarType;
 use crate::parse::StaticInit;
 use crate::var_type::Sign;
+use crate::VarType;
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub enum Token<Ident> {
@@ -282,6 +282,14 @@ impl Constant {
 
     pub fn static_init(&self) -> StaticInit {
         self.map(StaticInit::Int, StaticInit::Long)
+    }
+
+    pub fn as_shrunk(&self) -> Self {
+        match self {
+            Self::Long(Long::U(ulong)) => u32::try_from(*ulong).map_or(*self, Self::new_uint),
+            Self::Long(Long::I(ilong)) => i32::try_from(*ilong).map_or(*self, Self::new_int),
+            int @ Self::Int(_) => *int,
+        }
     }
 }
 
