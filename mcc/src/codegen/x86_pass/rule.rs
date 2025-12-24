@@ -214,7 +214,7 @@ impl<'a> PairRule<'a> {
                 .with_max_1_stack(),
             ),
             Pseudo::Binary {
-                operator: Binary::ShiftLeft | Binary::ShiftRight,
+                operator: Binary::ShiftLeft(_) | Binary::ShiftRight(_),
                 regs: (left, right),
                 ..
             } => Some(binary_r_read(

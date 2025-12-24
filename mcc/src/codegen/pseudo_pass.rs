@@ -2,9 +2,10 @@ use asm::tacky::{
     FunctionDefinition as TackyFD, Instruction as TackyInstruction, Program as TackyProgram,
     StaticVar as TackySV, TackyBinary, TopLevel as TackyTL, Value,
 };
+use asm::x86::asm_type;
 use asm::x86::{
     pseudo_regs as pseudop, AsmType, Binary, CondCode, FunctionDefinition, Op, Program, Pseudo,
-    PseudoOp, Register, StaticVar, TopLevel,
+    PseudoOp, Register, ShiftTy, StaticVar, TopLevel,
 };
 use ast::parse::UnOp;
 use ast::{Ident, VarType};
@@ -30,7 +31,7 @@ pub fn emit(program: TackyProgram, table: SymbolTable) -> (Program<Pseudo>, Back
                 global,
                 init,
                 alignment: typ.alignment(),
-                ty: asm::x86::asm_type(typ),
+                ty: asm_type(typ),
             }),
         })
     }
@@ -375,6 +376,7 @@ fn convert_binary(
     match process_binop(op, src_tacky_ty) {
         Binop::Relational(condition) => {
             let dst_ty = val_type(&dst, table);
+            //eprintln!("relational {source_1:?} {op:?} {source_2:?} type is {src_ty:?}");
             let dst = PseudoOp::from(dst);
 
             instructions.extend([
@@ -406,7 +408,7 @@ fn convert_binary(
             } else {
                 instructions.extend([
                     Pseudo::mov(source_1, Register::Ax.into(), src_ty),
-                    Pseudo::mov(Op::imm(0).into(), Register::Ax.into(), src_ty),
+                    Pseudo::mov(Op::imm(0).into(), Register::Dx.into(), src_ty),
                     Pseudo::div(source_2, src_ty),
                     Pseudo::mov(result_register.into(), dst, src_ty),
                 ])
@@ -423,8 +425,22 @@ const fn process_binop(op: TackyBinary, ty: VarType) -> Binop {
         TackyBinary::BitAnd => Binop::Normal(Binary::And),
         TackyBinary::BitOr => Binop::Normal(Binary::Or),
         TackyBinary::Xor => Binop::Normal(Binary::Xor),
-        TackyBinary::LeftShift => Binop::Normal(Binary::ShiftLeft),
-        TackyBinary::RightShift => Binop::Normal(Binary::ShiftRight),
+        TackyBinary::LeftShift => {
+            let shift_ty = if ty.signed() {
+                ShiftTy::Arithmetic
+            } else {
+                ShiftTy::Logical
+            };
+            Binop::Normal(Binary::ShiftLeft(shift_ty))
+        }
+        TackyBinary::RightShift => {
+            let shift_ty = if ty.signed() {
+                ShiftTy::Arithmetic
+            } else {
+                ShiftTy::Logical
+            };
+            Binop::Normal(Binary::ShiftRight(shift_ty))
+        }
         TackyBinary::EqualTo => Binop::Relational(CondCode::E),
         TackyBinary::NotEqual => Binop::Relational(CondCode::NE),
         TackyBinary::LessThan => {
@@ -441,8 +457,21 @@ const fn process_binop(op: TackyBinary, ty: VarType) -> Binop {
                 Binop::Relational(CondCode::BE)
             }
         }
-        TackyBinary::GreaterThan => Binop::Relational(CondCode::G),
-        TackyBinary::Geq => Binop::Relational(CondCode::GE),
+        TackyBinary::GreaterThan => {
+            if ty.signed() {
+                Binop::Relational(CondCode::G)
+            } else {
+                Binop::Relational(CondCode::A)
+            }
+        }
+
+        TackyBinary::Geq => {
+            if ty.signed() {
+                Binop::Relational(CondCode::GE)
+            } else {
+                Binop::Relational(CondCode::AE)
+            }
+        }
 
         TackyBinary::Divide => Binop::Div {
             reg: Register::Ax,

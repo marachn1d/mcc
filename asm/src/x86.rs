@@ -168,7 +168,7 @@ impl BaseX86<PseudoOp> {
 
     pub fn as_fixed(&self, regs: &[Op]) -> BaseX86<Op> {
         // not sure how I feel about this interface but it's deduplicated
-        let left = regs.get(0).cloned();
+        let left = regs.first().cloned();
         let right = regs.get(1).cloned();
 
         match self {
@@ -408,7 +408,7 @@ impl Display for TargettedX86<'_> {
                 ty,
             } => write!(f, "{operator}{ty} {}", operand.sized_fmt(*ty, target)),
             X86::Binary {
-                operator: operator @ (Binary::ShiftLeft | Binary::ShiftRight),
+                operator: operator @ (Binary::ShiftLeft(_) | Binary::ShiftRight(_)),
                 regs: (Op::Register(by), dst),
                 ty,
             } => {
@@ -420,7 +420,7 @@ impl Display for TargettedX86<'_> {
                 )
             }
             X86::Binary {
-                operator: operator @ (Binary::ShiftLeft | Binary::ShiftRight),
+                operator: operator @ (Binary::ShiftLeft(_) | Binary::ShiftRight(_)),
                 regs: (by, dst),
                 ty,
             } => {
@@ -559,9 +559,7 @@ pub union Immediate {
 
 impl Clone for Immediate {
     fn clone(&self) -> Self {
-        Self {
-            long: self.as_long(),
-        }
+        *self
     }
 }
 
@@ -593,7 +591,7 @@ impl PartialOrd<i64> for Immediate {
 
 impl PartialOrd for Immediate {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(<Self as Ord>::cmp(&self, other))
+        Some(<Self as Ord>::cmp(self, other))
     }
 }
 
@@ -647,7 +645,7 @@ impl Immediate {
     }
 
     pub const fn new_i64(long: i64) -> Self {
-        Self { long: long }
+        Self { long }
     }
 
     pub const fn new_u64(long: u64) -> Self {
@@ -717,8 +715,24 @@ pub enum Binary {
     And,
     Or,
     Xor,
-    ShiftLeft,
-    ShiftRight,
+    ShiftLeft(ShiftTy),
+    ShiftRight(ShiftTy),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ShiftTy {
+    Arithmetic,
+    Logical,
+}
+
+impl ShiftTy {
+    pub const fn is_arithmetic(&self) -> bool {
+        matches!(self, Self::Arithmetic)
+    }
+
+    pub const fn is_logical(&self) -> bool {
+        matches!(self, Self::Arithmetic)
+    }
 }
 
 impl Display for Unary {
@@ -736,6 +750,7 @@ impl Display for Unary {
 
 impl Display for Binary {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        use ShiftTy::{Arithmetic, Logical};
         f.write_str(match self {
             Self::Add => "add",
             Self::Sub => "sub",
@@ -743,8 +758,10 @@ impl Display for Binary {
             Self::And => "and",
             Self::Or => "or",
             Self::Xor => "xor",
-            Self::ShiftLeft => "sal",
-            Self::ShiftRight => "sar",
+            Self::ShiftLeft(Arithmetic) => "sal",
+            Self::ShiftLeft(Logical) => "shl",
+            Self::ShiftRight(Arithmetic) => "sar",
+            Self::ShiftRight(Logical) => "shr",
         })
     }
 }
