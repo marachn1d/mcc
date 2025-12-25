@@ -4,6 +4,7 @@ use ast::semantics::Attr;
 use ast::Ident;
 use ast::VarType;
 use ast::{Int, Long};
+use clap::ValueEnum;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt::{self, Display, Formatter};
@@ -934,7 +935,7 @@ pub enum TopLevel<T> {
     StaticVar(StaticVar),
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]
 pub enum Target {
     Darwin,
     Linux,

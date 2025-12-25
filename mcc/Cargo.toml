@@ -8,6 +8,7 @@ util = { path="../util" }
 ast = { path="../ast" }
 asm = { path="../asm" }
 derive_more = {version = "2.0.1", features = ["deref", "deref_mut"]}
+clap = {version = "4.5.53", features = ["derive"]}
 
 
 [profile.release]

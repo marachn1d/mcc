@@ -23,6 +23,9 @@ pub mod parse;
 #[cfg(feature = "semantics")]
 pub mod semantics;
 
+use clap::Args;
+use clap::ValueEnum;
+
 use std::sync::OnceLock;
 pub static CONFIG: OnceLock<Config> = OnceLock::new();
 pub struct Config {
@@ -32,12 +35,35 @@ pub struct Config {
     pub target: Target,
 }
 
-#[derive(Default, Copy, Clone)]
+use clap::builder::ArgPredicate::IsPresent;
+#[derive(Default, Copy, Clone, Args)]
 pub struct Optimizations {
+    #[arg(
+        long = "fold-constants",
+        default_value_if("optimize", IsPresent, "true")
+    )]
     pub constant_folding: bool,
+
+    #[arg(
+        long = "propogate-copies",
+        default_value_if("optimize", IsPresent, "true")
+    )]
     pub copy_propogation: bool,
+
+    #[arg(
+        long = "eliminate-unreachable-code",
+        default_value_if("optimize", IsPresent, "true")
+    )]
     pub unreachable_code: bool,
+
+    #[arg(
+        long = "eliminate-dead-stores",
+        default_value_if("optimize", IsPresent, "true")
+    )]
     pub dead_store: bool,
+
+    #[arg(long = "optimize", alias = "optimise")]
+    optimize: bool,
 }
 
 impl Optimizations {
@@ -47,6 +73,7 @@ impl Optimizations {
             copy_propogation: true,
             unreachable_code: true,
             dead_store: true,
+            optimize: true,
         }
     }
 
@@ -130,14 +157,12 @@ pub enum CVersion {
     C23,
 }
 
-#[derive(PartialEq, Eq, Copy, Clone, Debug)]
+#[derive(PartialEq, Eq, Copy, Clone, Debug, ValueEnum)]
 pub enum CompileStage {
     Lex,
 
     Parse,
     Codegen,
-
-    Compile,
 
     Tacky,
 

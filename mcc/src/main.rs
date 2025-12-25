@@ -1,21 +1,16 @@
-use asm::x86::Target;
-use mcc::CompileStage;
-use std::fmt;
-use std::io;
-
+use clap::Parser;
 use mcc::args::Args;
 use mcc::CVersion;
 use mcc::Config;
-use mcc::Optimizations;
 use mcc::CONFIG;
+use std::fmt;
+use std::io;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 
 fn main() -> Result<(), MCCError> {
-    let Some(args) = Args::parse() else {
-        return Err(MCCError::Usage);
-    };
+    let args = Args::parse();
 
     let _ = CONFIG.set(Config {
         stage: args.stage,
