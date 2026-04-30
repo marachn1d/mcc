@@ -1,4 +1,6 @@
 //pub mod ast;
+use clap::{Args};
+use clap::builder::ArgPredicate;
 
 use std::fs;
 use std::io;
@@ -23,18 +25,25 @@ pub mod semantics;
 use std::sync::OnceLock;
 pub static CONFIG: OnceLock<Config> = OnceLock::new();
 pub struct Config {
-    pub stage: Option<CompileStage>,
+    pub stage: CompileStage,
     pub opt: Optimizations,
     pub version: CVersion,
     pub target:Target,
+    pub emit_asm:bool,
 }
 
-#[derive(Default, Copy, Clone)]
+#[derive(Default, Copy, Clone, clap::Args)]
 pub struct Optimizations {
+    #[arg(long="fold-constants", default_value_if("optimize",ArgPredicate::IsPresent,"true"))]
     pub constant_folding: bool,
+    #[arg(long="propogate-copies",default_value_if("optimize",ArgPredicate::IsPresent,"true"))]
     pub copy_propogation: bool,
+    #[arg(long="eliminate-unreachable-code",default_value_if("optimize",ArgPredicate::IsPresent,"true"))]
     pub unreachable_code: bool,
+    #[arg(long="eliminate-dead_stores", default_value_if("optimize",ArgPredicate::IsPresent,"true"))]
     pub dead_store: bool,
+    #[arg(long = "optimize")]
+    pub all: bool,
 }
 
 impl Optimizations {
@@ -44,6 +53,7 @@ impl Optimizations {
             copy_propogation: true,
             unreachable_code: true,
             dead_store: true,
+            all:true,
         }
     }
 
@@ -53,75 +63,71 @@ impl Optimizations {
     }
 }
 
-pub fn compile(mut path: PathBuf) -> Result<PathBuf, Error> {
+pub fn compile(path: PathBuf) -> Result<Option<PathBuf>, Error> {
     let bytes = fs::read(&path).map_err(|_| Error::InvalidInput)?;
     let _ = fs::remove_file(&path);
-    let (stage, opt, target) = {
-        let conf = CONFIG.get().unwrap();
-        (conf.stage, conf.opt, conf.target)
-    };
+    let stage = CONFIG.get().unwrap().stage;
+    try_compile(&bytes, &stage, path)
+}
 
-    let tokens = lex::tokenize(&bytes)?;
-    if stage == Some(CompileStage::Lex) {
-        return Ok("".into());
-    }
-
-    #[cfg(feature = "parse")]
-    {
-        if !should_parse(&stage) {
-            return Ok("".into());
+fn try_compile(bytes:&[u8], stage:&CompileStage, path:PathBuf) -> Result<Option<PathBuf>, Error>{
+    if stage.should_lex() {
+        let tokens = lex::tokenize(&bytes)?;
+        if stage.should_parse() && cfg!(feature="parse"){
+        try_parse(tokens, stage, path)
+        }else{
+            Ok(None)
         }
-        let ast = parse(tokens)?;
-        #[cfg(feature = "semantics")]
-        {
-            if !should_validate(&stage) {
-                return Ok("".into());
-            };
-            let (program, map) = semantics::check(ast)?;
+    }else{
+        Ok(None)
+    }
+}
 
-            #[cfg(feature = "codegen")]
-            {
-                if !should_codegen(&stage) {
-                    return Ok("".into());
-                } else {
-                    let code = codegen::generate(
+#[cfg(feature="parse")]
+fn try_parse(tokens:Box<[DebugToken]>, stage:&CompileStage, path:PathBuf) -> Result<Option<PathBuf>,Error>{ 
+
+        let ast = parse(tokens)?;
+        if stage.should_validate() && cfg!(feature = "semantics"){
+            try_semantics(ast, stage, path)
+        }else{
+            Ok(None)
+        }
+}
+
+#[cfg(feature = "semantics")]
+fn try_semantics(ast:ast::parse::Program, stage:&CompileStage, path:PathBuf) -> Result<Option<PathBuf>, Error>{
+
+    let (program, map) = semantics::check(ast)?;
+    if stage.should_codegen() && cfg!(feature = "codegen"){
+        try_codegen(program, map, path)
+    }else{
+        Ok(None)
+    }
+}
+
+#[cfg(feature = "codegen")]
+fn try_codegen(program: ast::semantics::typed::Program, map: ast::semantics::SymbolTable, mut path: PathBuf) -> Result<Option<PathBuf>,Error>{
+
+    let (opt, target, keep_asm) = {
+        let conf = CONFIG.get().unwrap();
+        (conf.opt, conf.target, conf.emit_asm)
+    };
+    let code = codegen::generate(
                         program,
-                        should_emit(&stage),
+                        true,
                         &opt,
                         target,
                         map,
-                    );
-                    path.set_extension("S");
-                    fs::write(&path, &code)?;
-                }
-            }
-        }
-
-        Ok(path)
-    }
-
-    #[cfg(not(feature = "parse"))]
-    Ok("".into())
+    );
+        path.set_extension("s");
+    fs::write(&path, &code)?;
+    Ok(Some(path))
 }
 
-const fn should_emit(s: &Option<CompileStage>) -> bool {
-    should_codegen(s)
-}
-const fn should_parse(s: &Option<CompileStage>) -> bool {
-    !matches!(s, Some(CompileStage::Lex))
-}
 
-const fn should_validate(s: &Option<CompileStage>) -> bool {
-    should_parse(s) && !matches!(s, Some(CompileStage::Parse))
-}
 
-const fn should_codegen(s: &Option<CompileStage>) -> bool {
-    if should_validate(s) {
-        !matches!(s, Some(CompileStage::Validate))
-    } else {
-        false
-    }
-}
+
+
 
 fn parse(tokens: Box<[DebugToken]>) -> Result<ast::parse::Program, Error> {
     let tokens = tokens.into_iter().map(|x| x.token).collect();
@@ -134,18 +140,35 @@ pub enum CVersion {
     C23,
 }
 
-#[derive(PartialEq, Eq, Copy, Clone, Debug)]
+#[derive(PartialEq, Eq, Copy, Clone, Debug, clap::ValueEnum)]
 pub enum CompileStage {
     Lex,
-
     Parse,
     Codegen,
-
-    Compile,
-
     Tacky,
-
     Validate,
+}
+
+impl CompileStage{
+    const fn should_lex(&self) -> bool{
+        self.should_parse() || true
+    }
+
+    const fn should_parse(&self) -> bool{
+        self.should_validate() || matches!(self, Self::Parse)
+    }
+
+    const fn should_validate(&self) -> bool{
+        self.should_tacky() || matches!(self, Self::Validate)
+    }
+
+    const fn should_tacky(&self) -> bool{
+        self.should_codegen() || matches!(self, Self::Tacky)
+    }
+
+    const fn should_codegen(&self) -> bool{
+        matches!(self, Self::Codegen)
+    }
 }
 
 #[derive(Debug)]

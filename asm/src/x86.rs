@@ -573,7 +573,7 @@ impl fmt::Debug for Immediate {
 
 impl fmt::Display for Immediate {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        <u64 as fmt::Display>::fmt(&self.as_ulong(), f)
+        <i64 as fmt::Display>::fmt(&self.as_long(), f)
     }
 }
 
@@ -915,10 +915,21 @@ pub enum TopLevel<T> {
     StaticVar(StaticVar),
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, clap::ValueEnum)]
 pub enum Target {
+    #[value(alias="macos")]
     Darwin,
     Linux,
+}
+
+impl Default for Target{
+    fn default() -> Self{
+        if cfg!(target_os="macos"){
+            Self::Darwin
+        }else{
+            Self::Linux
+        }
+    }
 }
 
 impl Target {

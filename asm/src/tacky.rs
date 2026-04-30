@@ -159,7 +159,13 @@ impl TackyBinary {
                     zero().0
                 }
             }
-            TackyBinary::Remainder => (lhs % rhs).0,
+            TackyBinary::Remainder => {
+                if rhs != zero() {
+                    (lhs % rhs).0
+                } else {
+                    zero().0
+                }
+            },
             TackyBinary::BitAnd => (lhs & rhs).0,
             TackyBinary::BitOr => (lhs | rhs).0,
             TackyBinary::Xor => (lhs ^ rhs).0,

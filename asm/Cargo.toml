@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 ast = {path = "../ast"}
 util = {path = "../util"}
+clap =  { version = "4.5.51", features = ["derive"] }

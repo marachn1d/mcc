@@ -1,6 +1,7 @@
 use super::{Instruction, StaticInit, Value, VarType};
+use std::collections::VecDeque;
 
-pub fn constant_fold(tacky: &mut Vec<Instruction>) -> bool {
+pub fn constant_fold(tacky: &mut VecDeque<Instruction>) -> bool {
     let mut changed = false;
     tacky.retain_mut(|instruction| fold_instruction(instruction, &mut changed));
     changed
